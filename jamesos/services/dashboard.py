@@ -37,7 +37,8 @@ def generate_home_dashboard() -> str:
         "",
         "## Mission Control",
         "- [[JamesOS/Reports/Daily Briefing]]",
-        "- [[JamesOS/Reports/Work Intelligence]]",
+        "- [[JamesOS/Reports/Work Intelligence]]
+        "- [[JamesOS/Reports/Status Report]]",",
         "- [[JamesOS/Reports/Inbox Review]]",
         "- [[Work/Work]]",
         "",
