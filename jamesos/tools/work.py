@@ -17,6 +17,7 @@ def create_work_ticket(
     notes: str = "",
 ) -> str:
     from jamesos.services.refresh import refresh_dashboards
+    from jamesos.services.wiki_links import wiki_link, people_links, ensure_knowledge_page
 
     date = datetime.now().strftime("%Y-%m-%d")
     safe_ticket_id = ticket_id.strip()
@@ -29,17 +30,33 @@ def create_work_ticket(
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    sql_block = "```sql\n\n```"
+    ensure_knowledge_page("customers", customer)
+    ensure_knowledge_page("environments", environment)
+    ensure_knowledge_page("systems", schema)
+
+    for person in [assigned_to]:
+        ensure_knowledge_page("people", person)
+
+    for raw in tester.replace(",", "/").split("/"):
+        ensure_knowledge_page("people", raw.strip())
+
+    customer_link = wiki_link("customers", customer)
+    environment_link = wiki_link("environments", environment)
+    schema_link = wiki_link("systems", schema)
+    assigned_link = people_links(assigned_to)
+    tester_link = people_links(tester)
+
+    sql_block = "```sql\\n\\n```"
 
     content = f"""# {safe_ticket_id} - {safe_title}
 
 Type: {ticket_type}
-Customer: [[JamesOS/Knowledge/Customers/{customer}]]
+Customer: {customer_link}
 Status: {status}
-Environment: [[JamesOS/Knowledge/Environments/{environment}]]
-Schema: [[JamesOS/Knowledge/Systems/{schema}]]
-Assigned To: {assigned_to}
-Tester: {tester}
+Environment: {environment_link}
+Schema: {schema_link}
+Assigned To: {assigned_link}
+Tester: {tester_link}
 Created: {date}
 
 ## Summary
@@ -78,7 +95,6 @@ Created: {date}
     path.write_text(content, encoding="utf-8")
     refresh_dashboards()
     return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
-
 
 def update_work_ticket_status(ticket_id: str, status: str) -> str:
     from jamesos.services.refresh import refresh_dashboards
