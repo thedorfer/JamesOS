@@ -2,6 +2,7 @@ from mcp.server.fastmcp import FastMCP
 from jamesos.tools import notes
 from jamesos.services.dashboard import generate_home_dashboard
 from jamesos.services.work_dashboard import generate_work_dashboard
+from jamesos.services.refresh import refresh_dashboards
 
 def build_server() -> FastMCP:
     mcp = FastMCP("JamesOS")
@@ -17,6 +18,7 @@ def build_server() -> FastMCP:
     mcp.tool()(notes.move_note)
     mcp.tool()(generate_home_dashboard)
     mcp.tool()(generate_work_dashboard)
+    mcp.tool()(refresh_dashboards)
 
     return mcp
 

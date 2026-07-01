@@ -82,10 +82,16 @@ def create_ticket(ticket_id: str, title: str = "") -> str:
     return f"Created {path.relative_to(VAULT)}"
 
 def create_meeting_note(title: str, folder: str = "Work/Meetings") -> str:
+    from jamesos.services.refresh import refresh_dashboards
+
     date = datetime.now().strftime("%Y-%m-%d")
     clean_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
     path = safe_path(f"{folder}/{date} - {clean_title}.md")
+
     path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        return f"Meeting note already exists: {path.relative_to(VAULT)}"
+
     path.write_text(
         f"# {title}\n\n"
         f"Date: {date}\n\n"
@@ -95,7 +101,9 @@ def create_meeting_note(title: str, folder: str = "Work/Meetings") -> str:
         "## Action Items\n- [ ] \n",
         encoding="utf-8",
     )
-    return f"Created {path.relative_to(VAULT)}"
+
+    refresh_dashboards()
+    return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
 
 def move_note(source: str, destination: str) -> str:
     src = safe_path(source)
