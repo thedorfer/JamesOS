@@ -123,3 +123,16 @@ def get_entity_relationships(name: str) -> str:
         return f"No relationships found for {name}"
 
     return f"# Relationships for {name}\n\n" + "\n".join(sorted(matches))
+
+
+def write_relationship_report(name: str) -> str:
+    report = get_entity_relationships(name)
+
+    reports_dir = VAULT / "JamesOS" / "Reports" / "Relationships"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = name.strip().replace("/", "-")
+    path = reports_dir / f"{safe_name}.md"
+
+    path.write_text(report + "\n", encoding="utf-8")
+    return f"Wrote relationship report: {path.relative_to(VAULT)}"
