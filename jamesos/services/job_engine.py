@@ -10,6 +10,7 @@ from jamesos.services.briefing import generate_daily_briefing
 from jamesos.services.work_intelligence import generate_work_intelligence
 from jamesos.services.status_report import generate_status_report
 from jamesos.services.memory_engine import build_memory
+from jamesos.services.brain_reports import generate_brain_reports
 from jamesos.services.inbox_cleanup import suggest_inbox_cleanup
 
 
@@ -32,6 +33,7 @@ def refresh_all_job() -> str:
     results = [
         build_database(),
         build_memory(),
+        generate_brain_reports(),
         update_knowledge_pages(),
         build_timeline(),
         build_search_index(),
