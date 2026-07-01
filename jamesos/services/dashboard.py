@@ -41,6 +41,7 @@ def generate_home_dashboard() -> str:
         "- [[JamesOS/Reports/Status Report]]",
         "- [[JamesOS/Reports/Inbox Review]]",
         "- [[JamesOS/Reports/AI Inbox Cleanup]]",
+        "- [[JamesOS/Reports/Memory/88858]]",,
         "- [[Work/Work]]",
         "",
         "## Today",
