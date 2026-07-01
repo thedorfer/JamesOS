@@ -32,7 +32,6 @@ def run_job(job_name: str) -> str:
 def refresh_all_job() -> str:
     results = [
         build_database(),
-        build_memory(),
         generate_brain_reports(),
         update_knowledge_pages(),
         build_timeline(),
