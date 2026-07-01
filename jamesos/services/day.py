@@ -5,6 +5,7 @@ from jamesos.config import VAULT
 from jamesos.services.refresh import refresh_dashboards
 from jamesos.services.relationship_engine import build_internal_db
 from jamesos.services.knowledge_service import update_knowledge_pages
+from jamesos.services.timeline import build_timeline
 
 
 def start_day() -> str:
@@ -42,5 +43,6 @@ def start_day() -> str:
 
     build_internal_db()
     update_knowledge_pages()
+    build_timeline()
     refresh_dashboards()
-    return f"Started day: {daily_path.relative_to(VAULT)}, rebuilt internal database, updated knowledge pages, and refreshed dashboards"
+    return f"Started day: {daily_path.relative_to(VAULT)}, rebuilt internal database, updated knowledge pages, built timeline, and refreshed dashboards"
