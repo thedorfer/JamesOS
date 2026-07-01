@@ -1,0 +1,1 @@
+# JamesOS plugins package
