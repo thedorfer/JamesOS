@@ -61,6 +61,8 @@ def create_daily_note() -> str:
     return f"Created {path.relative_to(VAULT)}"
 
 def create_ticket(ticket_id: str, title: str = "") -> str:
+    from jamesos.services.refresh import refresh_dashboards
+
     safe_title = title.strip() or f"Ticket {ticket_id}"
     path = safe_path(f"Work/Active Tickets/{ticket_id}.md")
     if path.exists():
@@ -79,7 +81,9 @@ def create_ticket(ticket_id: str, title: str = "") -> str:
         "## Links\n",
         encoding="utf-8",
     )
-    return f"Created {path.relative_to(VAULT)}"
+
+    refresh_dashboards()
+    return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
 
 def create_meeting_note(title: str, folder: str = "Work/Meetings") -> str:
     from jamesos.services.refresh import refresh_dashboards
