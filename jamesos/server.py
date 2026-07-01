@@ -1,6 +1,7 @@
 from mcp.server.fastmcp import FastMCP
 from jamesos.tools import notes
 from jamesos.tools import work
+from jamesos.tools import inbox
 from jamesos.services.dashboard import generate_home_dashboard
 from jamesos.services.work_dashboard import generate_work_dashboard
 from jamesos.services.refresh import refresh_dashboards
@@ -20,6 +21,7 @@ def build_server() -> FastMCP:
     mcp.tool()(work.create_work_ticket)
     mcp.tool()(work.update_work_ticket_status)
     mcp.tool()(work.append_work_ticket_log)
+    mcp.tool()(inbox.capture_inbox)
     mcp.tool()(notes.create_meeting_note)
     mcp.tool()(notes.move_note)
     mcp.tool()(generate_home_dashboard)
