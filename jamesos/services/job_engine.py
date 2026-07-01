@@ -1,0 +1,58 @@
+from datetime import datetime
+
+from jamesos.services.database import build_database
+from jamesos.services.knowledge_service import update_knowledge_pages
+from jamesos.services.timeline import build_timeline
+from jamesos.services.search_service import build_search_index
+from jamesos.services.inbox_review import review_inbox
+from jamesos.services.refresh import refresh_dashboards
+
+
+def run_job(job_name: str) -> str:
+    job = job_name.strip().lower().replace(" ", "_")
+
+    if job == "start_day":
+        return start_day_job()
+
+    if job == "end_day":
+        return end_day_job()
+
+    if job == "refresh_all":
+        return refresh_all_job()
+
+    return f"Unknown job: {job_name}"
+
+
+def refresh_all_job() -> str:
+    results = [
+        build_database(),
+        update_knowledge_pages(),
+        build_timeline(),
+        build_search_index(),
+        review_inbox(),
+        refresh_dashboards(),
+    ]
+
+    return "\n".join(results)
+
+
+def start_day_job() -> str:
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    results = [
+        f"Start Day Job: {today}",
+        refresh_all_job(),
+    ]
+
+    return "\n".join(results)
+
+
+def end_day_job() -> str:
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    results = [
+        f"End Day Job: {today}",
+        refresh_all_job(),
+    ]
+
+    return "\n".join(results)
