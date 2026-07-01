@@ -111,5 +111,5 @@ def suggest_inbox_cleanup() -> str:
             lines.extend(["", "Suggested Safety:", "- [ ] Review before applying", ""])
 
     report = REPORTS_DIR / "AI Inbox Cleanup.md"
-    report.write_text("\\n".join(lines), encoding="utf-8")
+    report.write_text("\n".join(lines), encoding="utf-8")
     return f"Wrote AI inbox cleanup suggestions: {report.relative_to(VAULT)}"
