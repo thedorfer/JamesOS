@@ -7,6 +7,7 @@ from jamesos.services.search_service import build_search_index
 from jamesos.services.inbox_review import review_inbox
 from jamesos.services.refresh import refresh_dashboards
 from jamesos.services.briefing import generate_daily_briefing
+from jamesos.services.work_intelligence import generate_work_intelligence
 
 
 def run_job(job_name: str) -> str:
@@ -32,6 +33,7 @@ def refresh_all_job() -> str:
         build_search_index(),
         review_inbox(),
         generate_daily_briefing(),
+        generate_work_intelligence(),
         refresh_dashboards(),
     ]
 
