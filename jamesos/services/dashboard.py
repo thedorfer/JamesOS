@@ -14,47 +14,41 @@ def _recent(folder: Path, limit: int = 5) -> list[Path]:
 
 def _section(title: str, files: list[Path]) -> list[str]:
     lines = ["", f"## {title}"]
-    if files:
-        lines.extend(f"- {_link(f)}" for f in files)
-    else:
-        lines.append("- None")
+    lines.extend([f"- {_link(f)}" for f in files] or ["- None"])
     return lines
 
 def generate_home_dashboard() -> str:
     today = datetime.now().strftime("%Y-%m-%d")
 
-    daily_dir = VAULT / "Daily"
-    inbox_dir = VAULT / "00-Inbox"
-    work_dir = VAULT / "Work"
+    work = VAULT / "Work"
+    inbox = VAULT / "00-Inbox"
+    daily = VAULT / "Daily"
 
-    active_dir = work_dir / "Active Tickets"
-    waiting_dir = work_dir / "Waiting"
-    ready_dir = work_dir / "Ready for Testing"
-    completed_dir = work_dir / "Completed"
-
-    active = list(active_dir.glob("*.md")) if active_dir.exists() else []
-    waiting = list(waiting_dir.glob("*.md")) if waiting_dir.exists() else []
-    ready = list(ready_dir.glob("*.md")) if ready_dir.exists() else []
-    completed = _recent(completed_dir, 5)
-
-    recent_daily = _recent(daily_dir, 5)
-    recent_inbox = _recent(inbox_dir, 5)
+    active = list((work / "Active Tickets").glob("*.md")) if (work / "Active Tickets").exists() else []
+    waiting = list((work / "Waiting").glob("*.md")) if (work / "Waiting").exists() else []
+    ready = list((work / "Ready for Testing").glob("*.md")) if (work / "Ready for Testing").exists() else []
+    inbox_items = _recent(inbox, 5)
+    daily_notes = _recent(daily, 5)
 
     lines = [
         "# Home",
         "",
         f"Updated: {today}",
         "",
-        "## Today",
-        f"- [[Daily/{today}]]",
+        "## Mission Control",
+        "- [[JamesOS/Reports/Daily Briefing]]",
+        "- [[JamesOS/Reports/Work Intelligence]]",
+        "- [[JamesOS/Reports/Inbox Review]]",
         "- [[Work/Work]]",
         "",
-        "## Command Center",
+        "## Today",
+        f"- [[Daily/{today}]]",
+        "",
+        "## Current Status",
         f"- Active Tickets: {len(active)}",
         f"- Waiting: {len(waiting)}",
         f"- Ready for Testing: {len(ready)}",
-        f"- Recent Completed Shown: {len(completed)}",
-        f"- Inbox Items Shown: {len(recent_inbox)}",
+        f"- Inbox Items: {len(inbox_items)}",
         "",
         "## Main Areas",
         "- [[Work/Work]]",
@@ -63,27 +57,21 @@ def generate_home_dashboard() -> str:
         "- [[Personal]]",
         "- [[JamesOS/Knowledge]]",
         "- [[JamesOS/Reports]]",
-        "",
-        "## Work Status",
-        f"- [[Work/Active Tickets]] ({len(active)})",
-        f"- [[Work/Waiting]] ({len(waiting)})",
-        f"- [[Work/Ready for Testing]] ({len(ready)})",
-        f"- [[Work/Completed]]",
     ]
 
     lines += _section("Ready for Testing", sorted(ready))
     lines += _section("Waiting", sorted(waiting))
-    lines += _section("Recent Inbox", recent_inbox)
-    lines += _section("Recent Daily Notes", recent_daily)
+    lines += _section("Recent Inbox", inbox_items)
+    lines += _section("Recent Daily Notes", daily_notes)
 
     lines.extend([
         "",
         "## Daily Checklist",
-        "- [ ] Review Work dashboard",
-        "- [ ] Review Inbox",
-        "- [ ] Check GCU tasks",
-        "- [ ] Capture loose notes",
-        "- [ ] Update active ticket notes",
+        "- [ ] Review Daily Briefing",
+        "- [ ] Review Work Intelligence",
+        "- [ ] Clear Inbox captures",
+        "- [ ] Update ticket notes",
+        "- [ ] Capture loose thoughts",
         "",
     ])
 
