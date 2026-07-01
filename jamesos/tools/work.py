@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from jamesos.tools.notes import safe_path
 from jamesos.config import VAULT
+from jamesos.tools.notes import safe_path
 
 
 def create_work_ticket(
@@ -28,6 +28,8 @@ def create_work_ticket(
         return f"Ticket already exists: {path.relative_to(VAULT)}"
 
     path.parent.mkdir(parents=True, exist_ok=True)
+
+    sql_block = "```sql\n\n```"
 
     content = f"""# {safe_ticket_id} - {safe_title}
 
@@ -59,15 +61,20 @@ Created: {date}
 
 ## SQL / Code
 
-```sql
+{sql_block}
 
-Testing
-Deployment Notes
-Rollback Notes
-Communication
-Links
+## Testing
+
+## Deployment Notes
+
+## Rollback Notes
+
+## Communication
+
+## Links
 
 """
-path.write_text(content, encoding="utf-8")
-refresh_dashboards()
-return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
+
+    path.write_text(content, encoding="utf-8")
+    refresh_dashboards()
+    return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
