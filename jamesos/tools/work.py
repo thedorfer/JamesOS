@@ -78,3 +78,72 @@ Created: {date}
     path.write_text(content, encoding="utf-8")
     refresh_dashboards()
     return f"Created {path.relative_to(VAULT)} and refreshed dashboards"
+
+
+def update_work_ticket_status(ticket_id: str, status: str) -> str:
+    from jamesos.services.refresh import refresh_dashboards
+    import shutil
+
+    status_clean = status.strip()
+    ticket_id_clean = ticket_id.strip()
+
+    folder_map = {
+        "active": "Active Tickets",
+        "investigating": "Active Tickets",
+        "waiting": "Waiting",
+        "blocked": "Waiting",
+        "ready for testing": "Ready for Testing",
+        "ready": "Ready for Testing",
+        "testing": "Ready for Testing",
+        "complete": "Completed",
+        "completed": "Completed",
+        "done": "Completed",
+    }
+
+    target_folder_name = folder_map.get(status_clean.lower(), "Active Tickets")
+
+    work_dir = VAULT / "Work"
+    search_dirs = [
+        work_dir / "Active Tickets",
+        work_dir / "Waiting",
+        work_dir / "Ready for Testing",
+        work_dir / "Completed",
+    ]
+
+    current_path = None
+    for folder in search_dirs:
+        candidate = folder / f"{ticket_id_clean}.md"
+        if candidate.exists():
+            current_path = candidate
+            break
+
+    if current_path is None:
+        return f"Ticket not found: {ticket_id_clean}"
+
+    text = current_path.read_text(encoding="utf-8")
+
+    lines = text.splitlines()
+    updated_lines = []
+    replaced = False
+
+    for line in lines:
+        if line.startswith("Status:"):
+            updated_lines.append(f"Status: {status_clean}")
+            replaced = True
+        else:
+            updated_lines.append(line)
+
+    if not replaced:
+        updated_lines.insert(1, f"Status: {status_clean}")
+
+    target_dir = work_dir / target_folder_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target_path = target_dir / current_path.name
+
+    current_path.write_text("\n".join(updated_lines) + "\n", encoding="utf-8")
+
+    if current_path != target_path:
+        shutil.move(str(current_path), str(target_path))
+
+    refresh_dashboards()
+    return f"Updated {ticket_id_clean} to {status_clean} and moved to Work/{target_folder_name}"

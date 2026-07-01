@@ -18,6 +18,7 @@ def build_server() -> FastMCP:
     mcp.tool()(notes.create_daily_note)
     mcp.tool()(notes.create_ticket)
     mcp.tool()(work.create_work_ticket)
+    mcp.tool()(work.update_work_ticket_status)
     mcp.tool()(notes.create_meeting_note)
     mcp.tool()(notes.move_note)
     mcp.tool()(generate_home_dashboard)
