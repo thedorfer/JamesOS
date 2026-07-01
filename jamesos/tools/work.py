@@ -147,3 +147,34 @@ def update_work_ticket_status(ticket_id: str, status: str) -> str:
 
     refresh_dashboards()
     return f"Updated {ticket_id_clean} to {status_clean} and moved to Work/{target_folder_name}"
+
+
+def append_work_ticket_log(ticket_id: str, note: str) -> str:
+    from datetime import datetime
+    from jamesos.services.refresh import refresh_dashboards
+
+    ticket_id_clean = ticket_id.strip()
+    work_dir = VAULT / "Work"
+    search_dirs = [
+        work_dir / "Active Tickets",
+        work_dir / "Waiting",
+        work_dir / "Ready for Testing",
+        work_dir / "Completed",
+    ]
+
+    ticket_path = None
+    for folder in search_dirs:
+        candidate = folder / f"{ticket_id_clean}.md"
+        if candidate.exists():
+            ticket_path = candidate
+            break
+
+    if ticket_path is None:
+        return f"Ticket not found: {ticket_id_clean}"
+
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with ticket_path.open("a", encoding="utf-8") as f:
+        f.write(f"\n## Work Log - {timestamp}\n\n{note.strip()}\n")
+
+    refresh_dashboards()
+    return f"Appended work log to {ticket_path.relative_to(VAULT)}"

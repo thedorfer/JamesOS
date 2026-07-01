@@ -7,25 +7,38 @@ def _link(path: Path) -> str:
     rel = path.relative_to(VAULT).with_suffix("")
     return f"[[{rel.as_posix()}]]"
 
+def _section(title: str, files: list[Path]) -> list[str]:
+    lines = ["", f"## {title}"]
+    if files:
+        lines.extend(f"- {_link(f)}" for f in files)
+    else:
+        lines.append("- None")
+    return lines
+
 def generate_work_dashboard() -> str:
     today = datetime.now().strftime("%Y-%m-%d")
 
     work_dir = VAULT / "Work"
-    active_tickets_dir = work_dir / "Active Tickets"
-    meetings_dir = work_dir / "Meetings"
-    deployments_dir = work_dir / "Deployments"
-    sql_dir = work_dir / "SQL Snippets"
+    folders = {
+        "Active Tickets": work_dir / "Active Tickets",
+        "Waiting": work_dir / "Waiting",
+        "Ready for Testing": work_dir / "Ready for Testing",
+        "Completed": work_dir / "Completed",
+        "Meetings": work_dir / "Meetings",
+        "Deployments": work_dir / "Deployments",
+        "SQL Snippets": work_dir / "SQL Snippets",
+    }
 
-    work_dir.mkdir(parents=True, exist_ok=True)
-    active_tickets_dir.mkdir(parents=True, exist_ok=True)
-    meetings_dir.mkdir(parents=True, exist_ok=True)
-    deployments_dir.mkdir(parents=True, exist_ok=True)
-    sql_dir.mkdir(parents=True, exist_ok=True)
+    for folder in folders.values():
+        folder.mkdir(parents=True, exist_ok=True)
 
-    tickets = sorted(active_tickets_dir.glob("*.md"))
-    meetings = sorted(meetings_dir.glob("*.md"), reverse=True)[:10]
-    deployments = sorted(deployments_dir.glob("*.md"), reverse=True)[:10]
-    sql_notes = sorted(sql_dir.glob("*.md"))[:20]
+    active = sorted(folders["Active Tickets"].glob("*.md"))
+    waiting = sorted(folders["Waiting"].glob("*.md"))
+    ready = sorted(folders["Ready for Testing"].glob("*.md"))
+    completed = sorted(folders["Completed"].glob("*.md"), reverse=True)[:10]
+    meetings = sorted(folders["Meetings"].glob("*.md"), reverse=True)[:10]
+    deployments = sorted(folders["Deployments"].glob("*.md"), reverse=True)[:10]
+    sql_notes = sorted(folders["SQL Snippets"].glob("*.md"))[:20]
 
     lines = [
         "# Work",
@@ -34,53 +47,28 @@ def generate_work_dashboard() -> str:
         "",
         "## Quick Links",
         "- [[Work/Active Tickets]]",
+        "- [[Work/Waiting]]",
+        "- [[Work/Ready for Testing]]",
+        "- [[Work/Completed]]",
         "- [[Work/Meetings]]",
         "- [[Work/Deployments]]",
         "- [[Work/SQL Snippets]]",
-        "",
-        "## Active Tickets",
     ]
 
-    if tickets:
-        lines.extend(f"- {_link(t)}" for t in tickets)
-    else:
-        lines.append("- No active tickets found.")
-
-    lines.extend([
-        "",
-        "## Recent Meetings",
-    ])
-
-    if meetings:
-        lines.extend(f"- {_link(m)}" for m in meetings)
-    else:
-        lines.append("- No meeting notes found.")
-
-    lines.extend([
-        "",
-        "## Recent Deployments",
-    ])
-
-    if deployments:
-        lines.extend(f"- {_link(d)}" for d in deployments)
-    else:
-        lines.append("- No deployment notes found.")
-
-    lines.extend([
-        "",
-        "## SQL Snippets",
-    ])
-
-    if sql_notes:
-        lines.extend(f"- {_link(s)}" for s in sql_notes)
-    else:
-        lines.append("- No SQL snippets found.")
+    lines += _section("Active Tickets", active)
+    lines += _section("Waiting", waiting)
+    lines += _section("Ready for Testing", ready)
+    lines += _section("Recently Completed", completed)
+    lines += _section("Recent Meetings", meetings)
+    lines += _section("Recent Deployments", deployments)
+    lines += _section("SQL Snippets", sql_notes)
 
     lines.extend([
         "",
         "## Work Checklist",
         "- [ ] Review active tickets",
-        "- [ ] Check pending deployments",
+        "- [ ] Check waiting items",
+        "- [ ] Check ready-for-testing items",
         "- [ ] Update ticket notes before end of day",
         "- [ ] Sync notes",
         "",
