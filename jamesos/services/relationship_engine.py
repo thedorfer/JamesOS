@@ -101,3 +101,25 @@ def build_internal_db() -> str:
     relationship_result = build_relationship_index()
 
     return f"{entity_result}\n{relationship_result}"
+
+
+def get_entity_relationships(name: str) -> str:
+    if not RELATIONSHIPS_FILE.exists():
+        build_internal_db()
+
+    data = json.loads(RELATIONSHIPS_FILE.read_text(encoding="utf-8"))
+    name_clean = name.strip().lower()
+
+    matches = []
+
+    for rel in data.get("relationships", {}).values():
+        if rel["source"].lower() == name_clean or rel["target"].lower() == name_clean:
+            other = rel["target"] if rel["source"].lower() == name_clean else rel["source"]
+            other_type = rel["target_type"] if rel["source"].lower() == name_clean else rel["source_type"]
+            files = ", ".join(rel.get("shared_files", []))
+            matches.append(f"- {other} ({other_type}) via {files}")
+
+    if not matches:
+        return f"No relationships found for {name}"
+
+    return f"# Relationships for {name}\n\n" + "\n".join(sorted(matches))
