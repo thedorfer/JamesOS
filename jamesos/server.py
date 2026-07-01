@@ -8,6 +8,7 @@ from jamesos.services.refresh import refresh_dashboards
 from jamesos.services.day import start_day
 from jamesos.services.eod import end_day
 from jamesos.services.indexer import build_entity_index
+from jamesos.services.relationship_engine import build_internal_db, build_relationship_index
 
 def build_server() -> FastMCP:
     mcp = FastMCP("JamesOS")
@@ -31,6 +32,8 @@ def build_server() -> FastMCP:
     mcp.tool()(start_day)
     mcp.tool()(end_day)
     mcp.tool()(build_entity_index)
+    mcp.tool()(build_relationship_index)
+    mcp.tool()(build_internal_db)
 
     return mcp
 

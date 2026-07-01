@@ -3,7 +3,7 @@ from pathlib import Path
 
 from jamesos.config import VAULT
 from jamesos.services.refresh import refresh_dashboards
-from jamesos.services.indexer import build_entity_index
+from jamesos.services.relationship_engine import build_internal_db
 
 
 def start_day() -> str:
@@ -39,6 +39,6 @@ def start_day() -> str:
             encoding="utf-8",
         )
 
-    build_entity_index()
+    build_internal_db()
     refresh_dashboards()
-    return f"Started day: {daily_path.relative_to(VAULT)}, rebuilt knowledge index, and refreshed dashboards"
+    return f"Started day: {daily_path.relative_to(VAULT)}, rebuilt internal database, and refreshed dashboards"
