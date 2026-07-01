@@ -3,30 +3,41 @@ from pathlib import Path
 
 from jamesos.config import VAULT
 
-INDEX_ROOT = VAULT / "JamesOS" / "Index"
-RELATIONSHIPS_FILE = INDEX_ROOT / "relationships.json"
-SEARCH_FILE = INDEX_ROOT / "search.json"
+DATABASE_FILE = VAULT / "JamesOS" / "Database" / "jamesos_db.json"
+
+
+def _load_db() -> dict:
+    if not DATABASE_FILE.exists():
+        from jamesos.services.database import build_database
+        build_database()
+    return json.loads(DATABASE_FILE.read_text(encoding="utf-8"))
 
 
 def build_context(entity: str) -> str:
+    db = _load_db()
     entity_clean = entity.strip()
+    entity_lower = entity_clean.lower()
 
-    if not RELATIONSHIPS_FILE.exists():
-        from jamesos.services.relationship_engine import build_internal_db
-        build_internal_db()
-
-    relationships = json.loads(RELATIONSHIPS_FILE.read_text(encoding="utf-8"))
+    relationships = db.get("relationships", {}).get("relationships", {})
+    search_entries = db.get("search", {}).get("entries", [])
 
     related = []
     files = set()
 
-    for rel in relationships.get("relationships", {}).values():
-        if rel["source"].lower() == entity_clean.lower():
-            related.append((rel["target"], rel["target_type"], rel.get("shared_files", [])))
+    for rel in relationships.values():
+        source = rel.get("source", "")
+        target = rel.get("target", "")
+
+        if source.lower() == entity_lower:
+            related.append((target, rel.get("target_type", ""), rel.get("shared_files", [])))
             files.update(rel.get("shared_files", []))
-        elif rel["target"].lower() == entity_clean.lower():
-            related.append((rel["source"], rel["source_type"], rel.get("shared_files", [])))
+        elif target.lower() == entity_lower:
+            related.append((source, rel.get("source_type", ""), rel.get("shared_files", [])))
             files.update(rel.get("shared_files", []))
+
+    for entry in search_entries:
+        if entity_lower in entry.get("title", "").lower() or entity_lower in entry.get("content", ""):
+            files.add(entry.get("file", ""))
 
     lines = [
         f"# Context: {entity_clean}",
@@ -35,45 +46,41 @@ def build_context(entity: str) -> str:
     ]
 
     if related:
-        for name, type_, shared_files in sorted(related):
-            lines.append(f"- {name} ({type_})")
+        for name, type_name, shared_files in sorted(related):
+            lines.append(f"- {name} ({type_name})")
             for file in shared_files:
                 lines.append(f"  - [[{Path(file).with_suffix('').as_posix()}]]")
     else:
         lines.append("- None found")
 
-    lines.extend([
-        "",
-        "## Related Files",
-    ])
+    lines.extend(["", "## Related Files"])
 
-    if files:
-        for file in sorted(files):
+    clean_files = sorted(f for f in files if f)
+    if clean_files:
+        for file in clean_files:
             lines.append(f"- [[{Path(file).with_suffix('').as_posix()}]]")
     else:
         lines.append("- None found")
 
-    lines.extend([
-        "",
-        "## Source Notes",
-    ])
+    lines.extend(["", "## Source Previews"])
 
-    for file in sorted(files):
+    for file in clean_files[:10]:
         path = VAULT / file
         if path.exists():
-            lines.append(f"### [[{Path(file).with_suffix('').as_posix()}]]")
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            preview = text[:1000].strip()
-            lines.append("")
-            lines.append(preview)
-            lines.append("")
+            text = path.read_text(encoding="utf-8", errors="ignore").strip()
+            preview = text[:1200]
+            lines.extend([
+                f"### [[{Path(file).with_suffix('').as_posix()}]]",
+                "",
+                preview,
+                "",
+            ])
 
     return "\n".join(lines)
 
 
 def write_context_report(entity: str) -> str:
     report = build_context(entity)
-
     reports_dir = VAULT / "JamesOS" / "Reports" / "Context"
     reports_dir.mkdir(parents=True, exist_ok=True)
 

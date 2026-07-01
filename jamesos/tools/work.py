@@ -34,10 +34,10 @@ def create_work_ticket(
     content = f"""# {safe_ticket_id} - {safe_title}
 
 Type: {ticket_type}
-Customer: {customer}
+Customer: [[JamesOS/Knowledge/Customers/{customer}]]
 Status: {status}
-Environment: {environment}
-Schema: {schema}
+Environment: [[JamesOS/Knowledge/Environments/{environment}]]
+Schema: [[JamesOS/Knowledge/Systems/{schema}]]
 Assigned To: {assigned_to}
 Tester: {tester}
 Created: {date}
