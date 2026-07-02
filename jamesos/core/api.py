@@ -8,6 +8,7 @@ from jamesos.services.status_report import generate_status_report
 from jamesos.services.briefing import generate_daily_briefing
 from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
+from jamesos.services.rich_context import build_rich_context
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 
@@ -120,12 +121,16 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     context_file = VAULT / "JamesOS" / "Reports" / "Context" / f"{safe}.md"
     graph_context = context_file.read_text(encoding="utf-8", errors="ignore") if context_file.exists() else context_result
     search_context = _read_search_context(retrieval_query)
+    rich_context = build_rich_context(retrieval_query)
 
     combined_context = (
         "# Graph Context\n\n"
-        + graph_context[:8000]
+        + graph_context[:6000]
         + "\n\n---\n\n"
-        + search_context[:8000]
+        + "# Search Context\n\n"
+        + search_context[:5000]
+        + "\n\n---\n\n"
+        + rich_context[:9000]
     )
 
     if req.use_ai and ollama_enabled():
@@ -135,7 +140,7 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
             "Prefer concrete facts, dates, names, links, and next actions. "
             "If the answer is not in the context, say what is missing.\n\n"
             f"Question: {req.question}\nRetrieval Query: {retrieval_query}\n\n"
-            f"Context:\n{combined_context[:14000]}"
+            f"Context:\n{combined_context[:18000]}"
         )
         answer = ask_ollama(prompt)
     else:
