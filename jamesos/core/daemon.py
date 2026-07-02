@@ -21,6 +21,7 @@ from jamesos.services.proactive_assistant import generate_proactive_briefing
 from jamesos.services.typed_index import build_typed_indexes
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.jade_brain import summarize_chat_history
+from jamesos.services.knowledge_graph import build_knowledge_graph
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 

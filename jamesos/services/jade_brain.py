@@ -9,6 +9,7 @@ from jamesos.services.typed_index import search_typed_indexes
 from jamesos.services.tool_router import detect_tool, route_tool
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.personality import jade_personality_prompt
+from jamesos.services.knowledge_graph import graph_lookup
 
 
 BRAIN_ROOT = VAULT / "JamesOS" / "Brain"
@@ -175,6 +176,13 @@ def gather_context(question: str, intent: str, sources: list[str]) -> dict:
     if "memory" in sources:
         context["results"]["memory"] = search_memory(question, limit=8)
 
+    if context.get("people") or context.get("tickets"):
+        graph_terms = context.get("people") or context.get("tickets")
+        context["results"]["knowledge_graph"] = {
+            term: graph_lookup(term, limit=10)
+            for term in graph_terms
+        }
+
     if "conversation_summaries" in sources or "chat" in sources:
         context["results"]["conversation_summaries"] = search_conversations(question, limit=8)
 
@@ -305,8 +313,10 @@ def _sensitive_file_lookup(question: str) -> dict | None:
     score, path, value, snippet = matches[0]
     rel = path.relative_to(VAULT).with_suffix("").as_posix()
 
+    display_source = Path(rel).stem.replace("_", " ")
+
     return {
-        "answer": f"I found it.\n\n**SSN:** `{value}`\n\nSource: [[{rel}]]",
+        "answer": f"Yep.\n\n**SSN**\n`{value}`\n\n*Found in {display_source}.*",
         "source": rel,
         "score": score,
         "snippet": snippet,

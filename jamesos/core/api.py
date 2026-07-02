@@ -14,6 +14,7 @@ from jamesos.services.rich_context import build_rich_context
 from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.jade_planner import answer_with_planner
 from jamesos.services.jade_brain import answer_with_brain, summarize_chat_history
+from jamesos.services.knowledge_graph import build_knowledge_graph, graph_lookup
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
@@ -327,3 +328,15 @@ def chat_clear(x_jamesos_key: str | None = Header(default=None)):
 def brain_summarize_chat(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return {"result": summarize_chat_history()}
+
+
+@app.post("/graph/build")
+def graph_build(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": build_knowledge_graph()}
+
+
+@app.get("/graph/search")
+def graph_search(q: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return graph_lookup(q)
