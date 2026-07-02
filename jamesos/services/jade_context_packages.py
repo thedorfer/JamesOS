@@ -5,6 +5,11 @@ from pathlib import Path
 from jamesos.config import VAULT
 from jamesos.services.memory_service import search_memory
 from jamesos.services.knowledge_graph import graph_lookup
+from jamesos.services.world_model import (
+    ensure_world_model,
+    world_model_dashboard_cards,
+    world_model_summary,
+)
 
 
 VALID_MODES = {"personal", "work", "gcu", "family", "jamesos"}
@@ -47,7 +52,7 @@ def mode_directive(mode: str | None) -> str:
         "personal": "Prioritize James's most useful personal-assistant context across work, GCU, family, JamesOS, calendar, and memory.",
         "work": "Prioritize WGL work, tickets, deployments, blockers, Oracle/PLSQL, SFM2/SBX/R2QA, and people such as Kevin, Malcolm, Tom, Ian, and Elias.",
         "gcu": "Prioritize teaching work, grading, announcements, students, courses, assignments, and instructor-ready wording.",
-        "family": "Prioritize family logistics, school, birthdays, appointments, trips, home, reminders, and practical next steps.",
+        "family": "Prioritize verified family logistics, school, birthdays, appointments, trips, home, reminders, and practical next steps. Do not infer family from stale people/ticket indexes.",
         "jamesos": "Prioritize JamesOS architecture, Flutter Jade app, backend API, git/deploy workflow, services, memory, knowledge graph, and next coding tasks.",
     }[mode]
 
@@ -63,6 +68,7 @@ def _report(name: str, limit: int = 1800) -> str:
 
 
 def build_context_package(question: str, mode: str | None = None) -> str:
+    ensure_world_model()
     mode = normalize_mode(mode)
     query = mode_query(mode)
 
@@ -70,7 +76,7 @@ def build_context_package(question: str, mode: str | None = None) -> str:
         "personal": ["Daily Briefing", "Proactive Assistant", "People"],
         "work": ["Work Intelligence", "Proactive Assistant", "People"],
         "gcu": ["Daily Briefing", "Proactive Assistant"],
-        "family": ["Daily Briefing", "People", "Proactive Assistant"],
+        "family": ["Daily Briefing", "Proactive Assistant"],
         "jamesos": ["Knowledge Graph", "Proactive Assistant", "Daily Briefing"],
     }[mode]
 
@@ -82,13 +88,22 @@ def build_context_package(question: str, mode: str | None = None) -> str:
         "",
         f"Mode directive: {mode_directive(mode)}",
         "",
+        world_model_summary(mode),
+        "",
         f"James asked: {question}",
         "",
     ]
 
     memory = search_memory(query, limit=8)
-    if memory:
+    if memory and mode != "family":
         sections.extend(["## Relevant memory", str(memory)[:3000], ""])
+    elif memory and mode == "family":
+        sections.extend([
+            "## Lower-trust family memory",
+            "Use this only for reminders/logistics. Do not treat names or relationships here as verified unless confirmed by the Verified World Model.",
+            str(memory)[:1800],
+            "",
+        ])
 
     for report in reports:
         text = _report(report, limit=2200)
@@ -110,8 +125,15 @@ def build_context_package(question: str, mode: str | None = None) -> str:
         if nodes:
             graph_lines.append(f"{term}: {len(nodes)} related items")
 
-    if graph_lines:
+    if graph_lines and mode != "family":
         sections.extend(["## Knowledge graph summary", "\n".join(graph_lines), ""])
+    elif graph_lines and mode == "family":
+        sections.extend([
+            "## Lower-trust graph summary",
+            "Use this only as a weak hint. Do not infer family membership from it.",
+            "\n".join(graph_lines),
+            "",
+        ])
 
     return "\n".join(sections)[:12000]
 
@@ -129,11 +151,13 @@ def _card(title: str, body: str, kind: str = "info", prompt: str | None = None) 
 
 
 def dashboard_cards(mode: str | None = None) -> dict:
+    ensure_world_model()
     mode = normalize_mode(mode)
     label = mode_label(mode)
     query = mode_query(mode)
 
     cards: list[dict] = []
+    cards.extend(world_model_dashboard_cards(mode))
     cards.append(_card(
         f"{label} mode is active",
         mode_directive(mode),
@@ -141,9 +165,8 @@ def dashboard_cards(mode: str | None = None) -> dict:
         mode_brief_prompt(mode),
     ))
 
-    # These are live-ish cards: generated from current reports/memory each time the app opens.
     memory = str(search_memory(query, limit=3) or "").strip()
-    if memory:
+    if memory and mode != "family":
         compact = " ".join(memory.split())[:180]
         cards.append(_card("Recent memory", compact, "memory", mode_brief_prompt(mode)))
 
