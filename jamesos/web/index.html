@@ -13,20 +13,28 @@
     .user { background:#2563eb; align-self:flex-end; max-width:80%; }
     .jade { background:#374151; align-self:flex-start; max-width:90%; }
     form { position:fixed; bottom:0; left:0; right:0; background:#1f2937; padding:12px; display:flex; gap:8px; }
-    input, textarea { flex:1; border-radius:10px; border:0; padding:12px; font-size:16px; }
+    input { flex:1; border-radius:10px; border:0; padding:12px; font-size:16px; }
     button { border:0; border-radius:10px; padding:0 16px; font-size:16px; font-weight:700; background:#10b981; color:#052e1b; }
-    .settings { display:flex; gap:8px; margin-bottom:12px; }
-    .settings input { width:100%; }
+    #pairBox { max-width:700px; margin:24px auto; background:#1f2937; border:1px solid #374151; border-radius:14px; padding:16px; }
+    #app { display:none; }
+    .muted { color:#9ca3af; font-size:14px; }
   </style>
 </head>
 <body>
   <header>Jade · JamesOS</header>
+
   <main>
-    <div class="settings">
-      <input id="key" type="password" placeholder="JamesOS API key" />
-      <button onclick="saveKey()" type="button">Save</button>
+    <div id="pairBox">
+      <h2>Pair this device with Jade</h2>
+      <p class="muted">Paste the JamesOS key once. It will be saved on this device and hidden after pairing.</p>
+      <input id="key" type="password" placeholder="Pairing key" />
+      <button onclick="pairDevice()" type="button">Pair</button>
+      <p id="pairStatus" class="muted"></p>
     </div>
-    <div id="chat"></div>
+
+    <div id="app">
+      <div id="chat"></div>
+    </div>
   </main>
 
   <form id="form">
@@ -36,12 +44,19 @@
 
 <script>
 const chat = document.getElementById("chat");
+const pairBox = document.getElementById("pairBox");
+const app = document.getElementById("app");
 const keyInput = document.getElementById("key");
-keyInput.value = localStorage.getItem("jamesos_key") || "";
+const pairStatus = document.getElementById("pairStatus");
 
-function saveKey() {
-  localStorage.setItem("jamesos_key", keyInput.value);
-  add("jade", "Saved API key on this device.");
+function getKey() {
+  return localStorage.getItem("jamesos_key") || "";
+}
+
+function showApp() {
+  pairBox.style.display = "none";
+  app.style.display = "block";
+  add("jade", "Hi James. Jade is ready.");
 }
 
 function add(who, text) {
@@ -52,13 +67,44 @@ function add(who, text) {
   window.scrollTo(0, document.body.scrollHeight);
 }
 
+async function pairDevice() {
+  const candidate = keyInput.value.trim();
+  if (!candidate) return;
+
+  pairStatus.textContent = "Checking key...";
+
+  try {
+    const res = await fetch("/mobile/home", {
+      headers: { "X-JamesOS-Key": candidate }
+    });
+
+    if (!res.ok) {
+      pairStatus.textContent = "Pairing failed. Check the key.";
+      return;
+    }
+
+    localStorage.setItem("jamesos_key", candidate);
+    keyInput.value = "";
+    pairStatus.textContent = "";
+    showApp();
+  } catch (err) {
+    pairStatus.textContent = "Pairing error: " + err;
+  }
+}
+
 document.getElementById("form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const q = document.getElementById("q");
-  const question = q.value.trim();
-  if (!question) return;
-  q.value = "";
 
+  const questionBox = document.getElementById("q");
+  const question = questionBox.value.trim();
+  if (!question) return;
+
+  if (!getKey()) {
+    pairStatus.textContent = "Pair this device first.";
+    return;
+  }
+
+  questionBox.value = "";
   add("user", question);
   add("jade", "Thinking...");
 
@@ -67,7 +113,7 @@ document.getElementById("form").addEventListener("submit", async (e) => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-JamesOS-Key": localStorage.getItem("jamesos_key") || ""
+        "X-JamesOS-Key": getKey()
       },
       body: JSON.stringify({ question, use_ai: true })
     });
@@ -78,6 +124,10 @@ document.getElementById("form").addEventListener("submit", async (e) => {
     chat.lastChild.textContent = "Error: " + err;
   }
 });
+
+if (getKey()) {
+  showApp();
+}
 </script>
 </body>
 </html>
