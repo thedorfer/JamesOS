@@ -10,6 +10,7 @@ class SettingsService {
       assistantName: prefs.getString('assistantName') ?? 'Jade',
       useAi: prefs.getBool('useAi') ?? true,
       voiceReplies: prefs.getBool('voiceReplies') ?? false,
+      connectionLocked: prefs.getBool('connectionLocked') ?? true,
     );
   }
 
@@ -20,5 +21,6 @@ class SettingsService {
     await prefs.setString('assistantName', settings.assistantName);
     await prefs.setBool('useAi', settings.useAi);
     await prefs.setBool('voiceReplies', settings.voiceReplies);
+    await prefs.setBool('connectionLocked', settings.connectionLocked);
   }
 }
