@@ -11,7 +11,7 @@ from jamesos.services.briefing import generate_daily_briefing
 from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.rich_context import build_rich_context
-from jamesos.services.agent import ask_agent
+from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
@@ -166,13 +166,13 @@ def search(q: str, x_jamesos_key: str | None = Header(default=None)):
 @app.post("/ask")
 def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return ask_agent(req.question, use_ai=req.use_ai)
+    return handle_jade_message(req.question, use_ai=req.use_ai)
 
 
 @app.get("/ask")
 def ask_get(q: str, use_ai: bool = True, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return ask_agent(q, use_ai=use_ai)
+    return handle_jade_message(q, use_ai=use_ai)
 
 
 @app.get("/daily-briefing")

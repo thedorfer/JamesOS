@@ -7,6 +7,8 @@ from jamesos.config import VAULT
 from jamesos.services.rich_context import build_rich_context
 from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
+from jamesos.services.tool_router import detect_tool, route_tool
+from jamesos.services.memory_service import remember
 
 
 @dataclass
@@ -182,3 +184,61 @@ def write_agent_report(question: str) -> str:
 
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return f"Wrote agent report: {path.relative_to(VAULT)}"
+
+
+def handle_jade_message(message: str, use_ai: bool = True) -> dict:
+    text = message.strip()
+    lower = text.lower()
+
+    if lower.startswith(("remember ", "remember that ")):
+        memory_text = text
+        for prefix in ["remember that ", "remember "]:
+            if lower.startswith(prefix):
+                memory_text = text[len(prefix):].strip()
+                break
+
+        item = remember(memory_text, source="jade_chat", importance="normal")
+        return {
+            "question": message,
+            "answer": f"Remembered: {memory_text}",
+            "action": "memory",
+            "memory": item,
+        }
+
+    if lower.startswith(("take a note ", "note ", "capture ")):
+        from jamesos.core.queue import enqueue_job
+
+        note_text = text
+        for prefix in ["take a note ", "note ", "capture "]:
+            if lower.startswith(prefix):
+                note_text = text[len(prefix):].strip()
+                break
+
+        result = enqueue_job("intake", {
+            "title": "Jade Note",
+            "content": note_text,
+            "source": "jade_chat",
+            "source_detail": "single_box",
+        })
+
+        return {
+            "question": message,
+            "answer": f"Saved note: {note_text}",
+            "action": "note",
+            "result": result,
+        }
+
+    tool = detect_tool(text)
+    if tool != "local":
+        result = route_tool(text)
+        return {
+            "question": message,
+            "answer": result.get("result", ""),
+            "action": "tool",
+            "tool": result.get("tool"),
+            "tool_result": result,
+        }
+
+    result = ask_agent(message, use_ai=use_ai)
+    result["action"] = "agent"
+    return result
