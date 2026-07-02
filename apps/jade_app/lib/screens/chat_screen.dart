@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/app_mode.dart';
 import '../models/chat_message.dart';
+import '../models/dashboard_card.dart';
 import '../models/jade_settings.dart';
 import '../services/api_service.dart';
 import '../services/settings_service.dart';
@@ -25,6 +26,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool loading = false;
   bool serverOnline = false;
   AppMode selectedMode = AppMode.personal;
+  List<DashboardCard> dashboardCards = [];
 
   final messages = <ChatMessage>[
     ChatMessage(role: 'jade', text: 'Hi James. Jade is ready.'),
@@ -48,6 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!mounted) return;
     setState(() => settings = loaded);
     await refreshStatus();
+    await refreshDashboard();
   }
 
   Future<void> refreshStatus() async {
@@ -61,6 +64,18 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> refreshDashboard() async {
+    if (settings.apiKey.isEmpty) return;
+    try {
+      final cards = await api.dashboard(settings, selectedMode.key);
+      if (!mounted) return;
+      setState(() => dashboardCards = cards);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => dashboardCards = []);
+    }
+  }
+
   Future<void> openSettings() async {
     final updated = await Navigator.push<JadeSettings>(
       context,
@@ -70,22 +85,13 @@ class _ChatScreenState extends State<ChatScreen> {
     if (updated != null) {
       setState(() => settings = updated);
       await refreshStatus();
+      await refreshDashboard();
     }
   }
 
-  String requestForMode(String question) {
-    return '''Mode: ${selectedMode.label}
-${selectedMode.directive}
-
-James asked:
-$question''';
-  }
-
-  Future<void> askJade({String? overrideQuestion, bool applyMode = true}) async {
+  Future<void> askJade({String? overrideQuestion}) async {
     final question = (overrideQuestion ?? input.text).trim();
     if (question.isEmpty || loading) return;
-
-    final requestQuestion = applyMode ? requestForMode(question) : question;
 
     setState(() {
       messages.add(ChatMessage(role: 'user', text: question));
@@ -97,9 +103,10 @@ $question''';
     scrollToBottom();
 
     try {
-      final response = await api.ask(settings, requestQuestion);
+      final response = await api.ask(settings, question, mode: selectedMode.key);
       setState(() => messages[messages.length - 1] = response);
       await refreshStatus();
+      await refreshDashboard();
     } catch (e) {
       setState(() {
         serverOnline = false;
@@ -132,9 +139,10 @@ $question''';
     });
   }
 
-  void runMode(AppMode mode) {
+  Future<void> changeMode(AppMode? mode) async {
+    if (mode == null || mode == selectedMode) return;
     setState(() => selectedMode = mode);
-    askJade(overrideQuestion: mode.briefingPrompt, applyMode: false);
+    await refreshDashboard();
   }
 
   IconData modeIcon(AppMode mode) => switch (mode) {
@@ -145,51 +153,86 @@ $question''';
         AppMode.personal => Icons.auto_awesome_outlined,
       };
 
-  Widget buildStatusRow() {
-    return Row(
-      children: [
-        StatusChip(online: serverOnline, onTap: refreshStatus),
-        const Spacer(),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: Colors.tealAccent.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.22)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(modeIcon(selectedMode), size: 15, color: Colors.tealAccent.shade100),
-              const SizedBox(width: 6),
-              Text(
-                '${selectedMode.shortLabel} mode',
-                style: TextStyle(
-                  color: Colors.tealAccent.shade100,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
+  Widget buildModeDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.22)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<AppMode>(
+          value: selectedMode,
+          borderRadius: BorderRadius.circular(18),
+          icon: const Icon(Icons.keyboard_arrow_down),
+          items: AppMode.values
+              .map(
+                (mode) => DropdownMenuItem(
+                  value: mode,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(modeIcon(mode), size: 18, color: Colors.tealAccent.shade100),
+                      const SizedBox(width: 8),
+                      Text(mode.label),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
+              )
+              .toList(),
+          onChanged: changeMode,
         ),
-      ],
+      ),
     );
   }
 
-  Widget modeChip(AppMode mode) {
-    final selected = selectedMode == mode;
-    return ChoiceChip(
-      selected: selected,
-      avatar: Icon(modeIcon(mode), size: 18),
-      label: Text(mode.label),
-      onSelected: (_) => runMode(mode),
-      selectedColor: Colors.tealAccent.withValues(alpha: 0.22),
-      backgroundColor: Colors.white.withValues(alpha: 0.045),
-      side: BorderSide(
-        color: selected
-            ? Colors.tealAccent.withValues(alpha: 0.48)
-            : Colors.white.withValues(alpha: 0.12),
+  Widget buildLiveCard(DashboardCard card) {
+    final icon = switch (card.kind) {
+      'memory' => Icons.history,
+      'report' => Icons.article_outlined,
+      'action' => Icons.flash_on,
+      'mode' => Icons.tune,
+      _ => Icons.auto_awesome,
+    };
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => askJade(overrideQuestion: card.prompt),
+      child: Container(
+        width: 245,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade900,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 18, color: Colors.tealAccent.shade100),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    card.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              card.body,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white.withValues(alpha: 0.76), fontSize: 12.5),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -197,43 +240,56 @@ $question''';
   Widget buildDashboardCard() {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.teal.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.25)),
+        color: Colors.teal.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.22)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Good afternoon, James',
-            style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Good afternoon, James',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Refresh live cards',
+                onPressed: refreshDashboard,
+                icon: const Icon(Icons.refresh),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
-          buildStatusRow(),
-          const SizedBox(height: 12),
-          Text(
-            'Currently in ${selectedMode.label} mode. Jade will bias answers toward what matters there.',
-            style: const TextStyle(fontWeight: FontWeight.w600),
+          Row(
+            children: [
+              buildModeDropdown(),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: loading ? null : () => askJade(overrideQuestion: selectedMode.briefingPrompt),
+                icon: const Icon(Icons.flash_on, size: 18),
+                label: const Text('Brief me'),
+              ),
+            ],
           ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: AppMode.values.map(modeChip).toList(),
-          ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: loading
-                ? null
-                : () => askJade(
-                      overrideQuestion: selectedMode.briefingPrompt,
-                      applyMode: false,
-                    ),
-            icon: const Icon(Icons.flash_on),
-            label: Text('Brief me in ${selectedMode.label}'),
-          ),
+          if (dashboardCards.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Text('Live cards', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 125,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: dashboardCards.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (_, i) => buildLiveCard(dashboardCards[i]),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -244,13 +300,7 @@ $question''';
       children: [
         Text(settings.assistantName),
         const SizedBox(width: 10),
-        Flexible(
-          child: StatusChip(
-            online: serverOnline,
-            label: 'OS',
-            onTap: refreshStatus,
-          ),
-        ),
+        Flexible(child: StatusChip(online: serverOnline, label: 'OS', onTap: refreshStatus)),
       ],
     );
   }
