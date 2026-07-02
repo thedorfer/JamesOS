@@ -20,11 +20,20 @@ class ApiService {
     );
 
     final data = jsonDecode(res.body);
+    final planner = data['planner'];
+    final reasoner = data['reasoner'];
+    final reasonerSources = reasoner is Map ? reasoner['sources'] : null;
+    final rawSources = reasonerSources ?? planner;
+    final sources = rawSources is List
+        ? rawSources.map((item) => item.toString()).toList()
+        : <String>[];
+
     return ChatMessage(
       role: 'jade',
       text: data['answer']?.toString() ?? res.body,
       confidenceLabel: data['confidence_label']?.toString(),
       action: data['action']?.toString(),
+      sources: sources,
     );
   }
 }
