@@ -7,12 +7,13 @@ from jamesos.config import VAULT
 
 QUEUE_ROOT = VAULT / "JamesOS" / "Queue"
 PENDING = QUEUE_ROOT / "pending"
+IN_PROGRESS = QUEUE_ROOT / "in_progress"
 PROCESSED = QUEUE_ROOT / "processed"
 FAILED = QUEUE_ROOT / "failed"
 
 
 def ensure_queue_dirs() -> None:
-    for folder in [PENDING, PROCESSED, FAILED]:
+    for folder in [PENDING, IN_PROGRESS, PROCESSED, FAILED]:
         folder.mkdir(parents=True, exist_ok=True)
 
 

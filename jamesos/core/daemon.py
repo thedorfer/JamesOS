@@ -6,7 +6,7 @@ from pathlib import Path
 
 from jamesos.config import VAULT
 from jamesos.config.loader import daemon_interval_seconds, plugin_enabled, plugin_interval_seconds
-from jamesos.core.queue import PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
+from jamesos.core.queue import IN_PROGRESS, PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
 from jamesos.services.intake import intake_item
 from jamesos.services.job_engine import run_job
 from jamesos.integrations.gmail_importer import finalize_gmail_thread
@@ -69,12 +69,20 @@ def run_once() -> str:
     results = []
 
     for path in jobs:
+        claimed = IN_PROGRESS / path.name
+
         try:
-            results.append(_process_job(path))
+            path.rename(claimed)
+        except FileNotFoundError:
+            continue
+
+        try:
+            results.append(_process_job(claimed))
         except Exception as exc:
-            failed_path = FAILED / path.name
-            shutil.move(str(path), str(failed_path))
-            results.append(f"Failed job {path.name}: {exc}")
+            failed_path = FAILED / claimed.name
+            if claimed.exists():
+                shutil.move(str(claimed), str(failed_path))
+            results.append(f"Failed job {claimed.name}: {exc}")
 
     return "\n".join(results)
 
