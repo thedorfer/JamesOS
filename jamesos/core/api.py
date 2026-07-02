@@ -27,6 +27,30 @@ class AskRequest(BaseModel):
 
 
 
+
+def _search_query_from_question(question: str) -> str:
+    q = question.strip()
+
+    prefixes = [
+        "what do you know about ",
+        "tell me about ",
+        "summarize ",
+        "what is ",
+        "who is ",
+        "show me ",
+        "find ",
+    ]
+
+    lower = q.lower()
+    for prefix in prefixes:
+        if lower.startswith(prefix):
+            q = q[len(prefix):].strip()
+            break
+
+    q = q.rstrip(" ?.")
+    return q or question
+
+
 def _read_search_context(query: str, limit: int = 8) -> str:
     from jamesos.services.search_service import search_notes_index
 
@@ -90,11 +114,12 @@ def search(q: str, x_jamesos_key: str | None = Header(default=None)):
 def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
 
-    context_result = build_context_report(req.question, use_ai=False)
+    retrieval_query = _search_query_from_question(req.question)
+    context_result = build_context_report(retrieval_query, use_ai=False)
     safe = "".join(c if c.isalnum() or c in " -_" else "-" for c in req.question)[:80]
     context_file = VAULT / "JamesOS" / "Reports" / "Context" / f"{safe}.md"
     graph_context = context_file.read_text(encoding="utf-8", errors="ignore") if context_file.exists() else context_result
-    search_context = _read_search_context(req.question)
+    search_context = _read_search_context(retrieval_query)
 
     combined_context = (
         "# Graph Context\n\n"
@@ -109,7 +134,7 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
             "Answer using only the context below. Be concise and practical. "
             "Prefer concrete facts, dates, names, links, and next actions. "
             "If the answer is not in the context, say what is missing.\n\n"
-            f"Question: {req.question}\n\n"
+            f"Question: {req.question}\nRetrieval Query: {retrieval_query}\n\n"
             f"Context:\n{combined_context[:14000]}"
         )
         answer = ask_ollama(prompt)
