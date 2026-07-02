@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_tts/flutter_tts.dart';
 import '../models/app_mode.dart';
 import '../models/chat_message.dart';
 import '../models/dashboard_card.dart';
@@ -21,10 +22,12 @@ class _ChatScreenState extends State<ChatScreen> {
   final input = TextEditingController();
   final scroll = ScrollController();
   final api = ApiService();
+  final tts = FlutterTts();
 
   JadeSettings settings = JadeSettings();
   bool loading = false;
   bool serverOnline = false;
+  bool speaking = false;
   AppMode selectedMode = AppMode.personal;
   List<DashboardCard> dashboardCards = [];
 
@@ -35,6 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void initState() {
     super.initState();
+    configureVoice();
     loadSettings();
   }
 
@@ -42,7 +46,60 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     input.dispose();
     scroll.dispose();
+    tts.stop();
     super.dispose();
+  }
+
+  Future<void> configureVoice() async {
+    await tts.setLanguage('en-US');
+    await tts.setSpeechRate(0.46);
+    await tts.setPitch(1.03);
+    await tts.awaitSpeakCompletion(false);
+    tts.setStartHandler(() {
+      if (mounted) setState(() => speaking = true);
+    });
+    tts.setCompletionHandler(() {
+      if (mounted) setState(() => speaking = false);
+    });
+    tts.setCancelHandler(() {
+      if (mounted) setState(() => speaking = false);
+    });
+    tts.setErrorHandler((_) {
+      if (mounted) setState(() => speaking = false);
+    });
+  }
+
+  String speechText(String text) {
+    return text
+        .replaceAll(RegExp(r'`([^`]*)`'), r'$1')
+        .replaceAll(RegExp(r'\*'), '')
+        .replaceAll(RegExp(r'#+\s*'), '')
+        .replaceAll(RegExp(r'\[[^\]]*\]\([^\)]*\)'), '')
+        .replaceAll(RegExp(r'[🟢🟡🔴⚪✨⚡]'), '')
+        .replaceAll(RegExp(r'\n{2,}'), '. ')
+        .replaceAll('\n', '. ')
+        .trim();
+  }
+
+  Future<void> speak(String text) async {
+    if (!settings.voiceReplies) return;
+    final cleaned = speechText(text);
+    if (cleaned.isEmpty) return;
+    await tts.stop();
+    await tts.speak(cleaned);
+  }
+
+  Future<void> toggleSpeech() async {
+    if (speaking) {
+      await tts.stop();
+      setState(() => speaking = false);
+      return;
+    }
+
+    final lastJade = messages.reversed.where((m) => !m.isUser).firstOrNull;
+    if (lastJade != null) {
+      await speak(lastJade.text);
+    }
   }
 
   Future<void> loadSettings() async {
@@ -105,18 +162,21 @@ class _ChatScreenState extends State<ChatScreen> {
     try {
       final response = await api.ask(settings, question, mode: selectedMode.key);
       setState(() => messages[messages.length - 1] = response);
+      await speak(response.text);
       await refreshStatus();
       await refreshDashboard();
     } catch (e) {
+      final error = ChatMessage(
+        role: 'jade',
+        text: 'I could not reach JamesOS.\n\n`$e`',
+        confidenceLabel: '🔴 Low',
+        action: 'connection_error',
+      );
       setState(() {
         serverOnline = false;
-        messages[messages.length - 1] = ChatMessage(
-          role: 'jade',
-          text: 'I could not reach JamesOS.\n\n`$e`',
-          confidenceLabel: '🔴 Low',
-          action: 'connection_error',
-        );
+        messages[messages.length - 1] = error;
       });
+      await speak(error.text);
     } finally {
       setState(() => loading = false);
       Future.delayed(const Duration(milliseconds: 100), scrollToBottom);
@@ -133,7 +193,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void clearChat() {
+    tts.stop();
     setState(() {
+      speaking = false;
       messages.clear();
       messages.add(ChatMessage(role: 'jade', text: 'Fresh chat. I am ready.'));
     });
@@ -257,6 +319,11 @@ class _ChatScreenState extends State<ChatScreen> {
                   'Good afternoon, James',
                   style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                 ),
+              ),
+              IconButton(
+                tooltip: speaking ? 'Stop voice' : 'Replay last response',
+                onPressed: settings.voiceReplies ? toggleSpeech : null,
+                icon: Icon(speaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined),
               ),
               IconButton(
                 tooltip: 'Refresh live cards',
