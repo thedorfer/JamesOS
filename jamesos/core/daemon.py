@@ -10,6 +10,7 @@ from jamesos.core.queue import IN_PROGRESS, PROCESSED, FAILED, ensure_queue_dirs
 from jamesos.services.intake import intake_item
 from jamesos.services.job_engine import run_job
 from jamesos.integrations.gmail_importer import finalize_gmail_thread
+from jamesos.services.archive_plugins import archive_gmail_inbox_notes
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -92,6 +93,7 @@ def run_scheduled_plugins() -> str:
 
     scheduled = {
         "gmail": import_gmail_label,
+        "archive_gmail": archive_gmail_inbox_notes,
     }
 
     state = _load_state()
