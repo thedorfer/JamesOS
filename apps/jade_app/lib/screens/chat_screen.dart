@@ -81,8 +81,14 @@ class _ChatScreenState extends State<ChatScreen> {
         .trim();
   }
 
-  Future<void> speak(String text) async {
-    if (!settings.voiceReplies) return;
+  bool shouldAutoSpeak(String text) {
+    if (!settings.voiceReplies) return false;
+    if (!selectedMode.isChatty) return false;
+    return speechText(text).length <= 450;
+  }
+
+  Future<void> speak(String text, {bool force = false}) async {
+    if (!force && !shouldAutoSpeak(text)) return;
     final cleaned = speechText(text);
     if (cleaned.isEmpty) return;
     await tts.stop();
@@ -98,7 +104,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final lastJade = messages.reversed.where((m) => !m.isUser).firstOrNull;
     if (lastJade != null) {
-      await speak(lastJade.text);
+      await speak(lastJade.text, force: true);
     }
   }
 
@@ -203,11 +209,16 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> changeMode(AppMode? mode) async {
     if (mode == null || mode == selectedMode) return;
-    setState(() => selectedMode = mode);
+    await tts.stop();
+    setState(() {
+      selectedMode = mode;
+      speaking = false;
+    });
     await refreshDashboard();
   }
 
   IconData modeIcon(AppMode mode) => switch (mode) {
+        AppMode.chat => Icons.casino_outlined,
         AppMode.work => Icons.work_outline,
         AppMode.gcu => Icons.school_outlined,
         AppMode.family => Icons.home_outlined,
@@ -301,6 +312,9 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Widget buildDashboardCard() {
+    final buttonLabel = selectedMode.isChatty ? 'Surprise me' : 'Brief me';
+    final voiceTooltip = speaking ? 'Stop voice' : 'Replay last response';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -321,7 +335,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
               IconButton(
-                tooltip: speaking ? 'Stop voice' : 'Replay last response',
+                tooltip: voiceTooltip,
                 onPressed: settings.voiceReplies ? toggleSpeech : null,
                 icon: Icon(speaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined),
               ),
@@ -339,8 +353,8 @@ class _ChatScreenState extends State<ChatScreen> {
               const Spacer(),
               FilledButton.icon(
                 onPressed: loading ? null : () => askJade(overrideQuestion: selectedMode.briefingPrompt),
-                icon: const Icon(Icons.flash_on, size: 18),
-                label: const Text('Brief me'),
+                icon: Icon(selectedMode.isChatty ? Icons.casino_outlined : Icons.flash_on, size: 18),
+                label: Text(buttonLabel),
               ),
             ],
           ),
