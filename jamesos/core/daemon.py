@@ -6,6 +6,7 @@ from datetime import datetime
 from jamesos.core.queue import PENDING, PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
 from jamesos.services.intake import intake_item
 from jamesos.services.job_engine import run_job
+from jamesos.config.loader import daemon_interval_seconds
 
 
 def _process_job(path):
@@ -56,9 +57,12 @@ def run_once() -> str:
     return "\n".join(results)
 
 
-def run_daemon(interval_seconds: int = 30) -> None:
+def run_daemon(interval_seconds: int | None = None) -> None:
     ensure_queue_dirs()
-    print("JamesOS daemon started.")
+    if interval_seconds is None:
+        interval_seconds = daemon_interval_seconds()
+
+    print(f"JamesOS daemon started. Interval: {interval_seconds}s")
 
     while True:
         result = run_once()

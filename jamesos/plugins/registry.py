@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from typing import Callable
 
+from jamesos.config.loader import plugin_enabled
+
 
 @dataclass(frozen=True)
 class PluginStep:
     name: str
     run: Callable[[], str]
-    enabled: bool = True
 
 
 def get_start_day_plugins() -> list[PluginStep]:
@@ -41,15 +42,11 @@ def run_plugins(plugins: list[PluginStep]) -> str:
     results = []
 
     for plugin in plugins:
-        if not plugin.enabled:
+        if not plugin_enabled(plugin.name):
             results.append(f"Skipped plugin: {plugin.name}")
             continue
 
-        try:
-            result = plugin.run()
-            results.append(result)
-        except Exception as exc:
-            results.append(f"Plugin failed: {plugin.name}: {exc}")
-            raise
+        result = plugin.run()
+        results.append(result)
 
     return "\n".join(results)
