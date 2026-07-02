@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .env
+
+# JamesOS secrets
+**/Secrets/
+**/gmail_token.json

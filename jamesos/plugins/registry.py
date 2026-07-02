@@ -22,6 +22,7 @@ def get_start_day_plugins() -> list[PluginStep]:
     from jamesos.services.work_intelligence import generate_work_intelligence
     from jamesos.services.status_report import generate_status_report
     from jamesos.services.refresh import refresh_dashboards
+    from jamesos.integrations.gmail_importer import import_gmail_label
 
     return [
         PluginStep("database", build_database),
@@ -29,6 +30,7 @@ def get_start_day_plugins() -> list[PluginStep]:
         PluginStep("knowledge_pages", update_knowledge_pages),
         PluginStep("timeline", build_timeline),
         PluginStep("search", build_search_index),
+        PluginStep("gmail", import_gmail_label),
         PluginStep("inbox_review", review_inbox),
         PluginStep("inbox_cleanup", suggest_inbox_cleanup),
         PluginStep("daily_briefing", generate_daily_briefing),
