@@ -40,7 +40,9 @@ def generate_home_dashboard() -> str:
         "- [[JamesOS/Reports/Work Intelligence]]",
         "- [[JamesOS/Reports/Status Report]]",
         "- [[JamesOS/Reports/Inbox Review]]",
-        "- [[JamesOS/Reports/AI Inbox Cleanup]]",
+        "- [[JamesOS/Reports/AI Inbox Cleanup]]
+        "- [[JamesOS/Reports/People Quality]]",
+        "- [[JamesOS/Reports/People]]",",
         "- [[JamesOS/Reports/Memory/88858]]",
         "- [[Work/Work]]",
         "",
