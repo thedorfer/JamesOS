@@ -9,7 +9,15 @@
     header { padding:14px 16px; background:#1f2937; font-size:20px; font-weight:700; }
     main { max-width:900px; margin:0 auto; padding:16px; }
     #chat { display:flex; flex-direction:column; gap:12px; padding-bottom:90px; }
-    .msg { padding:12px 14px; border-radius:14px; white-space:pre-wrap; line-height:1.4; }
+    .msg { padding:14px 16px; border-radius:14px; white-space:normal; line-height:1.55; font-size:16px; }
+    .msg p { margin:0 0 10px 0; }
+    .msg p:last-child { margin-bottom:0; }
+    .msg ul, .msg ol { margin:8px 0 8px 22px; padding:0; }
+    .msg li { margin:5px 0; }
+    .msg h1, .msg h2, .msg h3 { margin:8px 0; line-height:1.25; }
+    .msg code { background:#111827; padding:2px 5px; border-radius:5px; }
+    .msg pre { background:#111827; padding:12px; border-radius:10px; overflow:auto; }
+    .msg a { color:#93c5fd; }
     .user { background:#2563eb; align-self:flex-end; max-width:80%; }
     .jade { background:#374151; align-self:flex-start; max-width:90%; }
     form { position:fixed; bottom:0; left:0; right:0; background:#1f2937; padding:12px; display:flex; gap:8px; }
