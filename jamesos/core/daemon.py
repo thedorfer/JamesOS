@@ -2,11 +2,27 @@ import json
 import shutil
 import time
 from datetime import datetime
+from pathlib import Path
 
-from jamesos.core.queue import PENDING, PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
+from jamesos.config import VAULT
+from jamesos.config.loader import daemon_interval_seconds, plugin_enabled, plugin_interval_seconds
+from jamesos.core.queue import PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
 from jamesos.services.intake import intake_item
 from jamesos.services.job_engine import run_job
-from jamesos.config.loader import daemon_interval_seconds
+
+SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
+
+
+def _load_state() -> dict:
+    SCHEDULER_STATE.parent.mkdir(parents=True, exist_ok=True)
+    if not SCHEDULER_STATE.exists():
+        return {"plugins": {}}
+    return json.loads(SCHEDULER_STATE.read_text(encoding="utf-8"))
+
+
+def _save_state(state: dict) -> None:
+    SCHEDULER_STATE.parent.mkdir(parents=True, exist_ok=True)
+    SCHEDULER_STATE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def _process_job(path):
@@ -57,16 +73,58 @@ def run_once() -> str:
     return "\n".join(results)
 
 
+def run_scheduled_plugins() -> str:
+    from jamesos.integrations.gmail_importer import import_gmail_label
+
+    scheduled = {
+        "gmail": import_gmail_label,
+    }
+
+    state = _load_state()
+    plugin_state = state.setdefault("plugins", {})
+    now = time.time()
+    results = []
+
+    for name, func in scheduled.items():
+        if not plugin_enabled(name):
+            continue
+
+        interval = plugin_interval_seconds(name, 0)
+        if interval <= 0:
+            continue
+
+        last_run = float(plugin_state.get(name, {}).get("last_run_epoch", 0))
+        if now - last_run < interval:
+            continue
+
+        result = func()
+        plugin_state[name] = {
+            "last_run_epoch": now,
+            "last_run": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "result": result,
+        }
+        results.append(f"Scheduled plugin {name}: {result}")
+
+    _save_state(state)
+
+    return "\n".join(results) if results else "No scheduled plugins due."
+
+
 def run_daemon(interval_seconds: int | None = None) -> None:
     ensure_queue_dirs()
+
     if interval_seconds is None:
         interval_seconds = daemon_interval_seconds()
 
-    print(f"JamesOS daemon started. Interval: {interval_seconds}s")
+    print(f"JamesOS daemon started. Interval: {interval_seconds}s", flush=True)
 
     while True:
-        result = run_once()
-        if result != "No pending jobs.":
-            print(result, flush=True)
+        queue_result = run_once()
+        if queue_result != "No pending jobs.":
+            print(queue_result, flush=True)
+
+        scheduled_result = run_scheduled_plugins()
+        if scheduled_result != "No scheduled plugins due.":
+            print(scheduled_result, flush=True)
 
         time.sleep(interval_seconds)

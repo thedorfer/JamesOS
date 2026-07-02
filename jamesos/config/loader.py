@@ -156,3 +156,8 @@ def watch_folder(name: str) -> Path:
     data = _load_yaml("folders.yaml")
     folder = data.get("watch", {}).get(name, "")
     return Path(folder).expanduser() if folder else Path.home() / name
+
+
+def plugin_interval_seconds(name: str, default: int = 0) -> int:
+    data = _load_yaml("plugins.yaml")
+    return int(data.get("plugins", {}).get(name, {}).get("interval_seconds", default))
