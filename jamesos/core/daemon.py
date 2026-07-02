@@ -12,6 +12,7 @@ from jamesos.services.job_engine import run_job
 from jamesos.integrations.gmail_importer import finalize_gmail_thread
 from jamesos.services.archive_plugins import archive_gmail_inbox_notes, archive_calendar_inbox_notes
 from jamesos.integrations.calendar_importer import import_google_calendar
+from jamesos.services.contacts_plugin import build_people_profiles
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -97,6 +98,7 @@ def run_scheduled_plugins() -> str:
         "archive_gmail": archive_gmail_inbox_notes,
         "archive_calendar": archive_calendar_inbox_notes,
         "calendar": import_google_calendar,
+        "contacts": build_people_profiles,
     }
 
     state = _load_state()
