@@ -9,6 +9,7 @@ from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.tool_router import detect_tool, route_tool
 from jamesos.services.memory_service import remember
+from jamesos.services.personality import jade_personality_prompt
 
 
 @dataclass
@@ -110,7 +111,7 @@ def ask_agent(question: str, use_ai: bool = True) -> dict:
     ctx = build_structured_context(question)
 
     if use_ai and ollama_enabled():
-        prompt = f"""You are JamesOS, James's private assistant.
+        prompt = jade_personality_prompt() + f"""
 
 Answer using only this structured context.
 Be concise, practical, and action-oriented.

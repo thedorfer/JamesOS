@@ -6,6 +6,7 @@ from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.tool_router import detect_tool, route_tool
 from jamesos.services.memory_service import search_memory
+from jamesos.services.personality import jade_personality_prompt
 
 
 FILES_ROOT = VAULT / "JamesOS" / "Knowledge" / "Files"
@@ -72,11 +73,12 @@ def _search_file_knowledge(question: str, limit: int = 5) -> str:
 def _summarize(question: str, context: str) -> str:
     if ollama_enabled():
         prompt = (
-            "You are Jade, James's private assistant. "
-            "Answer using only the context below. Be concise, useful, and direct. "
-            "If the answer is not in the context, say what is missing.\n\n"
-            f"Question: {question}\n\n"
-            f"Context:\n{context[:14000]}"
+            jade_personality_prompt()
+            + "\n\nAnswer using only the context below. "
+            + "Be useful, direct, and sound like Jade. "
+            + "If the answer is not in the context, say what is missing.\n\n"
+            + f"Question: {question}\n\n"
+            + f"Context:\n{context[:14000]}"
         )
         return ask_ollama(prompt)
 
