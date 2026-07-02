@@ -23,6 +23,7 @@ def _score(text: str, query: str, path: Path) -> int:
 
     if q in path.stem.lower():
         score += 30
+
     score += lower.count(q) * 5
 
     if "source: gmail" in lower:
