@@ -1,5 +1,6 @@
 enum AppMode {
   personal,
+  chat,
   work,
   gcu,
   family,
@@ -9,6 +10,7 @@ enum AppMode {
 extension AppModeDetails on AppMode {
   String get key => switch (this) {
         AppMode.personal => 'personal',
+        AppMode.chat => 'chat',
         AppMode.work => 'work',
         AppMode.gcu => 'gcu',
         AppMode.family => 'family',
@@ -17,6 +19,7 @@ extension AppModeDetails on AppMode {
 
   String get label => switch (this) {
         AppMode.personal => 'Personal',
+        AppMode.chat => 'Chat',
         AppMode.work => 'Work',
         AppMode.gcu => 'GCU',
         AppMode.family => 'Family',
@@ -25,9 +28,13 @@ extension AppModeDetails on AppMode {
 
   String get shortLabel => label;
 
+  bool get isChatty => this == AppMode.chat;
+
   String get briefingPrompt => switch (this) {
         AppMode.personal =>
           'Give me a prioritized briefing for right now across work, GCU, family, JamesOS, calendar, and recent memory. Keep it concise and action-oriented.',
+        AppMode.chat =>
+          'Say something light, funny, or interesting. Keep it short and conversational.',
         AppMode.work =>
           'Bring forward the most important work items I should focus on right now. Prioritize WGL tickets, blockers, Kevin/Malcolm/Tom context, deployments, and anything waiting on me.',
         AppMode.gcu =>
