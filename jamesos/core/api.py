@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
@@ -47,13 +45,7 @@ def health():
 @app.post("/intake")
 def intake(req: IntakeRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-
-    result = enqueue_job("intake", {
-        "title": req.title,
-        "content": req.content,
-        "source": req.source,
-        "source_detail": req.source_detail,
-    })
+    result = enqueue_job("intake", req.model_dump())
     return {"result": result}
 
 
@@ -68,15 +60,15 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
 
     context_result = build_context_report(req.question, use_ai=False)
-
-    context_file = VAULT / "JamesOS" / "Reports" / "Context" / f"{''.join(c if c.isalnum() or c in ' -_' else '-' for c in req.question)[:80]}.md"
+    safe = "".join(c if c.isalnum() or c in " -_" else "-" for c in req.question)[:80]
+    context_file = VAULT / "JamesOS" / "Reports" / "Context" / f"{safe}.md"
     context_text = context_file.read_text(encoding="utf-8", errors="ignore") if context_file.exists() else context_result
 
     if req.use_ai and ollama_enabled():
         prompt = (
             "You are JamesOS, James's private assistant. "
-            "Answer the question using only the context below. "
-            "Be concise and practical. If the answer is not in the context, say so.\n\n"
+            "Answer using only the context below. Be concise and practical. "
+            "If the answer is not in the context, say so.\n\n"
             f"Question: {req.question}\n\n"
             f"Context:\n{context_text[:12000]}"
         )
