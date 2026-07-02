@@ -189,6 +189,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget buildLiveCard(DashboardCard card) {
     final icon = switch (card.kind) {
+      'world' => Icons.verified_outlined,
       'memory' => Icons.history,
       'report' => Icons.article_outlined,
       'action' => Icons.flash_on,
@@ -285,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: dashboardCards.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                separatorBuilder: (_, separatorIndex) => const SizedBox(width: 10),
                 itemBuilder: (_, i) => buildLiveCard(dashboardCards[i]),
               ),
             ),
