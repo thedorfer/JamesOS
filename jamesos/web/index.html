@@ -55,10 +55,28 @@ function getKey() {
   return localStorage.getItem("jamesos_key") || "";
 }
 
-function showApp() {
+async function showApp() {
   pairBox.style.display = "none";
   app.style.display = "block";
-  add("jade", "Hi James. Jade is ready.");
+  chat.innerHTML = "";
+
+  try {
+    const res = await fetch("/chat/history", {
+      headers: { "X-JamesOS-Key": getKey() }
+    });
+    const data = await res.json();
+
+    if (data.messages && data.messages.length) {
+      for (const item of data.messages.slice(-30)) {
+        add("user", item.question);
+        add("jade", item.answer);
+      }
+    } else {
+      add("jade", "Hi James. Jade is ready.");
+    }
+  } catch (err) {
+    add("jade", "Hi James. Jade is ready.");
+  }
 }
 
 function add(who, text) {

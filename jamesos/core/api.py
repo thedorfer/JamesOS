@@ -19,6 +19,7 @@ from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.file_intelligence import build_file_knowledge
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
+CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
 
 app = FastAPI(title="JamesOS API")
 
@@ -168,7 +169,21 @@ def search(q: str, x_jamesos_key: str | None = Header(default=None)):
 @app.post("/ask")
 def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return handle_jade_message(req.question, use_ai=req.use_ai)
+
+    from datetime import datetime
+
+    result = handle_jade_message(req.question, use_ai=req.use_ai)
+
+    history = _load_chat_history()
+    history.append({
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "question": req.question,
+        "answer": result.get("answer", ""),
+        "action": result.get("action", ""),
+    })
+    _save_chat_history(history)
+
+    return result
 
 
 @app.get("/ask")
@@ -277,3 +292,30 @@ async def upload_file(file: UploadFile = File(...), x_jamesos_key: str | None = 
         "file_intelligence_result": file_result,
         "index_result": index_result,
     }
+
+
+def _load_chat_history() -> list:
+    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not CHAT_HISTORY_FILE.exists():
+        return []
+    import json
+    return json.loads(CHAT_HISTORY_FILE.read_text(encoding="utf-8"))
+
+
+def _save_chat_history(items: list) -> None:
+    import json
+    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CHAT_HISTORY_FILE.write_text(json.dumps(items[-200:], indent=2), encoding="utf-8")
+
+
+@app.get("/chat/history")
+def chat_history(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"messages": _load_chat_history()}
+
+
+@app.post("/chat/clear")
+def chat_clear(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    _save_chat_history([])
+    return {"status": "cleared"}
