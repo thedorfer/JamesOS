@@ -5,17 +5,12 @@ from jamesos.config import VAULT
 
 CONFIG_ROOT = VAULT / "JamesOS" / "Config"
 
-
 DEFAULT_CONFIG = {
     "system.yaml": """version: 1
 profile: home
 
 vault:
   refresh_on_start: true
-
-jobs:
-  start_day:
-    enabled: true
 
 daemon:
   enabled: true
@@ -127,19 +122,12 @@ def initialize_config() -> str:
             path.write_text(content, encoding="utf-8")
             created.append(filename)
 
-    if created:
-        return "Created config files: " + ", ".join(created)
-
-    return "Config files already exist"
+    return "Created config files: " + ", ".join(created) if created else "Config files already exist"
 
 
 def _load_yaml(filename: str) -> dict:
     initialize_config()
     path = CONFIG_ROOT / filename
-
-    if not path.exists():
-        return {}
-
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return data or {}
 
@@ -161,18 +149,10 @@ def daemon_interval_seconds() -> int:
 def folder_path(name: str) -> Path:
     data = _load_yaml("folders.yaml")
     folder = data.get("folders", {}).get(name)
-
-    if not folder:
-        return VAULT / name
-
-    return VAULT / folder
+    return VAULT / folder if folder else VAULT / name
 
 
 def watch_folder(name: str) -> Path:
     data = _load_yaml("folders.yaml")
     folder = data.get("watch", {}).get(name, "")
-
-    if not folder:
-        return Path.home() / name
-
-    return Path(folder).expanduser()
+    return Path(folder).expanduser() if folder else Path.home() / name
