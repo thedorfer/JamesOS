@@ -1,5 +1,5 @@
 from pathlib import Path
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -243,3 +243,28 @@ def tools_route(req: ToolRequest, x_jamesos_key: str | None = Header(default=Non
 def jade_app():
     path = Path(__file__).resolve().parents[1] / "web" / "index.html"
     return path.read_text(encoding="utf-8")
+
+
+@app.post("/upload")
+async def upload_file(file: UploadFile = File(...), x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+
+    upload_dir = VAULT / "00-Inbox" / "Attachments"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    safe_name = "".join(c if c.isalnum() or c in " ._-()" else "_" for c in file.filename)
+    target = upload_dir / safe_name
+
+    counter = 2
+    while target.exists():
+        target = upload_dir / f"{Path(safe_name).stem} ({counter}){Path(safe_name).suffix}"
+        counter += 1
+
+    content = await file.read()
+    target.write_bytes(content)
+
+    return {
+        "status": "uploaded",
+        "filename": target.name,
+        "path": str(target),
+    }

@@ -38,6 +38,8 @@
   </main>
 
   <form id="form">
+    <input id="file" type="file" style="display:none" onchange="uploadFile()" />
+    <button type="button" onclick="document.getElementById('file').click()">+</button>
     <input id="q" autocomplete="off" placeholder="Ask Jade..." />
     <button>Send</button>
   </form>
@@ -90,6 +92,37 @@ async function pairDevice() {
   } catch (err) {
     pairStatus.textContent = "Pairing error: " + err;
   }
+}
+
+async function uploadFile() {
+  const input = document.getElementById("file");
+  if (!input.files.length) return;
+
+  const file = input.files[0];
+  const form = new FormData();
+  form.append("file", file);
+
+  add("user", "Upload: " + file.name);
+  add("jade", "Uploading...");
+
+  try {
+    const res = await fetch("/upload", {
+      method: "POST",
+      headers: {
+        "X-JamesOS-Key": getKey()
+      },
+      body: form
+    });
+
+    const data = await res.json();
+    chat.lastChild.textContent = data.status
+      ? "Uploaded: " + data.filename
+      : JSON.stringify(data, null, 2);
+  } catch (err) {
+    chat.lastChild.textContent = "Upload error: " + err;
+  }
+
+  input.value = "";
 }
 
 document.getElementById("form").addEventListener("submit", async (e) => {
