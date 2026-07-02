@@ -252,14 +252,19 @@ def _rank_context(context: dict) -> list[str]:
             for category, matches in data.items():
                 trust = _trust_score(source, category)
                 lines.append(f"## {category} | Trust: {trust}/100")
-                for m in matches[:5]:
-                    lines.append(
-                        f"File: {m.get('file')}\n"
-                        f"Title: {m.get('title')}\n"
-                        f"Score: {m.get('score')}\n"
-                        f"Trust: {trust}/100\n"
-                        f"Preview:\n{m.get('preview','')[:2200]}"
-                    )
+                if isinstance(matches, list):
+                    for m in matches[:5]:
+                        lines.append(
+                            f"File: {m.get('file')}\n"
+                            f"Title: {m.get('title')}\n"
+                            f"Score: {m.get('score')}\n"
+                            f"Trust: {trust}/100\n"
+                            f"Preview:\n{m.get('preview','')[:2200]}"
+                        )
+                elif isinstance(matches, dict):
+                    lines.append(json.dumps(matches, indent=2)[:5000])
+                else:
+                    lines.append(str(matches)[:2000])
         else:
             lines.append(f"# Source: {source} | Trust: {_trust_score(source)}/100")
             lines.append(str(data)[:2000])
