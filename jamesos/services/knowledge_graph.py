@@ -19,16 +19,8 @@ ROOTS = [
     VAULT / "Archive" / "Inbox" / "Calendar",
 ]
 
-KNOWN_PEOPLE = [
-    "James", "Jade", "Kevin", "Malcolm", "Tom", "Ian", "Elias",
-    "Julia", "CJ", "Jidapa", "Kim Keller"
-]
-
-KNOWN_PROJECTS = [
-    "Paving", "FERC", "GCU", "JamesOS", "UOM", "SuperProject",
-    "ERP", "CPMP", "Capital Work Order"
-]
-
+KNOWN_PEOPLE = ["James", "Jade", "Kevin", "Malcolm", "Tom", "Ian", "Elias", "Julia", "CJ", "Jidapa", "Kim Keller"]
+KNOWN_PROJECTS = ["Paving", "FERC", "GCU", "JamesOS", "UOM", "SuperProject", "ERP", "CPMP", "Capital Work Order"]
 KNOWN_ENVS = ["SFM2", "SBX", "R2QA", "DEV", "QA", "PROD"]
 
 
@@ -41,28 +33,15 @@ def _add_node(nodes, name, kind):
 
 def _add_edge(edges, source, target, relation, evidence):
     key = f"{source}|{relation}|{target}|{evidence}"
-    edges[key] = {
-        "source": source,
-        "target": target,
-        "relation": relation,
-        "evidence": evidence,
-    }
+    edges[key] = {"source": source, "target": target, "relation": relation, "evidence": evidence}
 
 
-def _find_people(text):
-    return [p for p in KNOWN_PEOPLE if re.search(rf"\\b{re.escape(p)}\\b", text, re.I)]
-
-
-def _find_projects(text):
-    return [p for p in KNOWN_PROJECTS if re.search(rf"\\b{re.escape(p)}\\b", text, re.I)]
-
-
-def _find_envs(text):
-    return [e for e in KNOWN_ENVS if re.search(rf"\\b{re.escape(e)}\\b", text, re.I)]
+def _find_known(text, known):
+    return [x for x in known if re.search(rf"\b{re.escape(x)}\b", text, re.I)]
 
 
 def _find_tickets(text):
-    return sorted(set(re.findall(r"\\b\\d{5}\\b", text)))
+    return sorted(set(re.findall(r"\b\d{5}\b", text)))
 
 
 def build_knowledge_graph() -> str:
@@ -82,24 +61,27 @@ def build_knowledge_graph() -> str:
             rel = path.relative_to(VAULT).as_posix()
             file_node = _add_node(nodes, rel, "file")
 
-            people = _find_people(text)
-            projects = _find_projects(text)
-            envs = _find_envs(text)
-            tickets = _find_tickets(text)
+            people = _find_known(text + " " + path.stem, KNOWN_PEOPLE)
+            projects = _find_known(text + " " + path.stem, KNOWN_PROJECTS)
+            envs = _find_known(text + " " + path.stem, KNOWN_ENVS)
+            tickets = _find_tickets(text + " " + path.stem)
 
-            person_nodes = [_add_node(nodes, p, "person") for p in people]
+            people_nodes = [_add_node(nodes, p, "person") for p in people]
             project_nodes = [_add_node(nodes, p, "project") for p in projects]
             env_nodes = [_add_node(nodes, e, "environment") for e in envs]
             ticket_nodes = [_add_node(nodes, t, "ticket") for t in tickets]
 
-            for n in person_nodes + project_nodes + env_nodes + ticket_nodes:
-                _add_edge(edges, n, file_node, "mentioned_in", rel)
+            for node in people_nodes + project_nodes + env_nodes + ticket_nodes:
+                _add_edge(edges, node, file_node, "mentioned_in", rel)
 
-            for person in person_nodes:
+            for person in people_nodes:
                 for project in project_nodes:
                     _add_edge(edges, person, project, "related_to_project", rel)
                 for ticket in ticket_nodes:
                     _add_edge(edges, person, ticket, "related_to_ticket", rel)
+                for other in people_nodes:
+                    if other != person:
+                        _add_edge(edges, person, other, "mentioned_with", rel)
 
             for project in project_nodes:
                 for ticket in ticket_nodes:
@@ -120,17 +102,9 @@ def build_knowledge_graph() -> str:
     GRAPH_DIR.mkdir(parents=True, exist_ok=True)
     GRAPH_FILE.write_text(json.dumps(graph, indent=2), encoding="utf-8")
 
-    top_people = sorted(
-        [n for n in nodes.values() if n["type"] == "person"],
-        key=lambda x: x["mentions"],
-        reverse=True,
-    )[:20]
-
-    top_tickets = sorted(
-        [n for n in nodes.values() if n["type"] == "ticket"],
-        key=lambda x: x["mentions"],
-        reverse=True,
-    )[:20]
+    top_people = sorted([n for n in nodes.values() if n["type"] == "person"], key=lambda x: x["mentions"], reverse=True)[:20]
+    top_tickets = sorted([n for n in nodes.values() if n["type"] == "ticket"], key=lambda x: x["mentions"], reverse=True)[:20]
+    top_projects = sorted([n for n in nodes.values() if n["type"] == "project"], key=lambda x: x["mentions"], reverse=True)[:20]
 
     lines = [
         "# Knowledge Graph",
@@ -141,40 +115,37 @@ def build_knowledge_graph() -> str:
         f"- Edges: {len(edges)}",
         "",
         "## Top People",
+        *([f"- {n['name']} — {n['mentions']} mentions" for n in top_people] or ["- None"]),
+        "",
+        "## Top Projects",
+        *([f"- {n['name']} — {n['mentions']} mentions" for n in top_projects] or ["- None"]),
+        "",
+        "## Top Tickets",
+        *([f"- {n['name']} — {n['mentions']} mentions" for n in top_tickets] or ["- None"]),
     ]
 
-    lines.extend([f"- {n['name']} — {n['mentions']} mentions" for n in top_people] or ["- None"])
-
-    lines.extend(["", "## Top Tickets"])
-    lines.extend([f"- {n['name']} — {n['mentions']} mentions" for n in top_tickets] or ["- None"])
-
     GRAPH_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    GRAPH_REPORT.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
+    GRAPH_REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     return f"Built knowledge graph with {len(nodes)} nodes and {len(edges)} edges"
 
 
-def graph_lookup(query: str, limit: int = 20) -> dict:
+def graph_lookup(query: str, limit: int = 25) -> dict:
     if not GRAPH_FILE.exists():
         build_knowledge_graph()
 
     graph = json.loads(GRAPH_FILE.read_text(encoding="utf-8"))
     q = query.lower()
 
-    matched_nodes = [
-        n for n in graph["nodes"]
-        if q in n["name"].lower()
-    ][:limit]
-
+    matched_nodes = [n for n in graph["nodes"] if q in n["name"].lower()][:limit]
     matched_ids = {n["id"] for n in matched_nodes}
 
     related_edges = [
         e for e in graph["edges"]
         if e["source"] in matched_ids or e["target"] in matched_ids
-    ][:limit * 3]
+    ][:limit * 5]
 
-    return {
-        "query": query,
-        "nodes": matched_nodes,
-        "edges": related_edges,
-    }
+    related_ids = {e["source"] for e in related_edges} | {e["target"] for e in related_edges}
+    related_nodes = [n for n in graph["nodes"] if n["id"] in related_ids][:limit * 3]
+
+    return {"query": query, "nodes": matched_nodes, "related_nodes": related_nodes, "edges": related_edges}

@@ -323,6 +323,36 @@ def _sensitive_file_lookup(question: str) -> dict | None:
     }
 
 
+def _confidence_from_context(context: dict, intent: str) -> int:
+    results = context.get("results", {})
+    score = 25
+
+    if results.get("knowledge_graph"):
+        score += 20
+    if results.get("indexes"):
+        score += 25
+    if results.get("memory"):
+        score += 10
+    if results.get("conversation_summaries"):
+        score += 5
+
+    if intent in {"sensitive_file", "weather"}:
+        score = 95
+
+    return min(score, 95)
+
+
+def _append_confidence(answer: str, confidence: int) -> str:
+    if confidence >= 90:
+        label = "high"
+    elif confidence >= 65:
+        label = "medium"
+    else:
+        label = "low"
+
+    return f"{answer}\n\n*Confidence: {label} ({confidence}%)*"
+
+
 def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     intent = detect_intent(question)
 
@@ -335,7 +365,7 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
         if direct:
             return {
                 "question": question,
-                "answer": direct["answer"],
+                "answer": _append_confidence(direct["answer"], 95),
                 "action": "sensitive_file_lookup",
                 "intent": intent,
                 "planner": ["files"],
@@ -369,6 +399,8 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     context = gather_context(question, intent, sources)
     ranked_context = "\n".join(_rank_context(context))
 
+    confidence = _confidence_from_context(context, intent)
+
     if use_ai and ollama_enabled():
         prompt = (
             jade_personality_prompt()
@@ -396,9 +428,12 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     if any(w in question.lower() for w in ["kevin", "malcolm", "tom", "paving", "ticket", "important"]):
         remember(f"Low-trust Jade answer, not verified source fact.\nQ: {question}\nA: {answer[:2000]}", source="jade_brain_low_trust", importance="normal")
 
+    answer = _append_confidence(answer, confidence)
+
     return {
         "question": question,
         "answer": answer,
+        "confidence": confidence,
         "action": "brain",
         "intent": intent,
         "planner": sources,
