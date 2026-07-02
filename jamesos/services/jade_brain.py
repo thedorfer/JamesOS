@@ -125,6 +125,7 @@ def summarize_chat_history() -> str:
             jade_personality_prompt()
             + "\n\nCreate structured conversation memory from this chat history. "
             + "Extract topics, people, tickets, decisions, open items, and a concise summary. "
+            + "Use only facts present in the chat. Do not invent details. "
             + "Return JSON only with keys: topic, summary, people, tickets, decisions, open_items, importance.\n\n"
             + text[:12000]
         )
@@ -259,11 +260,15 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
         prompt = (
             jade_personality_prompt()
             + "\n\nYou are answering as Jade. "
+            + "Do not invent people, jobs, meetings, emails, dates, or details. "
+            + "Use only facts present in the provided context. "
+            + "If the context is weak or unrelated, say that plainly. "
             + "Do not dump raw fields unless they matter. "
             + "Synthesize the answer like a sharp personal assistant. "
             + "Use short sections or bullets when helpful. "
-            + "If nothing relevant is found, say that plainly and suggest the most practical next place to check. "
-            + "Do not moralize. Do not end with generic filler.\n\n"
+            + "Do not moralize or lecture James about accessing his own local files. "
+            + "For sensitive local documents, be discreet and factual. "
+            + "Do not end with generic filler.\n\n"
             + f"Question: {question}\n"
             + f"Intent: {intent}\n"
             + f"Planned sources: {sources}\n\n"
