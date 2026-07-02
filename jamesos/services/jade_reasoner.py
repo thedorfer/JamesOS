@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from jamesos.services.jade_brain import (
@@ -10,6 +9,11 @@ from jamesos.services.jade_brain import (
 )
 from jamesos.services.knowledge_graph import graph_lookup
 from jamesos.services.memory_service import remember
+from jamesos.services.jade_context_packages import (
+    build_context_package,
+    mode_label,
+    normalize_mode,
+)
 
 
 @dataclass
@@ -18,12 +22,32 @@ class ReasoningPlan:
     intent: str
     entities: dict[str, list[str]]
     sources: list[str]
+    mode: str = "personal"
     confidence: int = 25
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
 def _clean_jade_answer(answer: str, plan: ReasoningPlan, result: dict) -> str:
     lower = answer.lower()
+
+    bad_context_dump = any(
+        phrase in lower
+        for phrase in [
+            "json data",
+            "provided json",
+            "three different entities",
+            "nodes are files",
+            "related nodes",
+            "edges connecting",
+            "graph structure",
+        ]
+    )
+
+    if bad_context_dump:
+        return (
+            "I pulled context, but the answer came back too much like a data dump. "
+            "The useful move is to ask for a focused briefing from the current mode, not summarize the graph itself."
+        )
 
     banned_starts = [
         "based on the data provided",
@@ -84,7 +108,7 @@ def confidence_label(score: int) -> str:
     return "🔴 Low"
 
 
-def _score_context(context: dict, intent: str) -> int:
+def _score_context(context: dict, intent: str, mode: str) -> int:
     results = context.get("results", {})
     score = 25
 
@@ -96,6 +120,8 @@ def _score_context(context: dict, intent: str) -> int:
         score += 10
     if results.get("conversation_summaries"):
         score += 5
+    if mode != "personal":
+        score += 5
     if intent in {"sensitive_file", "weather"}:
         score = 95
 
@@ -103,11 +129,11 @@ def _score_context(context: dict, intent: str) -> int:
 
 
 class JadeReasoner:
-    def understand(self, question: str) -> ReasoningPlan:
+    def understand(self, question: str, mode: str | None = None) -> ReasoningPlan:
+        mode = normalize_mode(mode)
         intent = detect_intent(question)
         sources = plan_sources(intent)
 
-        # Gather basic entity hints from the current brain context function.
         context = gather_context(question, intent, sources)
         entities = {
             "people": context.get("people", []),
@@ -119,7 +145,8 @@ class JadeReasoner:
             intent=intent,
             entities=entities,
             sources=sources,
-            confidence=_score_context(context, intent),
+            mode=mode,
+            confidence=_score_context(context, intent, mode),
             evidence=context,
         )
 
@@ -135,7 +162,20 @@ class JadeReasoner:
             plan.confidence = min(plan.confidence + 10, 95)
 
     def answer(self, plan: ReasoningPlan, use_ai: bool = True) -> dict:
-        result = answer_with_brain(plan.question, use_ai=use_ai)
+        question_for_brain = plan.question
+        if plan.mode != "personal":
+            context_package = build_context_package(plan.question, plan.mode)
+            question_for_brain = (
+                f"{context_package}\n\n"
+                "# Response Task\n"
+                "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, or graph implementation.\n"
+                f"Question: {plan.question}"
+            )
+
+        result = answer_with_brain(question_for_brain, use_ai=use_ai)
+        result["question"] = plan.question
+        result["mode"] = plan.mode
+        result["mode_label"] = mode_label(plan.mode)
 
         confidence = result.get("confidence", plan.confidence)
         result["confidence"] = confidence
@@ -144,13 +184,14 @@ class JadeReasoner:
             "intent": plan.intent,
             "sources": plan.sources,
             "entities": plan.entities,
+            "mode": plan.mode,
+            "mode_label": mode_label(plan.mode),
             "confidence": confidence,
             "confidence_label": confidence_label(confidence),
         }
 
         answer = result.get("answer", "")
 
-        # Replace percentage confidence footer with simple Jade-style label.
         import re
         answer = re.sub(r"\n\n\*Confidence: .*?\(\d+%\)\*", "", answer)
         answer = _clean_jade_answer(answer, plan, result)
@@ -163,21 +204,22 @@ class JadeReasoner:
         q = result.get("question", "")
         intent = result.get("intent") or result.get("reasoner", {}).get("intent", "")
         label = result.get("confidence_label", "")
+        mode = result.get("mode", "personal")
 
         if intent in {"person", "work", "conversation_recall", "file"}:
             remember(
-                f"Jade Reasoner interaction\nQuestion: {q}\nIntent: {intent}\nConfidence: {label}",
+                f"Jade Reasoner interaction\nMode: {mode}\nQuestion: {q}\nIntent: {intent}\nConfidence: {label}",
                 source="jade_reasoner",
                 importance="normal",
             )
 
-    def run(self, question: str, use_ai: bool = True) -> dict:
-        plan = self.understand(question)
+    def run(self, question: str, use_ai: bool = True, mode: str | None = None) -> dict:
+        plan = self.understand(question, mode=mode)
         self.collect_graph(plan)
         result = self.answer(plan, use_ai=use_ai)
         self.learn(result)
         return result
 
 
-def answer_with_reasoner(question: str, use_ai: bool = True) -> dict:
-    return JadeReasoner().run(question, use_ai=use_ai)
+def answer_with_reasoner(question: str, use_ai: bool = True, mode: str | None = None) -> dict:
+    return JadeReasoner().run(question, use_ai=use_ai, mode=mode)
