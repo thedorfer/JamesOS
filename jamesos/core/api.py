@@ -15,6 +15,8 @@ from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
+from jamesos.services.attachment_ingest import ingest_attachments
+from jamesos.services.file_intelligence import build_file_knowledge
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 
@@ -263,8 +265,15 @@ async def upload_file(file: UploadFile = File(...), x_jamesos_key: str | None = 
     content = await file.read()
     target.write_bytes(content)
 
+    ingest_result = ingest_attachments()
+    file_result = build_file_knowledge()
+    index_result = build_typed_indexes()
+
     return {
-        "status": "uploaded",
+        "status": "uploaded_and_processed",
         "filename": target.name,
         "path": str(target),
+        "ingest_result": ingest_result,
+        "file_intelligence_result": file_result,
+        "index_result": index_result,
     }
