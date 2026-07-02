@@ -19,6 +19,7 @@ from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.extraction_engine import extract_entities, build_unified_graph
 from jamesos.services.proactive_assistant import generate_proactive_briefing
 from jamesos.services.typed_index import build_typed_indexes
+from jamesos.services.file_intelligence import build_file_knowledge
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -115,6 +116,7 @@ def run_scheduled_plugins() -> str:
         "unified_graph": build_unified_graph,
         "proactive_assistant": generate_proactive_briefing,
         "typed_indexes": build_typed_indexes,
+        "file_intelligence": build_file_knowledge,
         "contacts": build_people_profiles,
     }
 

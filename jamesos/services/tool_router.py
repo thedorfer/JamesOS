@@ -130,8 +130,31 @@ def web_search_tool(question: str) -> str:
     if not cfg.get("enabled", False):
         return "Web search tool is not configured yet."
 
-    return "Web search provider is pending."
+    try:
+        from ddgs import DDGS
 
+        with DDGS() as ddgs:
+            results = list(ddgs.text(question, max_results=5))
+
+        if not results:
+            return "No web results found."
+
+        lines = [f"Web results for: {question}", ""]
+        for i, r in enumerate(results, start=1):
+            title = r.get("title", "Untitled")
+            href = r.get("href", "")
+            body = r.get("body", "")
+            lines.extend([
+                f"{i}. {title}",
+                href,
+                body,
+                "",
+            ])
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        return f"Web search failed: {exc}"
 
 def route_tool(question: str) -> dict:
     tool = detect_tool(question)

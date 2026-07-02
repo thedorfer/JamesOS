@@ -231,9 +231,11 @@ def handle_jade_message(message: str, use_ai: bool = True) -> dict:
     tool = detect_tool(text)
     if tool != "local":
         result = route_tool(text)
+        answer = result.get("result", "")
+        _maybe_store_conversation_memory(message, answer, "tool")
         return {
             "question": message,
-            "answer": result.get("result", ""),
+            "answer": answer,
             "action": "tool",
             "tool": result.get("tool"),
             "tool_result": result,
@@ -241,4 +243,27 @@ def handle_jade_message(message: str, use_ai: bool = True) -> dict:
 
     result = ask_agent(message, use_ai=use_ai)
     result["action"] = "agent"
+    _maybe_store_conversation_memory(message, result.get("answer", ""), "agent")
     return result
+
+
+def _maybe_store_conversation_memory(question: str, answer: str, action: str) -> None:
+    lower = question.lower()
+
+    important = (
+        action in {"memory", "note"}
+        or lower.startswith(("remember", "note", "take a note", "capture"))
+        or any(word in lower for word in ["kevin", "malcolm", "tom", "gcu", "ticket", "paving", "important"])
+    )
+
+    if not important:
+        return
+
+    try:
+        remember(
+            f"Q: {question}\n\nA: {answer[:2000]}",
+            source="jade_auto_memory",
+            importance="normal",
+        )
+    except Exception:
+        pass
