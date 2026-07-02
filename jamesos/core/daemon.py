@@ -17,6 +17,7 @@ from jamesos.integrations.google_contacts_importer import import_google_contacts
 from jamesos.services.intelligence import build_knowledge_graph, generate_daily_intelligence
 from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.extraction_engine import extract_entities, build_unified_graph
+from jamesos.services.proactive_assistant import generate_proactive_briefing
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -111,6 +112,7 @@ def run_scheduled_plugins() -> str:
         "attachment_ingest": ingest_attachments,
         "entity_extraction": extract_entities,
         "unified_graph": build_unified_graph,
+        "proactive_assistant": generate_proactive_briefing,
         "contacts": build_people_profiles,
     }
 

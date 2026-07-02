@@ -110,6 +110,8 @@ def import_gmail_label() -> str:
     service = _gmail_service()
     processed = _load_processed()
 
+    imported = 0
+    skipped = 0
     missing_labels = []
 
     for label_name in labels_to_import:
