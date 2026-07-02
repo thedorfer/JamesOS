@@ -163,6 +163,7 @@ class JadeReasoner:
 
     def answer(self, plan: ReasoningPlan, use_ai: bool = True) -> dict:
         question_for_brain = plan.question
+        allow_tools = True
         if plan.mode != "personal":
             context_package = build_context_package(plan.question, plan.mode)
             question_for_brain = (
@@ -171,8 +172,9 @@ class JadeReasoner:
                 "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, or graph implementation.\n"
                 f"Question: {plan.question}"
             )
+            allow_tools = False
 
-        result = answer_with_brain(question_for_brain, use_ai=use_ai)
+        result = answer_with_brain(question_for_brain, use_ai=use_ai, allow_tools=allow_tools)
         result["question"] = plan.question
         result["mode"] = plan.mode
         result["mode_label"] = mode_label(plan.mode)
