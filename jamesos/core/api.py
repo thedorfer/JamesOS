@@ -12,6 +12,7 @@ from jamesos.services.rich_context import build_rich_context
 from jamesos.services.agent import ask_agent
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
+from jamesos.services.tool_router import route_tool
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 
@@ -45,6 +46,10 @@ class MemoryRequest(BaseModel):
     text: str
     source: str = "api"
     importance: str = "normal"
+
+
+class ToolRequest(BaseModel):
+    question: str
 
 
 
@@ -224,3 +229,9 @@ def indexes_search(q: str, categories: str = "", x_jamesos_key: str | None = Hea
     require_key(x_jamesos_key)
     cats = [c.strip() for c in categories.split(",") if c.strip()] or None
     return search_typed_indexes(q, cats)
+
+
+@app.post("/tools/route")
+def tools_route(req: ToolRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return route_tool(req.question)
