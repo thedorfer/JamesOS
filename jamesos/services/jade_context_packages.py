@@ -12,13 +12,15 @@ from jamesos.services.world_model import (
 )
 
 
-VALID_MODES = {"personal", "work", "gcu", "family", "jamesos"}
+VALID_MODES = {"personal", "chat", "work", "gcu", "family", "jamesos"}
 
 
 def normalize_mode(mode: str | None) -> str:
     value = (mode or "personal").strip().lower().replace(" ", "")
     if value in {"james_os", "james-os", "jamesos"}:
         return "jamesos"
+    if value in {"random", "banter", "play", "fun"}:
+        return "chat"
     if value not in VALID_MODES:
         return "personal"
     return value
@@ -28,6 +30,7 @@ def mode_label(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "Personal",
+        "chat": "Chat",
         "work": "Work",
         "gcu": "GCU",
         "family": "Family",
@@ -39,6 +42,7 @@ def mode_query(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "James priorities today family work GCU JamesOS calendar reminders",
+        "chat": "James Jade humor casual banter fun playful chat",
         "work": "WGL work tickets paving Kevin Malcolm Tom Ian deployment SFM2 SBX blockers",
         "gcu": "GCU teaching grading students announcements assignments due dates CST SYM DSC",
         "family": "family schedule school birthday kids wife personal reminders appointments",
@@ -50,6 +54,7 @@ def mode_directive(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "Prioritize James's most useful personal-assistant context across work, GCU, family, JamesOS, calendar, and memory.",
+        "chat": "Casual chat mode. Be witty, warm, brief, and conversational. Do not produce a briefing, task list, or long analysis unless James explicitly asks.",
         "work": "Prioritize WGL work, tickets, deployments, blockers, Oracle/PLSQL, SFM2/SBX/R2QA, and people such as Kevin, Malcolm, Tom, Ian, and Elias.",
         "gcu": "Prioritize teaching work, grading, announcements, students, courses, assignments, and instructor-ready wording.",
         "family": "Prioritize verified family logistics, school, birthdays, appointments, trips, home, reminders, and practical next steps. Do not infer family from stale people/ticket indexes.",
@@ -74,6 +79,7 @@ def build_context_package(question: str, mode: str | None = None) -> str:
 
     reports = {
         "personal": ["Daily Briefing", "Proactive Assistant", "People"],
+        "chat": [],
         "work": ["Work Intelligence", "Proactive Assistant", "People"],
         "gcu": ["Daily Briefing", "Proactive Assistant"],
         "family": ["Daily Briefing", "Proactive Assistant"],
@@ -88,20 +94,28 @@ def build_context_package(question: str, mode: str | None = None) -> str:
         "",
         f"Mode directive: {mode_directive(mode)}",
         "",
-        world_model_summary(mode),
-        "",
-        f"James asked: {question}",
-        "",
     ]
 
-    memory = search_memory(query, limit=8)
-    if memory and mode != "family":
+    if mode != "chat":
+        sections.extend([world_model_summary(mode), ""])
+
+    sections.extend([f"James asked: {question}", ""])
+
+    memory = search_memory(query, limit=4 if mode == "chat" else 8)
+    if memory and mode not in {"family", "chat"}:
         sections.extend(["## Relevant memory", str(memory)[:3000], ""])
     elif memory and mode == "family":
         sections.extend([
             "## Lower-trust family memory",
             "Use this only for reminders/logistics. Do not treat names or relationships here as verified unless confirmed by the Verified World Model.",
             str(memory)[:1800],
+            "",
+        ])
+    elif memory and mode == "chat":
+        sections.extend([
+            "## Light personalization hints",
+            "Use only for flavor. Keep the answer short and casual.",
+            str(memory)[:900],
             "",
         ])
 
@@ -116,6 +130,7 @@ def build_context_package(question: str, mode: str | None = None) -> str:
         "family": ["Jidapa", "Family", "School"],
         "jamesos": ["JamesOS", "Jade", "Flutter"],
         "personal": ["James", "Jade", "Work", "GCU", "Family"],
+        "chat": [],
     }[mode]
 
     graph_lines = []
@@ -135,10 +150,13 @@ def build_context_package(question: str, mode: str | None = None) -> str:
             "",
         ])
 
-    return "\n".join(sections)[:12000]
+    return "\n".join(sections)[:5000 if mode == "chat" else 12000]
 
 
 def mode_brief_prompt(mode: str | None = None) -> str:
+    mode = normalize_mode(mode)
+    if mode == "chat":
+        return "Say something light, funny, or interesting. Keep it short and conversational."
     return (
         f"Give James a concise {mode_label(mode)} mode briefing. "
         "Use the context package as background. Prioritize live/useful items and next actions. "
@@ -157,7 +175,8 @@ def dashboard_cards(mode: str | None = None) -> dict:
     query = mode_query(mode)
 
     cards: list[dict] = []
-    cards.extend(world_model_dashboard_cards(mode))
+    if mode != "chat":
+        cards.extend(world_model_dashboard_cards(mode))
     cards.append(_card(
         f"{label} mode is active",
         mode_directive(mode),
@@ -166,7 +185,7 @@ def dashboard_cards(mode: str | None = None) -> dict:
     ))
 
     memory = str(search_memory(query, limit=3) or "").strip()
-    if memory and mode != "family":
+    if memory and mode not in {"family", "chat"}:
         compact = " ".join(memory.split())[:180]
         cards.append(_card("Recent memory", compact, "memory", mode_brief_prompt(mode)))
 
@@ -176,15 +195,17 @@ def dashboard_cards(mode: str | None = None) -> dict:
         "gcu": "Daily Briefing",
         "family": "Daily Briefing",
         "jamesos": "Knowledge Graph",
+        "chat": "",
     }[mode]
-    report = _report(report_name, limit=500)
-    if report:
-        compact = " ".join(report.split())[:180]
-        cards.append(_card(report_name, compact, "report", mode_brief_prompt(mode)))
+    if report_name:
+        report = _report(report_name, limit=500)
+        if report:
+            compact = " ".join(report.split())[:180]
+            cards.append(_card(report_name, compact, "report", mode_brief_prompt(mode)))
 
     cards.append(_card(
-        "Brief me",
-        f"Ask Jade for the highest-value {label} priorities right now.",
+        "Brief me" if mode != "chat" else "Surprise me",
+        f"Ask Jade for the highest-value {label} priorities right now." if mode != "chat" else "Ask Jade for quick banter or something fun.",
         "action",
         mode_brief_prompt(mode),
     ))
