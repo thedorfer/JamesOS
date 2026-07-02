@@ -21,6 +21,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   JadeSettings settings = JadeSettings();
   bool loading = false;
+  bool serverOnline = false;
+  String selectedMode = 'Personal';
 
   final messages = <ChatMessage>[
     ChatMessage(role: 'jade', text: 'Hi James. Jade is ready.'),
@@ -43,6 +45,18 @@ class _ChatScreenState extends State<ChatScreen> {
     final loaded = await SettingsService().load();
     if (!mounted) return;
     setState(() => settings = loaded);
+    await refreshStatus();
+  }
+
+  Future<void> refreshStatus() async {
+    try {
+      final res = await api.health(settings);
+      if (!mounted) return;
+      setState(() => serverOnline = res['statusCode'] == 200);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => serverOnline = false);
+    }
   }
 
   Future<void> openSettings() async {
@@ -53,11 +67,12 @@ class _ChatScreenState extends State<ChatScreen> {
 
     if (updated != null) {
       setState(() => settings = updated);
+      await refreshStatus();
     }
   }
 
-  Future<void> askJade() async {
-    final question = input.text.trim();
+  Future<void> askJade({String? overrideQuestion}) async {
+    final question = (overrideQuestion ?? input.text).trim();
     if (question.isEmpty || loading) return;
 
     setState(() {
@@ -67,11 +82,15 @@ class _ChatScreenState extends State<ChatScreen> {
       input.clear();
     });
 
+    scrollToBottom();
+
     try {
       final response = await api.ask(settings, question);
       setState(() => messages[messages.length - 1] = response);
+      await refreshStatus();
     } catch (e) {
       setState(() {
+        serverOnline = false;
         messages[messages.length - 1] = ChatMessage(
           role: 'jade',
           text: 'I could not reach JamesOS.\n\n`$e`',
@@ -101,34 +120,111 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  Widget buildHomeCard() {
+  void runMode(String mode) {
+    setState(() => selectedMode = mode);
+
+    final prompt = switch (mode) {
+      'Work' => 'Jade, bring forward the most important work items I should focus on right now. Prioritize WGL tickets, blockers, Kevin/Malcolm/Tom context, deployments, and anything waiting on me.',
+      'GCU' => 'Jade, bring forward the most important GCU teaching items I should focus on right now. Prioritize grading, students, announcements, and upcoming course work.',
+      'Family' => 'Jade, bring forward important family or personal items I should keep in mind right now. Be practical and concise.',
+      'JamesOS' => 'Jade, bring forward the most important JamesOS development items. Prioritize broken builds, deploy status, next coding tasks, and architecture decisions.',
+      _ => 'Jade, give me a focused personal assistant briefing for right now. Bring important things up front and skip filler.',
+    };
+
+    askJade(overrideQuestion: prompt);
+  }
+
+  Widget buildStatusRow() {
+    return Row(
+      children: [
+        Container(
+          width: 10,
+          height: 10,
+          decoration: BoxDecoration(
+            color: serverOnline ? Colors.greenAccent : Colors.redAccent,
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          serverOnline ? 'JamesOS online' : 'JamesOS offline',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+            color: serverOnline ? Colors.greenAccent.shade100 : Colors.redAccent.shade100,
+          ),
+        ),
+        const Spacer(),
+        TextButton.icon(
+          onPressed: refreshStatus,
+          icon: const Icon(Icons.refresh, size: 18),
+          label: const Text('Refresh'),
+        ),
+      ],
+    );
+  }
+
+  Widget modeChip(String mode, IconData icon) {
+    final selected = selectedMode == mode;
+    return ChoiceChip(
+      selected: selected,
+      avatar: Icon(icon, size: 18),
+      label: Text(mode),
+      onSelected: (_) => runMode(mode),
+      selectedColor: Colors.tealAccent.withValues(alpha: 0.22),
+      backgroundColor: Colors.white.withValues(alpha: 0.045),
+      side: BorderSide(
+        color: selected
+            ? Colors.tealAccent.withValues(alpha: 0.48)
+            : Colors.white.withValues(alpha: 0.12),
+      ),
+    );
+  }
+
+  Widget buildDashboardCard() {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.teal.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(24),
         border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.25)),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
+          const Text(
             'Good afternoon, James',
-            style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+            style: TextStyle(fontSize: 23, fontWeight: FontWeight.bold),
           ),
-          SizedBox(height: 8),
-          Text('Jade is connected to JamesOS. What are we working on?'),
-          SizedBox(height: 14),
+          const SizedBox(height: 10),
+          buildStatusRow(),
+          const SizedBox(height: 12),
+          const Text(
+            'Important things first. Choose a mode and Jade will pull the right context forward.',
+            style: TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 14),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
-              Chip(label: Text('Work')),
-              Chip(label: Text('GCU')),
-              Chip(label: Text('Family')),
-              Chip(label: Text('JamesOS')),
+              modeChip('Work', Icons.work_outline),
+              modeChip('GCU', Icons.school_outlined),
+              modeChip('Family', Icons.home_outlined),
+              modeChip('JamesOS', Icons.memory_outlined),
+              modeChip('Personal', Icons.auto_awesome_outlined),
             ],
+          ),
+          const SizedBox(height: 14),
+          FilledButton.icon(
+            onPressed: loading
+                ? null
+                : () => askJade(
+                      overrideQuestion:
+                          'Jade, give me a prioritized briefing for right now. Bring the important things up front across work, GCU, family, JamesOS, calendar, and recent memory. Keep it concise and action-oriented.',
+                    ),
+            icon: const Icon(Icons.flash_on),
+            label: const Text('Brief me'),
           ),
         ],
       ),
@@ -162,7 +258,7 @@ class _ChatScreenState extends State<ChatScreen> {
               padding: const EdgeInsets.all(16),
               itemCount: messages.length + 1,
               itemBuilder: (_, i) {
-                if (i == 0) return buildHomeCard();
+                if (i == 0) return buildDashboardCard();
                 return ChatBubble(message: messages[i - 1]);
               },
             ),
