@@ -30,6 +30,8 @@ def detect_intent(question: str) -> str:
         return "calendar"
     if any(w in q for w in ["kevin", "malcolm", "tom", "julia", "person", "who is"]):
         return "person"
+    if any(w in q for w in ["file", "pdf", "docx", "document", "upload", "uploaded", "attachment"]):
+        return "file"
     if any(w in q for w in ["ticket", "bug", "88858", "work", "paving", "wgl"]):
         return "work"
     if any(w in q for w in ["email", "gmail", "gcu", "student", "grade"]):
@@ -232,6 +234,16 @@ def handle_jade_message(message: str, use_ai: bool = True) -> dict:
     if tool != "local":
         result = route_tool(text)
         answer = result.get("result", "")
+
+        if result.get("tool") == "web_search" and use_ai and ollama_enabled():
+            prompt = (
+                "Summarize these web search results for James. "
+                "Be concise, practical, and include useful links when present.\n\n"
+                f"Question: {message}\n\n"
+                f"Results:\n{answer[:8000]}"
+            )
+            answer = ask_ollama(prompt)
+
         _maybe_store_conversation_memory(message, answer, "tool")
         return {
             "question": message,

@@ -19,6 +19,7 @@
     #app { display:none; }
     .muted { color:#9ca3af; font-size:14px; }
   </style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
   <header>Jade · JamesOS</header>
@@ -82,7 +83,11 @@ async function showApp() {
 function add(who, text) {
   const div = document.createElement("div");
   div.className = "msg " + who;
-  div.textContent = text;
+  if (who === "jade" && window.marked) {
+    div.innerHTML = marked.parse(text);
+  } else {
+    div.textContent = text;
+  }
   chat.appendChild(div);
   window.scrollTo(0, document.body.scrollHeight);
 }
@@ -170,7 +175,11 @@ document.getElementById("form").addEventListener("submit", async (e) => {
     });
 
     const data = await res.json();
-    chat.lastChild.textContent = data.answer || JSON.stringify(data, null, 2);
+    if (window.marked) {
+      chat.lastChild.innerHTML = marked.parse(data.answer || JSON.stringify(data, null, 2));
+    } else {
+      chat.lastChild.textContent = data.answer || JSON.stringify(data, null, 2);
+    }
   } catch (err) {
     chat.lastChild.textContent = "Error: " + err;
   }

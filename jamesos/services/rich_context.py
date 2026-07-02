@@ -7,6 +7,7 @@ from jamesos.config import VAULT
 SEARCH_ROOTS = [
     VAULT / "JamesOS" / "People",
     VAULT / "JamesOS" / "Knowledge",
+    VAULT / "JamesOS" / "Knowledge" / "Files",
     VAULT / "JamesOS" / "Reports",
     VAULT / "JamesOS" / "Intake",
     VAULT / "Work",
