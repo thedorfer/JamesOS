@@ -20,6 +20,7 @@ from jamesos.services.extraction_engine import extract_entities, build_unified_g
 from jamesos.services.proactive_assistant import generate_proactive_briefing
 from jamesos.services.typed_index import build_typed_indexes
 from jamesos.services.file_intelligence import build_file_knowledge
+from jamesos.services.jade_brain import summarize_chat_history
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -117,6 +118,7 @@ def run_scheduled_plugins() -> str:
         "proactive_assistant": generate_proactive_briefing,
         "typed_indexes": build_typed_indexes,
         "file_intelligence": build_file_knowledge,
+        "jade_brain_summary": summarize_chat_history,
         "contacts": build_people_profiles,
     }
 

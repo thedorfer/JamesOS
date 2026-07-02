@@ -13,6 +13,7 @@ from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.rich_context import build_rich_context
 from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.jade_planner import answer_with_planner
+from jamesos.services.jade_brain import answer_with_brain, summarize_chat_history
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
@@ -173,7 +174,7 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
 
     from datetime import datetime
 
-    result = answer_with_planner(req.question, use_ai=req.use_ai)
+    result = answer_with_brain(req.question, use_ai=req.use_ai)
 
     history = _load_chat_history()
     history.append({
@@ -190,7 +191,7 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
 @app.get("/ask")
 def ask_get(q: str, use_ai: bool = True, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return answer_with_planner(q, use_ai=use_ai)
+    return answer_with_brain(q, use_ai=use_ai)
 
 
 @app.get("/daily-briefing")
@@ -320,3 +321,9 @@ def chat_clear(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     _save_chat_history([])
     return {"status": "cleared"}
+
+
+@app.post("/brain/summarize-chat")
+def brain_summarize_chat(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": summarize_chat_history()}
