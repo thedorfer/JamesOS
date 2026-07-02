@@ -99,3 +99,69 @@ Last Updated: {datetime.now().strftime("%Y-%m-%d %H:%M")}
 
     (REPORTS / "People.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return f"Updated {updated} people profiles and People report"
+
+
+def build_people_quality_report() -> str:
+    people = _load_people()
+    REPORTS.mkdir(parents=True, exist_ok=True)
+
+    by_email = {}
+    no_email = []
+    no_name_details = []
+    birthday_people = []
+
+    for name, info in people.items():
+        email = (info.get("email") or "").strip().lower()
+        phone = (info.get("phone") or "").strip()
+        birthday = (info.get("birthday") or "").strip()
+
+        if email:
+            by_email.setdefault(email, []).append(name)
+        else:
+            no_email.append(name)
+
+        if not email and not phone:
+            no_name_details.append(name)
+
+        if birthday:
+            birthday_people.append((name, birthday))
+
+    duplicate_emails = {
+        email: names for email, names in by_email.items()
+        if len(names) > 1
+    }
+
+    lines = [
+        "# People Quality Report",
+        "",
+        f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "## Summary",
+        f"- Total People: {len(people)}",
+        f"- Duplicate Emails: {len(duplicate_emails)}",
+        f"- Missing Email: {len(no_email)}",
+        f"- Missing Email and Phone: {len(no_name_details)}",
+        f"- Birthdays Known: {len(birthday_people)}",
+        "",
+        "## Possible Duplicate Contacts",
+    ]
+
+    if duplicate_emails:
+        for email, names in sorted(duplicate_emails.items()):
+            lines.append(f"- {email}")
+            for name in names:
+                lines.append(f"  - [[JamesOS/People/{name}|{name}]]")
+    else:
+        lines.append("- None found")
+
+    lines.extend(["", "## People Missing Email and Phone"])
+    lines.extend([f"- [[JamesOS/People/{name}|{name}]]" for name in sorted(no_name_details)] or ["- None"])
+
+    lines.extend(["", "## Known Birthdays"])
+    for name, birthday in sorted(birthday_people):
+        lines.append(f"- [[JamesOS/People/{name}|{name}]] — {birthday}")
+
+    report = REPORTS / "People Quality.md"
+    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    return "Wrote People Quality report"
