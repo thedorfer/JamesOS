@@ -28,6 +28,17 @@ class AskRequest(BaseModel):
     use_ai: bool = True
 
 
+class QuickNoteRequest(BaseModel):
+    text: str
+    title: str = "Quick Note"
+
+
+class ShareLinkRequest(BaseModel):
+    url: str
+    title: str = "Shared Link"
+    note: str = ""
+
+
 
 
 def _search_query_from_question(question: str) -> str:
@@ -106,6 +117,31 @@ def intake(req: IntakeRequest, x_jamesos_key: str | None = Header(default=None))
     return {"result": result}
 
 
+@app.post("/quick-note")
+def quick_note(req: QuickNoteRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    result = enqueue_job("intake", {
+        "title": req.title,
+        "content": req.text,
+        "source": "mobile_quick_note",
+        "source_detail": "flutter_app",
+    })
+    return {"result": result}
+
+
+@app.post("/share-link")
+def share_link(req: ShareLinkRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    content = f"URL: {req.url}\n\nNote:\n{req.note}"
+    result = enqueue_job("intake", {
+        "title": req.title,
+        "content": content,
+        "source": "mobile_share_link",
+        "source_detail": req.url,
+    })
+    return {"result": result}
+
+
 @app.get("/search")
 def search(q: str, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
@@ -118,6 +154,12 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     return ask_agent(req.question, use_ai=req.use_ai)
 
 
+@app.get("/ask")
+def ask_get(q: str, use_ai: bool = True, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return ask_agent(q, use_ai=use_ai)
+
+
 @app.get("/daily-briefing")
 def daily_briefing(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
@@ -128,3 +170,24 @@ def daily_briefing(x_jamesos_key: str | None = Header(default=None)):
 def status_report(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return {"result": generate_status_report()}
+
+
+@app.get("/mobile/home")
+def mobile_home(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+
+    reports = VAULT / "JamesOS" / "Reports"
+    home = VAULT / "Home.md"
+
+    def read_report(name: str) -> str:
+        path = reports / f"{name}.md"
+        return path.read_text(encoding="utf-8", errors="ignore")[:4000] if path.exists() else ""
+
+    return {
+        "status": "ok",
+        "home": home.read_text(encoding="utf-8", errors="ignore")[:4000] if home.exists() else "",
+        "daily_briefing": read_report("Daily Briefing"),
+        "proactive_assistant": read_report("Proactive Assistant"),
+        "work_intelligence": read_report("Work Intelligence"),
+        "people": read_report("People"),
+    }
