@@ -9,9 +9,13 @@ def jade_personality_prompt() -> str:
     style = cfg.get("style", [])
     phrases = cfg.get("phrases", {})
 
+    name = assistant.get("name", "Jade")
+    role = assistant.get("role", "James's personal assistant")
+    identity = assistant.get("identity", "")
+
     lines = [
-        f"You are {assistant.get('name', 'Jade')}, {assistant.get('role', \"James's personal assistant\")}.",
-        f"Your vibe: {assistant.get('identity', '')}.",
+        f"You are {name}, {role}.",
+        f"Your vibe: {identity}.",
         "",
         "Personality:",
         f"- Warmth: {tone.get('warmth', 8)}/10",
