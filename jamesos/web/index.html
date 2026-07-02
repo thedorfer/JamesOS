@@ -1,0 +1,83 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Jade</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { margin:0; font-family: system-ui, sans-serif; background:#111827; color:#f9fafb; }
+    header { padding:14px 16px; background:#1f2937; font-size:20px; font-weight:700; }
+    main { max-width:900px; margin:0 auto; padding:16px; }
+    #chat { display:flex; flex-direction:column; gap:12px; padding-bottom:90px; }
+    .msg { padding:12px 14px; border-radius:14px; white-space:pre-wrap; line-height:1.4; }
+    .user { background:#2563eb; align-self:flex-end; max-width:80%; }
+    .jade { background:#374151; align-self:flex-start; max-width:90%; }
+    form { position:fixed; bottom:0; left:0; right:0; background:#1f2937; padding:12px; display:flex; gap:8px; }
+    input, textarea { flex:1; border-radius:10px; border:0; padding:12px; font-size:16px; }
+    button { border:0; border-radius:10px; padding:0 16px; font-size:16px; font-weight:700; background:#10b981; color:#052e1b; }
+    .settings { display:flex; gap:8px; margin-bottom:12px; }
+    .settings input { width:100%; }
+  </style>
+</head>
+<body>
+  <header>Jade · JamesOS</header>
+  <main>
+    <div class="settings">
+      <input id="key" type="password" placeholder="JamesOS API key" />
+      <button onclick="saveKey()" type="button">Save</button>
+    </div>
+    <div id="chat"></div>
+  </main>
+
+  <form id="form">
+    <input id="q" autocomplete="off" placeholder="Ask Jade..." />
+    <button>Send</button>
+  </form>
+
+<script>
+const chat = document.getElementById("chat");
+const keyInput = document.getElementById("key");
+keyInput.value = localStorage.getItem("jamesos_key") || "";
+
+function saveKey() {
+  localStorage.setItem("jamesos_key", keyInput.value);
+  add("jade", "Saved API key on this device.");
+}
+
+function add(who, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  chat.appendChild(div);
+  window.scrollTo(0, document.body.scrollHeight);
+}
+
+document.getElementById("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const q = document.getElementById("q");
+  const question = q.value.trim();
+  if (!question) return;
+  q.value = "";
+
+  add("user", question);
+  add("jade", "Thinking...");
+
+  try {
+    const res = await fetch("/ask", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-JamesOS-Key": localStorage.getItem("jamesos_key") || ""
+      },
+      body: JSON.stringify({ question, use_ai: true })
+    });
+
+    const data = await res.json();
+    chat.lastChild.textContent = data.answer || JSON.stringify(data, null, 2);
+  } catch (err) {
+    chat.lastChild.textContent = "Error: " + err;
+  }
+});
+</script>
+</body>
+</html>

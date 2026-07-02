@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from jamesos.config import VAULT
@@ -235,3 +236,9 @@ def indexes_search(q: str, categories: str = "", x_jamesos_key: str | None = Hea
 def tools_route(req: ToolRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return route_tool(req.question)
+
+
+@app.get("/app", response_class=HTMLResponse)
+def jade_app():
+    path = Path(__file__).resolve().parents[1] / "web" / "index.html"
+    return path.read_text(encoding="utf-8")
