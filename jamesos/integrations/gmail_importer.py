@@ -1,7 +1,6 @@
 import base64
 import json
 from datetime import datetime
-from pathlib import Path
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -12,7 +11,7 @@ from jamesos.config import VAULT
 from jamesos.config.loader import get_config
 from jamesos.core.queue import enqueue_job
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 SECRETS = VAULT / "JamesOS" / "Secrets"
 DATABASE = VAULT / "JamesOS" / "Database" / "gmail"
@@ -83,6 +82,26 @@ def _extract_text(payload: dict) -> str:
     return "\n".join(t for t in texts if t.strip())
 
 
+def _get_label(service, label_name: str) -> dict | None:
+    labels = service.users().labels().list(userId="me").execute().get("labels", [])
+    return next((l for l in labels if l.get("name") == label_name), None)
+
+
+def _ensure_label(service, label_name: str) -> dict:
+    existing = _get_label(service, label_name)
+    if existing:
+        return existing
+
+    return service.users().labels().create(
+        userId="me",
+        body={
+            "name": label_name,
+            "labelListVisibility": "labelShow",
+            "messageListVisibility": "show",
+        },
+    ).execute()
+
+
 def import_gmail_label() -> str:
     cfg = get_config("gmail.yaml").get("gmail", {})
     label_name = cfg.get("label", "JamesOS")
@@ -91,8 +110,7 @@ def import_gmail_label() -> str:
     service = _gmail_service()
     processed = _load_processed()
 
-    labels = service.users().labels().list(userId="me").execute().get("labels", [])
-    label = next((l for l in labels if l.get("name") == label_name), None)
+    label = _get_label(service, label_name)
 
     if not label:
         return f"Gmail label not found: {label_name}"
@@ -116,7 +134,8 @@ def import_gmail_label() -> str:
 
         thread_id = msg.get("threadId")
 
-        if thread_id in processed.get("threads", {}):
+        existing = processed.get("threads", {}).get(thread_id)
+        if existing and existing.get("status") in ["queued", "processed", "finalized"]:
             skipped += 1
             continue
 
@@ -138,6 +157,7 @@ def import_gmail_label() -> str:
             f"Subject: {subject}",
             f"Date: {date}",
             f"Gmail Thread ID: {thread_id}",
+            f"Gmail Source Label: {label_name}",
             "",
             "## Thread Messages",
             "",
@@ -159,12 +179,17 @@ def import_gmail_label() -> str:
             "content": "\n".join(content_parts),
             "source": "gmail",
             "source_detail": f"label:{label_name}; thread:{thread_id}",
+            "gmail": {
+                "thread_id": thread_id,
+                "source_label": label_name,
+            },
         })
 
-        processed["threads"][thread_id] = {
+        processed.setdefault("threads", {})[thread_id] = {
             "imported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "subject": subject,
             "label": label_name,
+            "status": "queued",
         }
 
         imported += 1
@@ -172,3 +197,56 @@ def import_gmail_label() -> str:
     _save_processed(processed)
 
     return f"Gmail import complete. Imported: {imported}. Skipped duplicates: {skipped}."
+
+
+def finalize_gmail_thread(thread_id: str) -> str:
+    cfg = get_config("gmail.yaml").get("gmail", {})
+
+    source_label_name = cfg.get("label", "JamesOS")
+    imported_label_name = cfg.get("imported_label", "JamesOS Imported")
+
+    remove_source = bool(cfg.get("remove_source_label_after_processed", True))
+    add_imported = bool(cfg.get("add_imported_label_after_processed", True))
+
+    service = _gmail_service()
+    processed = _load_processed()
+
+    source_label = _get_label(service, source_label_name)
+    imported_label = _ensure_label(service, imported_label_name) if add_imported else None
+
+    thread = service.users().threads().get(
+        userId="me",
+        id=thread_id,
+        format="metadata",
+    ).execute()
+
+    message_ids = [m["id"] for m in thread.get("messages", [])]
+
+    for message_id in message_ids:
+        body = {
+            "addLabelIds": [],
+            "removeLabelIds": [],
+        }
+
+        if add_imported and imported_label:
+            body["addLabelIds"].append(imported_label["id"])
+
+        if remove_source and source_label:
+            body["removeLabelIds"].append(source_label["id"])
+
+        if body["addLabelIds"] or body["removeLabelIds"]:
+            service.users().messages().modify(
+                userId="me",
+                id=message_id,
+                body=body,
+            ).execute()
+
+    processed.setdefault("threads", {}).setdefault(thread_id, {})
+    processed["threads"][thread_id]["finalized_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    processed["threads"][thread_id]["status"] = "finalized"
+    processed["threads"][thread_id]["source_label_removed"] = remove_source
+    processed["threads"][thread_id]["imported_label_added"] = add_imported
+
+    _save_processed(processed)
+
+    return f"Finalized Gmail thread: {thread_id}"

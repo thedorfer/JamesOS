@@ -9,6 +9,7 @@ from jamesos.config.loader import daemon_interval_seconds, plugin_enabled, plugi
 from jamesos.core.queue import PROCESSED, FAILED, ensure_queue_dirs, list_pending_jobs
 from jamesos.services.intake import intake_item
 from jamesos.services.job_engine import run_job
+from jamesos.integrations.gmail_importer import finalize_gmail_thread
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -45,6 +46,11 @@ def _process_job(path):
     job["status"] = "processed"
     job["processed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     job["result"] = result
+
+    gmail_meta = payload.get("gmail", {})
+    if gmail_meta.get("thread_id"):
+        finalize_result = finalize_gmail_thread(gmail_meta["thread_id"])
+        job["gmail_finalized"] = finalize_result
 
     target = PROCESSED / path.name
     target.write_text(json.dumps(job, indent=2), encoding="utf-8")
