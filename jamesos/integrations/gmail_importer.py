@@ -104,105 +104,108 @@ def _ensure_label(service, label_name: str) -> dict:
 
 def import_gmail_label() -> str:
     cfg = get_config("gmail.yaml").get("gmail", {})
-    label_name = cfg.get("label", "JamesOS")
+    labels_to_import = cfg.get("labels") or [cfg.get("label", "JamesOS")]
     max_results = int(cfg.get("max_results", 10))
 
     service = _gmail_service()
     processed = _load_processed()
 
-    label = _get_label(service, label_name)
+    missing_labels = []
 
-    if not label:
-        return f"Gmail label not found: {label_name}"
+    for label_name in labels_to_import:
+        label = _get_label(service, label_name)
 
-    response = service.users().messages().list(
-        userId="me",
-        labelIds=[label["id"]],
-        maxResults=max_results,
-    ).execute()
-
-    messages = response.get("messages", [])
-    imported = 0
-    skipped = 0
-
-    for item in messages:
-        msg = service.users().messages().get(
-            userId="me",
-            id=item["id"],
-            format="full",
-        ).execute()
-
-        thread_id = msg.get("threadId")
-
-        existing = processed.get("threads", {}).get(thread_id)
-        if existing and existing.get("status") in ["queued", "processed", "finalized"]:
-            skipped += 1
+        if not label:
+            missing_labels.append(label_name)
             continue
 
-        thread = service.users().threads().get(
+        response = service.users().messages().list(
             userId="me",
-            id=thread_id,
-            format="full",
+            labelIds=[label["id"]],
+            maxResults=max_results,
         ).execute()
 
-        thread_messages = thread.get("messages", [])
-        first = thread_messages[0] if thread_messages else msg
+        messages = response.get("messages", [])
 
-        subject = _header(first, "Subject") or "(No Subject)"
-        sender = _header(first, "From")
-        date = _header(first, "Date")
+        for item in messages:
+            msg = service.users().messages().get(
+                userId="me",
+                id=item["id"],
+                format="full",
+            ).execute()
 
-        content_parts = [
-            f"From: {sender}",
-            f"Subject: {subject}",
-            f"Date: {date}",
-            f"Gmail Thread ID: {thread_id}",
-            f"Gmail Source Label: {label_name}",
-            "",
-            "## Thread Messages",
-            "",
-        ]
+            thread_id = msg.get("threadId")
 
-        for message in thread_messages:
-            content_parts.extend([
-                "---",
-                f"From: {_header(message, 'From')}",
-                f"To: {_header(message, 'To')}",
-                f"Date: {_header(message, 'Date')}",
+            existing = processed.get("threads", {}).get(thread_id)
+            if existing and existing.get("status") in ["queued", "processed", "finalized"]:
+                skipped += 1
+                continue
+
+            thread = service.users().threads().get(
+                userId="me",
+                id=thread_id,
+                format="full",
+            ).execute()
+
+            thread_messages = thread.get("messages", [])
+            first = thread_messages[0] if thread_messages else msg
+
+            subject = _header(first, "Subject") or "(No Subject)"
+            sender = _header(first, "From")
+            date = _header(first, "Date")
+
+            content_parts = [
+                f"From: {sender}",
+                f"Subject: {subject}",
+                f"Date: {date}",
+                f"Gmail Thread ID: {thread_id}",
+                f"Gmail Source Label: {label_name}",
                 "",
-                _extract_text(message.get("payload", {})).strip(),
+                "## Thread Messages",
                 "",
-            ])
+            ]
 
-        enqueue_job("intake", {
-            "title": subject,
-            "content": "\n".join(content_parts),
-            "source": "gmail",
-            "source_detail": f"label:{label_name}; thread:{thread_id}",
-            "gmail": {
-                "thread_id": thread_id,
-                "source_label": label_name,
-            },
-        })
+            for message in thread_messages:
+                content_parts.extend([
+                    "---",
+                    f"From: {_header(message, 'From')}",
+                    f"To: {_header(message, 'To')}",
+                    f"Date: {_header(message, 'Date')}",
+                    "",
+                    _extract_text(message.get("payload", {})).strip(),
+                    "",
+                ])
 
-        processed.setdefault("threads", {})[thread_id] = {
-            "imported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "subject": subject,
-            "label": label_name,
-            "status": "queued",
-        }
+            enqueue_job("intake", {
+                "title": subject,
+                "content": "\n".join(content_parts),
+                "source": "gmail",
+                "source_detail": f"label:{label_name}; thread:{thread_id}",
+                "gmail": {
+                    "thread_id": thread_id,
+                    "source_label": label_name,
+                },
+            })
 
-        imported += 1
+            processed.setdefault("threads", {})[thread_id] = {
+                "imported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "subject": subject,
+                "label": label_name,
+                "status": "queued",
+            }
 
+            imported += 1
     _save_processed(processed)
 
-    return f"Gmail import complete. Imported: {imported}. Skipped duplicates: {skipped}."
+    missing = f" Missing labels: {', '.join(missing_labels)}." if missing_labels else ""
+    return f"Gmail import complete. Imported: {imported}. Skipped duplicates: {skipped}.{missing}"
 
 
-def finalize_gmail_thread(thread_id: str) -> str:
+def finalize_gmail_thread(thread_id: str, source_label_name: str | None = None) -> str:
     cfg = get_config("gmail.yaml").get("gmail", {})
 
-    source_label_name = cfg.get("label", "JamesOS")
+    if not source_label_name:
+        source_label_name = cfg.get("label", "JamesOS")
     imported_label_name = cfg.get("imported_label", "JamesOS Imported")
 
     remove_source = bool(cfg.get("remove_source_label_after_processed", True))

@@ -53,7 +53,10 @@ def _process_job(path):
 
     gmail_meta = payload.get("gmail", {})
     if gmail_meta.get("thread_id"):
-        finalize_result = finalize_gmail_thread(gmail_meta["thread_id"])
+        finalize_result = finalize_gmail_thread(
+            gmail_meta["thread_id"],
+            gmail_meta.get("source_label"),
+        )
         job["gmail_finalized"] = finalize_result
 
     target = PROCESSED / path.name
