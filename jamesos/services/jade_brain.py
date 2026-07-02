@@ -259,12 +259,77 @@ def _rank_context(context: dict) -> list[str]:
 
     return lines
 
+
+def _sensitive_file_lookup(question: str) -> dict | None:
+    q = question.lower()
+
+    if not any(w in q for w in ["ssn", "social security"]):
+        return None
+
+    name_terms = [
+        w for w in re.findall(r"[a-zA-Z]+", q)
+        if w not in {"what", "is", "the", "ssn", "social", "security", "number", "for", "of"}
+    ]
+
+    ssn_pattern = re.compile(r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b")
+
+    if not FILES_ROOT.exists():
+        return None
+
+    matches = []
+
+    for path in FILES_ROOT.rglob("*.md"):
+        body = path.read_text(encoding="utf-8", errors="ignore")
+        lower = body.lower()
+
+        if name_terms and not any(term in lower for term in name_terms):
+            continue
+
+        for m in ssn_pattern.finditer(body):
+            start = max(0, m.start() - 350)
+            end = min(len(body), m.end() + 350)
+            snippet = body[start:end]
+            score = 10
+
+            for term in name_terms:
+                if term in snippet.lower():
+                    score += 50
+
+            matches.append((score, path, m.group(0), snippet))
+
+    if not matches:
+        return None
+
+    matches.sort(key=lambda x: x[0], reverse=True)
+    score, path, value, snippet = matches[0]
+    rel = path.relative_to(VAULT).with_suffix("").as_posix()
+
+    return {
+        "answer": f"I found it.\n\n**SSN:** `{value}`\n\nSource: [[{rel}]]",
+        "source": rel,
+        "score": score,
+        "snippet": snippet,
+    }
+
+
 def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     intent = detect_intent(question)
 
     if intent in {"remember", "note"}:
         from jamesos.services.agent import handle_jade_message
         return handle_jade_message(question, use_ai=use_ai)
+
+    if intent == "sensitive_file":
+        direct = _sensitive_file_lookup(question)
+        if direct:
+            return {
+                "question": question,
+                "answer": direct["answer"],
+                "action": "sensitive_file_lookup",
+                "intent": intent,
+                "planner": ["files"],
+                "source": direct["source"],
+            }
 
     tool = detect_tool(question)
     if tool != "local":
