@@ -13,6 +13,7 @@ from jamesos.services.personality import jade_personality_prompt
 
 BRAIN_ROOT = VAULT / "JamesOS" / "Brain"
 CONVERSATIONS_FILE = BRAIN_ROOT / "conversation_summaries.json"
+FILES_ROOT = VAULT / "JamesOS" / "Knowledge" / "Files"
 
 
 def _load_conversations() -> dict:
