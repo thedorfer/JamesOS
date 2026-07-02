@@ -38,6 +38,8 @@ def detect_intent(question: str) -> str:
         return "weather"
     if any(w in q for w in ["look up", "search web", "latest", "news", "research online"]):
         return "web"
+    if any(w in q for w in ["ssn", "social security", "tax", "ein", "passport", "license number"]):
+        return "sensitive_file"
     if any(w in q for w in ["uploaded", "file", "pdf", "docx", "attachment", "document"]):
         return "file"
     if any(w in q for w in ["yesterday", "talk about", "talked about", "conversation", "remember we"]):
@@ -56,7 +58,8 @@ def plan_sources(intent: str) -> list[str]:
         "note": ["queue"],
         "weather": ["weather"],
         "web": ["web_search"],
-        "file": ["files", "memory", "chat"],
+        "sensitive_file": ["files"],
+        "file": ["files", "memory"],
         "conversation_recall": ["conversation_summaries", "memory", "work", "gmail", "gcu", "chat"],
         "person": ["memory", "people", "work", "gmail", "calendar", "conversation_summaries"],
         "work": ["work", "memory", "gmail", "calendar", "conversation_summaries"],
@@ -198,29 +201,63 @@ def gather_context(question: str, intent: str, sources: list[str]) -> dict:
     return context
 
 
+def _trust_score(source: str, category: str = "") -> int:
+    if source == "indexes" and category in {"knowledge", "work", "gmail", "gcu", "calendar", "people"}:
+        return {
+            "knowledge": 95,
+            "work": 90,
+            "gmail": 85,
+            "gcu": 85,
+            "calendar": 85,
+            "people": 75,
+        }.get(category, 50)
+
+    if source == "memory":
+        return 55
+
+    if source == "conversation_summaries":
+        return 35
+
+    return 50
+
+
 def _rank_context(context: dict) -> list[str]:
-    lines = []
+    lines = [
+        "# Source Trust Rules",
+        "- Highest trust: extracted files, work notes, Gmail/GCU imports, calendar imports.",
+        "- Medium trust: explicit memories created by James.",
+        "- Low trust: prior Jade assistant answers and conversation summaries.",
+        "- Do not treat prior Jade answers as verified facts unless confirmed by a source file, email, calendar item, or James's explicit memory.",
+        "",
+    ]
 
     for source, data in context.get("results", {}).items():
-        lines.append(f"# Source: {source}")
-
         if isinstance(data, list):
+            trust = _trust_score(source)
+            lines.append(f"# Source: {source} | Trust: {trust}/100")
             for item in data:
                 lines.append(json.dumps(item, indent=2)[:2500])
+
         elif isinstance(data, dict):
+            lines.append(f"# Source: {source}")
             for category, matches in data.items():
-                lines.append(f"## {category}")
+                trust = _trust_score(source, category)
+                lines.append(f"## {category} | Trust: {trust}/100")
                 for m in matches[:5]:
                     lines.append(
-                        f"File: {m.get('file')}\nTitle: {m.get('title')}\nScore: {m.get('score')}\nPreview:\n{m.get('preview','')[:1800]}"
+                        f"File: {m.get('file')}\n"
+                        f"Title: {m.get('title')}\n"
+                        f"Score: {m.get('score')}\n"
+                        f"Trust: {trust}/100\n"
+                        f"Preview:\n{m.get('preview','')[:2200]}"
                     )
         else:
+            lines.append(f"# Source: {source} | Trust: {_trust_score(source)}/100")
             lines.append(str(data)[:2000])
 
         lines.append("")
 
     return lines
-
 
 def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     intent = detect_intent(question)
@@ -261,8 +298,9 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
             jade_personality_prompt()
             + "\n\nYou are answering as Jade. "
             + "Do not invent people, jobs, meetings, emails, dates, or details. "
-            + "Use only facts present in the provided context. "
-            + "If the context is weak or unrelated, say that plainly. "
+            + "Use only facts present in high-trust source context. "
+            + "Do not use prior Jade answers as facts unless a higher-trust source confirms them. "
+            + "If the context is weak, unrelated, or low-trust, say that plainly. "
             + "Do not dump raw fields unless they matter. "
             + "Synthesize the answer like a sharp personal assistant. "
             + "Use short sections or bullets when helpful. "
@@ -278,8 +316,9 @@ def answer_with_brain(question: str, use_ai: bool = True) -> dict:
     else:
         answer = ranked_context[:6000]
 
+    # Store only as chat memory, not as verified fact. Source trust rules keep this low-trust.
     if any(w in question.lower() for w in ["kevin", "malcolm", "tom", "paving", "ticket", "important"]):
-        remember(f"Q: {question}\nA: {answer[:2000]}", source="jade_brain", importance="normal")
+        remember(f"Low-trust Jade answer, not verified source fact.\nQ: {question}\nA: {answer[:2000]}", source="jade_brain_low_trust", importance="normal")
 
     return {
         "question": question,
