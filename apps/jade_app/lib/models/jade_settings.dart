@@ -4,6 +4,7 @@ class JadeSettings {
   String assistantName;
   bool useAi;
   bool voiceReplies;
+  bool connectionLocked;
 
   JadeSettings({
     this.apiBase = 'http://100.77.201.40:8787',
@@ -11,5 +12,6 @@ class JadeSettings {
     this.assistantName = 'Jade',
     this.useAi = true,
     this.voiceReplies = false,
+    this.connectionLocked = true,
   });
 }
