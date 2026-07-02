@@ -28,8 +28,11 @@ def _clean_jade_answer(answer: str, plan: ReasoningPlan, result: dict) -> str:
     banned_starts = [
         "based on the data provided",
         "based on the context",
-        "it appears",
+        "in the provided data",
+        "there are several nodes",
+        "edges connecting",
         "to better understand",
+        "it appears",
     ]
 
     if plan.intent == "person" and any(b in lower for b in banned_starts):
