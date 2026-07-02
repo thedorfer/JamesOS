@@ -10,6 +10,8 @@ from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.rich_context import build_rich_context
 from jamesos.services.agent import ask_agent
+from jamesos.services.memory_service import remember, search_memory
+from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 
@@ -37,6 +39,12 @@ class ShareLinkRequest(BaseModel):
     url: str
     title: str = "Shared Link"
     note: str = ""
+
+
+class MemoryRequest(BaseModel):
+    text: str
+    source: str = "api"
+    importance: str = "normal"
 
 
 
@@ -191,3 +199,28 @@ def mobile_home(x_jamesos_key: str | None = Header(default=None)):
         "work_intelligence": read_report("Work Intelligence"),
         "people": read_report("People"),
     }
+
+
+@app.post("/memory")
+def memory_add(req: MemoryRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return remember(req.text, req.source, req.importance)
+
+
+@app.get("/memory/search")
+def memory_search(q: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"results": search_memory(q)}
+
+
+@app.post("/indexes/build")
+def indexes_build(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": build_typed_indexes()}
+
+
+@app.get("/indexes/search")
+def indexes_search(q: str, categories: str = "", x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    cats = [c.strip() for c in categories.split(",") if c.strip()] or None
+    return search_typed_indexes(q, cats)

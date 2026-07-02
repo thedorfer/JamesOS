@@ -18,6 +18,7 @@ from jamesos.services.intelligence import build_knowledge_graph, generate_daily_
 from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.extraction_engine import extract_entities, build_unified_graph
 from jamesos.services.proactive_assistant import generate_proactive_briefing
+from jamesos.services.typed_index import build_typed_indexes
 
 SCHEDULER_STATE = VAULT / "JamesOS" / "Database" / "scheduler_state.json"
 
@@ -113,6 +114,7 @@ def run_scheduled_plugins() -> str:
         "entity_extraction": extract_entities,
         "unified_graph": build_unified_graph,
         "proactive_assistant": generate_proactive_briefing,
+        "typed_indexes": build_typed_indexes,
         "contacts": build_people_profiles,
     }
 
