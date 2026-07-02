@@ -22,6 +22,57 @@ class ReasoningPlan:
     evidence: dict[str, Any] = field(default_factory=dict)
 
 
+def _clean_jade_answer(answer: str, plan: ReasoningPlan, result: dict) -> str:
+    lower = answer.lower()
+
+    banned_starts = [
+        "based on the data provided",
+        "based on the context",
+        "it appears",
+        "to better understand",
+    ]
+
+    if plan.intent == "person" and any(b in lower for b in banned_starts):
+        people = plan.entities.get("people", [])
+        person = people[0] if people else "that person"
+
+        graph = plan.evidence.get("results", {}).get("knowledge_graph", {})
+        graph_blob = str(graph)
+
+        bullets = []
+
+        if "Paving" in graph_blob:
+            bullets.append("Connected to your Paving work")
+        if "88858" in graph_blob:
+            bullets.append("Related to ticket 88858")
+        if "Malcolm" in graph_blob:
+            bullets.append("Mentioned with Malcolm")
+        if "SFM2" in graph_blob:
+            bullets.append("Shows up around SFM2")
+        if "SBX" in graph_blob:
+            bullets.append("Shows up around SBX")
+        if "GCU" in graph_blob:
+            bullets.append("Shows up in some GCU-related memory too, but that looks lower-confidence")
+
+        if not bullets:
+            bullets.append("I found mentions, but not enough high-trust context to say much yet")
+
+        return (
+            f"{person} looks mostly tied to your recent work context.\n\n"
+            "What I know:\n"
+            + "\n".join(f"- {b}" for b in bullets)
+        )
+
+    answer = answer.replace("Based on the data provided, ", "")
+    answer = answer.replace("Based on the context provided, ", "")
+    answer = answer.replace("it appears that ", "")
+    answer = answer.replace("It appears that ", "")
+    answer = answer.replace("Let me know if you need more information.", "")
+    answer = answer.replace("I hope this helps.", "")
+
+    return answer.strip()
+
+
 def confidence_label(score: int) -> str:
     if score >= 85:
         return "🟢 High"
@@ -99,6 +150,7 @@ class JadeReasoner:
         # Replace percentage confidence footer with simple Jade-style label.
         import re
         answer = re.sub(r"\n\n\*Confidence: .*?\(\d+%\)\*", "", answer)
+        answer = _clean_jade_answer(answer, plan, result)
         answer = answer.rstrip() + f"\n\n*{confidence_label(confidence)} confidence*"
         result["answer"] = answer
 
