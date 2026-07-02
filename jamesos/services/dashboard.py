@@ -3,19 +3,23 @@ from datetime import datetime
 
 from jamesos.config import VAULT
 
+
 def _link(path: Path) -> str:
     rel = path.relative_to(VAULT).with_suffix("")
     return f"[[{rel.as_posix()}]]"
+
 
 def _recent(folder: Path, limit: int = 5) -> list[Path]:
     if not folder.exists():
         return []
     return sorted(folder.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
 
+
 def _section(title: str, files: list[Path]) -> list[str]:
     lines = ["", f"## {title}"]
     lines.extend([f"- {_link(f)}" for f in files] or ["- None"])
     return lines
+
 
 def generate_home_dashboard() -> str:
     today = datetime.now().strftime("%Y-%m-%d")
@@ -40,10 +44,9 @@ def generate_home_dashboard() -> str:
         "- [[JamesOS/Reports/Work Intelligence]]",
         "- [[JamesOS/Reports/Status Report]]",
         "- [[JamesOS/Reports/Inbox Review]]",
-        "- [[JamesOS/Reports/AI Inbox Cleanup]]
+        "- [[JamesOS/Reports/AI Inbox Cleanup]]",
+        "- [[JamesOS/Reports/People]]",
         "- [[JamesOS/Reports/People Quality]]",
-        "- [[JamesOS/Reports/People]]",",
-        "- [[JamesOS/Reports/Memory/88858]]",
         "- [[Work/Work]]",
         "",
         "## Today",
@@ -60,6 +63,7 @@ def generate_home_dashboard() -> str:
         "- [[GCU/GCU Dashboard]]",
         "- [[UnityStitches/UnityStitches Dashboard]]",
         "- [[Personal]]",
+        "- [[JamesOS/People]]",
         "- [[JamesOS/Knowledge]]",
         "- [[JamesOS/Reports]]",
     ]
@@ -76,6 +80,7 @@ def generate_home_dashboard() -> str:
         "- [ ] Review Work Intelligence",
         "- [ ] Review Status Report",
         "- [ ] Review AI Inbox Cleanup",
+        "- [ ] Review People report",
         "- [ ] Clear Inbox captures",
         "- [ ] Update ticket notes",
         "- [ ] Capture loose thoughts",
