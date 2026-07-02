@@ -43,6 +43,11 @@ def archive_gmail_inbox_notes() -> str:
             )
             path.write_text(text, encoding="utf-8")
 
+        # Route GCU-forwarded Gmail into its own archive folder.
+        if "JamesOS/GCU" in text:
+            archive = VAULT / "Archive" / "Inbox" / "GCU" / year
+            archive.mkdir(parents=True, exist_ok=True)
+
         target = archive / path.name
         counter = 2
         while target.exists():
@@ -95,6 +100,11 @@ def archive_calendar_inbox_notes() -> str:
                 "ArchiveReason: Calendar source consumed\n"
             )
             path.write_text(text, encoding="utf-8")
+
+        # Route GCU-forwarded Gmail into its own archive folder.
+        if "JamesOS/GCU" in text:
+            archive = VAULT / "Archive" / "Inbox" / "GCU" / year
+            archive.mkdir(parents=True, exist_ok=True)
 
         target = archive / path.name
         counter = 2
