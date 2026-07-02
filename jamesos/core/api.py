@@ -15,6 +15,7 @@ from jamesos.services.agent import ask_agent, handle_jade_message
 from jamesos.services.jade_planner import answer_with_planner
 from jamesos.services.jade_brain import answer_with_brain, summarize_chat_history
 from jamesos.services.jade_reasoner import answer_with_reasoner
+from jamesos.services.jade_context_packages import dashboard_cards
 from jamesos.services.knowledge_graph import build_knowledge_graph, graph_lookup
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
@@ -38,6 +39,7 @@ class IntakeRequest(BaseModel):
 class AskRequest(BaseModel):
     question: str
     use_ai: bool = True
+    mode: str = "personal"
 
 
 class QuickNoteRequest(BaseModel):
@@ -59,7 +61,6 @@ class MemoryRequest(BaseModel):
 
 class ToolRequest(BaseModel):
     question: str
-
 
 
 
@@ -176,12 +177,13 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
 
     from datetime import datetime
 
-    result = answer_with_reasoner(req.question, use_ai=req.use_ai)
+    result = answer_with_reasoner(req.question, use_ai=req.use_ai, mode=req.mode)
 
     history = _load_chat_history()
     history.append({
         "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "question": req.question,
+        "mode": req.mode,
         "answer": result.get("answer", ""),
         "action": result.get("action", ""),
     })
@@ -191,9 +193,15 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
 
 
 @app.get("/ask")
-def ask_get(q: str, use_ai: bool = True, x_jamesos_key: str | None = Header(default=None)):
+def ask_get(q: str, use_ai: bool = True, mode: str = "personal", x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return answer_with_reasoner(q, use_ai=use_ai)
+    return answer_with_reasoner(q, use_ai=use_ai, mode=mode)
+
+
+@app.get("/dashboard")
+def dashboard(mode: str = "personal", x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return dashboard_cards(mode)
 
 
 @app.get("/daily-briefing")
@@ -238,97 +246,13 @@ def memory_add(req: MemoryRequest, x_jamesos_key: str | None = Header(default=No
 @app.get("/memory/search")
 def memory_search(q: str, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return {"results": search_memory(q)}
+    return search_memory(q)
 
 
-@app.post("/indexes/build")
-def indexes_build(x_jamesos_key: str | None = Header(default=None)):
+@app.get("/graph/search")
+def graph_search(q: str, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return {"result": build_typed_indexes()}
-
-
-@app.get("/indexes/search")
-def indexes_search(q: str, categories: str = "", x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-    cats = [c.strip() for c in categories.split(",") if c.strip()] or None
-    return search_typed_indexes(q, cats)
-
-
-@app.post("/tools/route")
-def tools_route(req: ToolRequest, x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-    return route_tool(req.question)
-
-
-@app.get("/app", response_class=HTMLResponse)
-def jade_app():
-    path = Path(__file__).resolve().parents[1] / "web" / "index.html"
-    return path.read_text(encoding="utf-8")
-
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...), x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-
-    upload_dir = VAULT / "00-Inbox" / "Attachments"
-    upload_dir.mkdir(parents=True, exist_ok=True)
-
-    safe_name = "".join(c if c.isalnum() or c in " ._-()" else "_" for c in file.filename)
-    target = upload_dir / safe_name
-
-    counter = 2
-    while target.exists():
-        target = upload_dir / f"{Path(safe_name).stem} ({counter}){Path(safe_name).suffix}"
-        counter += 1
-
-    content = await file.read()
-    target.write_bytes(content)
-
-    ingest_result = ingest_attachments()
-    file_result = build_file_knowledge()
-    index_result = build_typed_indexes()
-
-    return {
-        "status": "uploaded_and_processed",
-        "filename": target.name,
-        "path": str(target),
-        "ingest_result": ingest_result,
-        "file_intelligence_result": file_result,
-        "index_result": index_result,
-    }
-
-
-def _load_chat_history() -> list:
-    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if not CHAT_HISTORY_FILE.exists():
-        return []
-    import json
-    return json.loads(CHAT_HISTORY_FILE.read_text(encoding="utf-8"))
-
-
-def _save_chat_history(items: list) -> None:
-    import json
-    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
-    CHAT_HISTORY_FILE.write_text(json.dumps(items[-200:], indent=2), encoding="utf-8")
-
-
-@app.get("/chat/history")
-def chat_history(x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-    return {"messages": _load_chat_history()}
-
-
-@app.post("/chat/clear")
-def chat_clear(x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-    _save_chat_history([])
-    return {"status": "cleared"}
-
-
-@app.post("/brain/summarize-chat")
-def brain_summarize_chat(x_jamesos_key: str | None = Header(default=None)):
-    require_key(x_jamesos_key)
-    return {"result": summarize_chat_history()}
+    return graph_lookup(q)
 
 
 @app.post("/graph/build")
@@ -337,7 +261,52 @@ def graph_build(x_jamesos_key: str | None = Header(default=None)):
     return {"result": build_knowledge_graph()}
 
 
-@app.get("/graph/search")
-def graph_search(q: str, x_jamesos_key: str | None = Header(default=None)):
+@app.get("/typed/search")
+def typed_search(q: str, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return graph_lookup(q)
+    return search_typed_indexes(q)
+
+
+@app.post("/typed/build")
+def typed_build(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": build_typed_indexes()}
+
+
+@app.post("/brain/summarize-chat")
+def brain_summarize_chat(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": summarize_chat_history()}
+
+
+@app.post("/attachments/ingest")
+def attachments_ingest(files: list[UploadFile] = File(...), x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return ingest_attachments(files)
+
+
+@app.post("/files/build")
+def files_build(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"result": build_file_knowledge()}
+
+
+@app.get("/")
+def index():
+    return HTMLResponse("<h1>JamesOS API</h1><p>Service is running.</p>")
+
+
+def _load_chat_history() -> list[dict]:
+    import json
+    if not CHAT_HISTORY_FILE.exists():
+        return []
+    try:
+        return json.loads(CHAT_HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _save_chat_history(history: list[dict]) -> None:
+    import json
+    CHAT_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CHAT_HISTORY_FILE.write_text(json.dumps(history[-500:], indent=2), encoding="utf-8")
