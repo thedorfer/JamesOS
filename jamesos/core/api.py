@@ -26,6 +26,37 @@ class AskRequest(BaseModel):
     use_ai: bool = True
 
 
+
+def _read_search_context(query: str, limit: int = 8) -> str:
+    from jamesos.services.search_service import search_notes_index
+
+    result = search_notes_index(query)
+    lines = ["# Keyword Search Context", "", result, ""]
+
+    # Pull source text from matching wikilinks when possible.
+    import re
+    links = re.findall(r"\[\[([^\]]+)\]\]", result)
+
+    added = 0
+    for link in links:
+        if added >= limit:
+            break
+
+        target = link.split("|")[0]
+        path = VAULT / f"{target}.md"
+
+        if path.exists():
+            lines.extend([
+                "",
+                f"## Source: [[{target}]]",
+                "",
+                path.read_text(encoding="utf-8", errors="ignore")[:1500],
+            ])
+            added += 1
+
+    return "\n".join(lines)
+
+
 def _expected_key() -> str:
     if not API_KEY_FILE.exists():
         raise HTTPException(status_code=500, detail="API key is not configured")
@@ -62,19 +93,28 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     context_result = build_context_report(req.question, use_ai=False)
     safe = "".join(c if c.isalnum() or c in " -_" else "-" for c in req.question)[:80]
     context_file = VAULT / "JamesOS" / "Reports" / "Context" / f"{safe}.md"
-    context_text = context_file.read_text(encoding="utf-8", errors="ignore") if context_file.exists() else context_result
+    graph_context = context_file.read_text(encoding="utf-8", errors="ignore") if context_file.exists() else context_result
+    search_context = _read_search_context(req.question)
+
+    combined_context = (
+        "# Graph Context\n\n"
+        + graph_context[:8000]
+        + "\n\n---\n\n"
+        + search_context[:8000]
+    )
 
     if req.use_ai and ollama_enabled():
         prompt = (
             "You are JamesOS, James's private assistant. "
             "Answer using only the context below. Be concise and practical. "
-            "If the answer is not in the context, say so.\n\n"
+            "Prefer concrete facts, dates, names, links, and next actions. "
+            "If the answer is not in the context, say what is missing.\n\n"
             f"Question: {req.question}\n\n"
-            f"Context:\n{context_text[:12000]}"
+            f"Context:\n{combined_context[:14000]}"
         )
         answer = ask_ollama(prompt)
     else:
-        answer = context_text[:4000]
+        answer = combined_context[:6000]
 
     return {
         "question": req.question,
