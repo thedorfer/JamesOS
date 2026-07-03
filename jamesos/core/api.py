@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 from fastapi import FastAPI, Header, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -22,6 +23,7 @@ from jamesos.services.typed_index import build_typed_indexes, search_typed_index
 from jamesos.services.tool_router import route_tool
 from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.file_intelligence import build_file_knowledge
+from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
@@ -63,6 +65,24 @@ class ToolRequest(BaseModel):
     question: str
 
 
+class PhoneEventRequest(BaseModel):
+    type: str = "notification"
+    device: str = "android"
+    timestamp: str = ""
+    person: str = ""
+    number: str = ""
+    direction: str = ""
+    app: str = ""
+    text: str = ""
+    title: str = ""
+    body: str = ""
+    package: str = ""
+    duration: str = ""
+
+
+class PhoneBatchRequest(BaseModel):
+    events: list[dict[str, Any]]
+
 
 def _search_query_from_question(question: str) -> str:
     q = question.strip()
@@ -93,7 +113,6 @@ def _read_search_context(query: str, limit: int = 8) -> str:
     result = search_notes_index(query)
     lines = ["# Keyword Search Context", "", result, ""]
 
-    # Pull source text from matching wikilinks when possible.
     import re
     links = re.findall(r"\[\[([^\]]+)\]\]", result)
 
@@ -113,7 +132,6 @@ def _read_search_context(query: str, limit: int = 8) -> str:
                 path.read_text(encoding="utf-8", errors="ignore")[:1500],
             ])
             added += 1
-
     return "\n".join(lines)
 
 
@@ -138,6 +156,21 @@ def intake(req: IntakeRequest, x_jamesos_key: str | None = Header(default=None))
     require_key(x_jamesos_key)
     result = enqueue_job("intake", req.model_dump())
     return {"result": result}
+
+
+@app.post("/phone-ingest")
+def phone_ingest(req: PhoneEventRequest | PhoneBatchRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    data = req.model_dump()
+    if "events" in data:
+        return ingest_phone_events(data["events"])
+    return ingest_phone_event(data)
+
+
+@app.post("/phone/daily-summary")
+def phone_summary(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"status": "ok", "report": phone_daily_summary()}
 
 
 @app.post("/quick-note")
@@ -174,7 +207,6 @@ def search(q: str, x_jamesos_key: str | None = Header(default=None)):
 @app.post("/ask")
 def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-
     from datetime import datetime
 
     result = answer_with_reasoner(req.question, use_ai=req.use_ai, mode=req.mode)
@@ -188,7 +220,6 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
         "action": result.get("action", ""),
     })
     _save_chat_history(history)
-
     return result
 
 
@@ -219,7 +250,6 @@ def status_report(x_jamesos_key: str | None = Header(default=None)):
 @app.get("/mobile/home")
 def mobile_home(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-
     reports = VAULT / "JamesOS" / "Reports"
     home = VAULT / "Home.md"
 
