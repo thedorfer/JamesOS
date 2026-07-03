@@ -22,6 +22,7 @@ from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
 from jamesos.services.attachment_ingest import ingest_attachments
+from jamesos.services.attachment_processor import process_pending_attachment_jobs
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
 
@@ -313,6 +314,12 @@ def brain_summarize_chat(x_jamesos_key: str | None = Header(default=None)):
 def attachments_ingest(files: list[UploadFile] = File(...), x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return ingest_attachments(files)
+
+
+@app.post("/attachments/process-pending")
+def attachments_process_pending(limit: int = 10, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return process_pending_attachment_jobs(limit=limit)
 
 
 @app.post("/files/build")
