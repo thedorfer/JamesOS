@@ -1,3 +1,4 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -59,10 +60,18 @@ class _ChatScreenState extends State<ChatScreen> {
     await tts.setSpeechRate(0.46);
     await tts.setPitch(1.03);
     await tts.awaitSpeakCompletion(false);
-    tts.setStartHandler(() { if (mounted) setState(() => speaking = true); });
-    tts.setCompletionHandler(() { if (mounted) setState(() => speaking = false); });
-    tts.setCancelHandler(() { if (mounted) setState(() => speaking = false); });
-    tts.setErrorHandler((_) { if (mounted) setState(() => speaking = false); });
+    tts.setStartHandler(() {
+      if (mounted) setState(() => speaking = true);
+    });
+    tts.setCompletionHandler(() {
+      if (mounted) setState(() => speaking = false);
+    });
+    tts.setCancelHandler(() {
+      if (mounted) setState(() => speaking = false);
+    });
+    tts.setErrorHandler((_) {
+      if (mounted) setState(() => speaking = false);
+    });
   }
 
   Future<void> configureSpeechInput() async {
@@ -84,7 +93,9 @@ class _ChatScreenState extends State<ChatScreen> {
           });
         }
       },
-      onError: (_) { if (mounted) setState(() => listening = false); },
+      onError: (_) {
+        if (mounted) setState(() => listening = false);
+      },
     );
     if (mounted) setState(() => speechAvailable = ok);
   }
@@ -145,8 +156,62 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) setState(() => listening = true);
   }
 
-  void showFileInputSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('File input is next. Speech input is enabled now.')));
+  Future<void> attachFile() async {
+    if (loading) return;
+    if (settings.apiKey.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Add your JamesOS API key in Settings first.')));
+      return;
+    }
+
+    try {
+      final file = await openFile();
+      if (file == null) return;
+
+      await tts.stop();
+      await recognizer.stop();
+      final bytes = await file.readAsBytes();
+
+      setState(() {
+        speaking = false;
+        listening = false;
+        messages.add(ChatMessage(role: 'user', text: 'Uploaded file: ${file.name}'));
+        messages.add(ChatMessage(role: 'jade', text: 'Uploading `${file.name}`...'));
+        loading = true;
+      });
+      scrollToBottom();
+
+      await api.uploadAttachment(settings, file.name, bytes);
+      setState(() {
+        messages[messages.length - 1] = ChatMessage(
+          role: 'jade',
+          text: 'I uploaded `${file.name}` and sent it to JamesOS for ingestion.',
+          action: 'file_uploaded',
+          sources: const ['attachments'],
+        );
+      });
+      await refreshDashboard();
+    } catch (e) {
+      setState(() {
+        if (messages.isNotEmpty && messages.last.text.startsWith('Uploading `')) {
+          messages[messages.length - 1] = ChatMessage(
+            role: 'jade',
+            text: 'I could not upload that file.\n\n`$e`',
+            confidenceLabel: '🔴 Low',
+            action: 'file_upload_error',
+          );
+        } else {
+          messages.add(ChatMessage(
+            role: 'jade',
+            text: 'I could not upload that file.\n\n`$e`',
+            confidenceLabel: '🔴 Low',
+            action: 'file_upload_error',
+          ));
+        }
+      });
+    } finally {
+      if (mounted) setState(() => loading = false);
+      Future.delayed(const Duration(milliseconds: 100), scrollToBottom);
+    }
   }
 
   Future<void> loadSettings() async {
@@ -341,7 +406,7 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(children: [
         if (!paired) Container(width: double.infinity, padding: const EdgeInsets.all(12), color: Colors.amber.withValues(alpha: 0.18), child: const Text('Add your JamesOS API key in Settings.')),
         Expanded(child: ListView.builder(controller: scroll, padding: const EdgeInsets.all(16), itemCount: messages.length + 1, itemBuilder: (_, i) { if (i == 0) return buildDashboardCard(); return ChatBubble(message: messages[i - 1], showMetadata: !selectedMode.isChatty); })),
-        MessageInput(controller: input, loading: loading, listening: listening, speechAvailable: speechAvailable, onSend: askJade, onVoice: toggleListening, onAttach: showFileInputSoon),
+        MessageInput(controller: input, loading: loading, listening: listening, speechAvailable: speechAvailable, onSend: askJade, onVoice: toggleListening, onAttach: attachFile),
       ]),
     );
   }
