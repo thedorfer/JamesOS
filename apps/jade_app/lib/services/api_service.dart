@@ -52,4 +52,33 @@ class ApiService {
       sources: sources,
     );
   }
+
+  Future<Map<String, dynamic>> uploadAttachment(
+    JadeSettings settings,
+    String filename,
+    List<int> bytes,
+  ) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('${settings.apiBase}/attachments/ingest'),
+    );
+
+    request.headers['X-JamesOS-Key'] = settings.apiKey;
+    request.files.add(http.MultipartFile.fromBytes('files', bytes, filename: filename));
+
+    final streamed = await request.send();
+    final body = await streamed.stream.bytesToString();
+
+    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
+      throw Exception('Upload failed: ${streamed.statusCode} $body');
+    }
+
+    if (body.trim().isEmpty) {
+      return {'status': 'ok'};
+    }
+
+    final decoded = jsonDecode(body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'status': 'ok', 'result': decoded};
+  }
 }
