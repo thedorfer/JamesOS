@@ -16,7 +16,7 @@ class ChatBubble extends StatelessWidget {
       final label = switch (source) {
         'files' || 'file_knowledge' => 'Files',
         'memory' => 'Memory',
-        'knowledge_graph' => 'Graph',
+        'knowledge_graph' => 'Knowledge',
         'conversation_summaries' => 'Recall',
         'gmail' => 'Gmail',
         'calendar' => 'Calendar',
@@ -27,25 +27,24 @@ class ChatBubble extends StatelessWidget {
       if (!preferred.contains(label)) preferred.add(label);
     }
 
-    return preferred.take(3).join(' + ');
+    return preferred.take(4).join(' • ');
   }
 
-  Color confidenceColor(BuildContext context) {
+  bool get hasLowConfidence {
     final label = message.confidenceLabel ?? '';
-    if (label.contains('High') || label.contains('🟢')) {
-      return Colors.greenAccent.withValues(alpha: 0.18);
-    }
-    if (label.contains('Medium') || label.contains('🟡')) {
-      return Colors.amberAccent.withValues(alpha: 0.16);
-    }
-    return Colors.redAccent.withValues(alpha: 0.16);
+    return label.contains('Low') || label.contains('🔴');
+  }
+
+  bool get hasLimitedConfidence {
+    final label = message.confidenceLabel ?? '';
+    return label.contains('Medium') || label.contains('🟡') || hasLowConfidence;
   }
 
   @override
   Widget build(BuildContext context) {
     final user = message.isUser;
     final metaLabel = sourceLabel.isNotEmpty
-        ? sourceLabel
+        ? 'Based on $sourceLabel'
         : message.action?.replaceAll('_', ' ');
 
     return Align(
@@ -70,25 +69,15 @@ class ChatBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             MarkdownBody(data: message.text),
-            if (showMetadata && !user && (message.confidenceLabel != null || metaLabel != null)) ...[
+            if (showMetadata && !user && metaLabel != null && metaLabel.isNotEmpty) ...[
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (message.confidenceLabel != null)
-                    Chip(
-                      label: Text(message.confidenceLabel!),
-                      backgroundColor: confidenceColor(context),
-                      side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
-                    ),
-                  if (metaLabel != null && metaLabel.isNotEmpty)
-                    Chip(
-                      label: Text(metaLabel),
-                      backgroundColor: Colors.tealAccent.withValues(alpha: 0.12),
-                      side: BorderSide(color: Colors.tealAccent.withValues(alpha: 0.18)),
-                    ),
-                ],
+              Text(
+                hasLimitedConfidence ? '$metaLabel. Some details may need verification.' : metaLabel,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: 12,
+                  fontStyle: FontStyle.italic,
+                ),
               ),
             ],
           ],
