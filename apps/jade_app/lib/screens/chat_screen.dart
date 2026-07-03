@@ -70,6 +70,12 @@ class _ChatScreenState extends State<ChatScreen> {
         if (!mounted) return;
         final active = status == 'listening';
         if (listening != active) setState(() => listening = active);
+
+        if ((status == 'done' || status == 'notListening') &&
+            input.text.trim().isNotEmpty &&
+            !loading) {
+          Future.microtask(() => askJade());
+        }
       },
       onError: (_) { if (mounted) setState(() => listening = false); },
     );
@@ -324,7 +330,7 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(title: buildTopBarTitle(), actions: [IconButton(onPressed: clearChat, icon: const Icon(Icons.delete_outline)), IconButton(onPressed: openSettings, icon: const Icon(Icons.settings))]),
       body: Column(children: [
         if (!paired) Container(width: double.infinity, padding: const EdgeInsets.all(12), color: Colors.amber.withValues(alpha: 0.18), child: const Text('Add your JamesOS API key in Settings.')),
-        Expanded(child: ListView.builder(controller: scroll, padding: const EdgeInsets.all(16), itemCount: messages.length + 1, itemBuilder: (_, i) { if (i == 0) return buildDashboardCard(); return ChatBubble(message: messages[i - 1]); })),
+        Expanded(child: ListView.builder(controller: scroll, padding: const EdgeInsets.all(16), itemCount: messages.length + 1, itemBuilder: (_, i) { if (i == 0) return buildDashboardCard(); return ChatBubble(message: messages[i - 1], showMetadata: !selectedMode.isChatty); })),
         MessageInput(controller: input, loading: loading, listening: listening, speechAvailable: speechAvailable, onSend: askJade, onVoice: toggleListening, onAttach: showFileInputSoon),
       ]),
     );

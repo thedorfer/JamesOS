@@ -181,7 +181,7 @@ class JadeReasoner:
 
         confidence = result.get("confidence", plan.confidence)
         result["confidence"] = confidence
-        result["confidence_label"] = confidence_label(confidence)
+        result["confidence_label"] = None if plan.mode == "chat" else confidence_label(confidence)
         result["reasoner"] = {
             "intent": plan.intent,
             "sources": plan.sources,
@@ -189,7 +189,7 @@ class JadeReasoner:
             "mode": plan.mode,
             "mode_label": mode_label(plan.mode),
             "confidence": confidence,
-            "confidence_label": confidence_label(confidence),
+            "confidence_label": None if plan.mode == "chat" else confidence_label(confidence),
         }
 
         answer = result.get("answer", "")
@@ -197,7 +197,9 @@ class JadeReasoner:
         import re
         answer = re.sub(r"\n\n\*Confidence: .*?\(\d+%\)\*", "", answer)
         answer = _clean_jade_answer(answer, plan, result)
-        answer = answer.rstrip() + f"\n\n*{confidence_label(confidence)} confidence*"
+        if plan.mode != "chat":
+            if plan.mode != "chat":
+            answer = answer.rstrip() + f"\n\n*{confidence_label(confidence)} confidence*"
         result["answer"] = answer
 
         return result

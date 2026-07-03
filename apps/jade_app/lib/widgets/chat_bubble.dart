@@ -4,8 +4,9 @@ import '../models/chat_message.dart';
 
 class ChatBubble extends StatelessWidget {
   final ChatMessage message;
+  final bool showMetadata;
 
-  const ChatBubble({super.key, required this.message});
+  const ChatBubble({super.key, required this.message, this.showMetadata = true});
 
   String get sourceLabel {
     if (message.sources.isEmpty) return '';
@@ -69,7 +70,7 @@ class ChatBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             MarkdownBody(data: message.text),
-            if (!user && (message.confidenceLabel != null || metaLabel != null)) ...[
+            if (showMetadata && !user && (message.confidenceLabel != null || metaLabel != null)) ...[
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
