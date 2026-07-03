@@ -81,4 +81,36 @@ class ApiService {
     if (decoded is Map<String, dynamic>) return decoded;
     return {'status': 'ok', 'result': decoded};
   }
+
+  Future<Map<String, dynamic>> processAttachments(JadeSettings settings) async {
+    final res = await http.post(
+      Uri.parse('${settings.apiBase}/attachments/process-pending?limit=10'),
+      headers: {'X-JamesOS-Key': settings.apiKey},
+    );
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Processing failed: ${res.statusCode} ${res.body}');
+    }
+
+    final decoded = jsonDecode(res.body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'status': 'ok', 'result': decoded};
+  }
+
+  String uploadMessage(Map<String, dynamic> uploadResult, String fallbackFilename) {
+    final message = uploadResult['message'];
+    if (message is String && message.trim().isNotEmpty) return message;
+
+    final files = uploadResult['files'];
+    if (files is List && files.isNotEmpty && files.first is Map) {
+      final first = Map<String, dynamic>.from(files.first as Map);
+      final summary = first['summary'];
+      if (summary is String && summary.trim().isNotEmpty) return summary;
+      final kind = first['kind']?.toString() ?? 'file';
+      final filename = first['filename']?.toString() ?? fallbackFilename;
+      return 'I received `$filename` as a $kind and queued it for processing.';
+    }
+
+    return 'I received `$fallbackFilename` and queued it for processing.';
+  }
 }
