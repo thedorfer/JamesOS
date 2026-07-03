@@ -31,6 +31,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool speaking = false;
   bool listening = false;
   bool speechAvailable = false;
+  bool voiceAutoSubmitted = false;
   AppMode selectedMode = AppMode.personal;
   List<DashboardCard> dashboardCards = [];
 
@@ -73,8 +74,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
         if ((status == 'done' || status == 'notListening') &&
             input.text.trim().isNotEmpty &&
-            !loading) {
-          Future.microtask(() => askJade());
+            !loading &&
+            !voiceAutoSubmitted) {
+          voiceAutoSubmitted = true;
+          Future.delayed(const Duration(milliseconds: 250), () {
+            if (mounted && input.text.trim().isNotEmpty && !loading) {
+              askJade();
+            }
+          });
         }
       },
       onError: (_) { if (mounted) setState(() => listening = false); },
@@ -126,6 +133,7 @@ class _ChatScreenState extends State<ChatScreen> {
     }
     await tts.stop();
     if (mounted) setState(() => speaking = false);
+    voiceAutoSubmitted = false;
     await recognizer.listen(
       listenMode: stt.ListenMode.confirmation,
       partialResults: true,
