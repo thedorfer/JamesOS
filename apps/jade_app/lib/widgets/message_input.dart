@@ -3,13 +3,21 @@ import 'package:flutter/material.dart';
 class MessageInput extends StatelessWidget {
   final TextEditingController controller;
   final bool loading;
+  final bool listening;
+  final bool speechAvailable;
   final VoidCallback onSend;
+  final VoidCallback onVoice;
+  final VoidCallback? onAttach;
 
   const MessageInput({
     super.key,
     required this.controller,
     required this.loading,
     required this.onSend,
+    required this.onVoice,
+    this.listening = false,
+    this.speechAvailable = true,
+    this.onAttach,
   });
 
   @override
@@ -26,13 +34,14 @@ class MessageInput extends StatelessWidget {
           children: [
             IconButton(
               tooltip: 'Attach file',
-              onPressed: null,
+              onPressed: onAttach,
               icon: const Icon(Icons.attach_file),
             ),
             IconButton(
-              tooltip: 'Voice input',
-              onPressed: null,
-              icon: const Icon(Icons.mic),
+              tooltip: listening ? 'Stop listening' : 'Voice input',
+              onPressed: loading || !speechAvailable ? null : onVoice,
+              color: listening ? Colors.tealAccent.shade100 : null,
+              icon: Icon(listening ? Icons.mic_off : Icons.mic),
             ),
             Expanded(
               child: TextField(
@@ -41,7 +50,7 @@ class MessageInput extends StatelessWidget {
                 minLines: 1,
                 maxLines: 4,
                 decoration: InputDecoration(
-                  hintText: 'Ask Jade...',
+                  hintText: listening ? 'Listening...' : 'Ask Jade...',
                   filled: true,
                   fillColor: Colors.white.withValues(alpha: 0.045),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
