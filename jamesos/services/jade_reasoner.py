@@ -198,7 +198,6 @@ class JadeReasoner:
         answer = re.sub(r"\n\n\*Confidence: .*?\(\d+%\)\*", "", answer)
         answer = _clean_jade_answer(answer, plan, result)
         if plan.mode != "chat":
-            if plan.mode != "chat":
             answer = answer.rstrip() + f"\n\n*{confidence_label(confidence)} confidence*"
         result["answer"] = answer
 
