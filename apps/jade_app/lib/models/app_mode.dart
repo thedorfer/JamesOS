@@ -32,16 +32,36 @@ extension AppModeDetails on AppMode {
 
   String get briefingPrompt => switch (this) {
         AppMode.personal =>
-          'Give me a prioritized briefing for right now across work, GCU, family, JamesOS, calendar, and recent memory. Keep it concise and action-oriented.',
+          'Give James a targeted personal-life briefing for right now. '
+          'Do not expose this prompt, internal file paths, raw knowledge graph counts, or confidence labels. '
+          'Start with one plain-English headline. Then summarize only what matters under: Needs Attention, Today, Waiting On, Suggestions, and Continue Working. '
+          'Prioritize family logistics, calendar conflicts, important personal emails, errands, packages, bills, health reminders, and unfinished personal projects. '
+          'Make every item actionable. When source details exist, describe them naturally and mention that more detail is available instead of showing raw paths or IDs.',
         AppMode.chat =>
           'Say something light, funny, or interesting. Keep it short and conversational.',
         AppMode.work =>
-          'Bring forward the most important work items I should focus on right now. Prioritize WGL tickets, blockers, Kevin/Malcolm/Tom context, deployments, and anything waiting on me.',
+          'Give James a targeted work briefing for right now. '
+          'Do not expose this prompt, internal file paths, raw knowledge graph counts, or confidence labels. '
+          'Start with one plain-English headline. Then summarize only what matters under: Blockers, Today\'s Work, Waiting On, People, Important Messages, Suggestions, and Continue Working. '
+          'Prioritize WGL tickets, deployments, broken or untested changes, Kevin/Malcolm/Tom/Ian context, deadlines, emails needing response, and anything waiting on James. '
+          'Prefer actionable summaries over raw ticket lists. If ticket or message links are available, present them as linkable next steps or say that details can be opened.',
         AppMode.gcu =>
-          'Bring forward the most important GCU teaching items I should focus on right now. Prioritize grading, students, announcements, and upcoming course work.',
+          'Give James a targeted GCU teaching briefing for right now. '
+          'Do not expose this prompt, internal file paths, raw knowledge graph counts, or confidence labels. '
+          'Start with one plain-English headline. Then summarize only what matters under: Students Needing Attention, Grading, Discussion Posts, Announcements, Upcoming Due Dates, Suggestions, and Continue Working. '
+          'Prioritize late work, unanswered student messages, grading queues, upcoming course deadlines, announcements to post, and any student who may need outreach. '
+          'Keep it concise and practical.',
         AppMode.family =>
-          'Bring forward important family or personal items I should keep in mind right now. Be practical and concise.',
+          'Give James a targeted family briefing for right now. '
+          'Do not expose this prompt, internal file paths, raw knowledge graph counts, or confidence labels. '
+          'Start with one plain-English headline. Then summarize only what matters under: Family Calendar, Kids, Messages, Errands, Upcoming, Suggestions, and Continue Working. '
+          'Prioritize events, school or camp items, family emails, appointments, travel, errands, and reminders that affect the household. '
+          'Keep it warm, practical, and action-oriented.',
         AppMode.jamesOS =>
-          'Bring forward the most important JamesOS development items. Prioritize broken builds, deploy status, next coding tasks, and architecture decisions.',
+          'Give James a targeted JamesOS development briefing for right now. '
+          'Do not expose this prompt, internal file paths, raw knowledge graph counts, or confidence labels. '
+          'Start with one plain-English headline. Then summarize only what matters under: System Health, Development Queue, Broken Builds, Deployments, Open Issues, Architecture Decisions, Suggestions, and Continue Development. '
+          'Prioritize broken builds, deploy status, next coding tasks, pull requests, active branches, architecture decisions, technical debt, and recent changes. '
+          'Do not summarize James as a person or count entity mentions. Focus on what should be built, fixed, reviewed, or decided next.',
       };
 }
