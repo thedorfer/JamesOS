@@ -185,13 +185,15 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
-  Future<void> askJade({String? overrideQuestion}) async {
+  Future<void> askJade({String? overrideQuestion, bool showUserMessage = true}) async {
     final question = (overrideQuestion ?? input.text).trim();
     if (question.isEmpty || loading) return;
     await recognizer.stop();
     setState(() {
       listening = false;
-      messages.add(ChatMessage(role: 'user', text: question));
+      if (showUserMessage) {
+        messages.add(ChatMessage(role: 'user', text: question));
+      }
       messages.add(ChatMessage(role: 'jade', text: 'Thinking...'));
       loading = true;
       input.clear();
@@ -284,7 +286,7 @@ class _ChatScreenState extends State<ChatScreen> {
     };
     return InkWell(
       borderRadius: BorderRadius.circular(16),
-      onTap: () => askJade(overrideQuestion: card.prompt),
+      onTap: () => askJade(overrideQuestion: card.prompt, showUserMessage: false),
       child: Container(
         width: 245,
         padding: const EdgeInsets.all(12),
@@ -315,7 +317,7 @@ class _ChatScreenState extends State<ChatScreen> {
         Row(children: [
           buildModeDropdown(),
           const Spacer(),
-          FilledButton.icon(onPressed: loading ? null : () => askJade(overrideQuestion: selectedMode.briefingPrompt), icon: Icon(selectedMode.isChatty ? Icons.casino_outlined : Icons.flash_on, size: 18), label: Text(buttonLabel)),
+          FilledButton.icon(onPressed: loading ? null : () => askJade(overrideQuestion: selectedMode.briefingPrompt, showUserMessage: false), icon: Icon(selectedMode.isChatty ? Icons.casino_outlined : Icons.flash_on, size: 18), label: Text(buttonLabel)),
         ]),
         if (dashboardCards.isNotEmpty) ...[
           const SizedBox(height: 14),
