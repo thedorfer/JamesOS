@@ -175,34 +175,54 @@ class _ChatScreenState extends State<ChatScreen> {
         speaking = false;
         listening = false;
         messages.add(ChatMessage(role: 'user', text: 'Uploaded file: ${file.name}'));
-        messages.add(ChatMessage(role: 'jade', text: 'Uploading `${file.name}`...'));
+        messages.add(ChatMessage(role: 'jade', text: 'I received `${file.name}`. I am archiving it and starting the ingestion pipeline now...'));
         loading = true;
       });
       scrollToBottom();
 
-      await api.uploadAttachment(settings, file.name, bytes);
+      final uploadResult = await api.uploadAttachment(settings, file.name, bytes);
+      final uploadMessage = api.uploadMessage(uploadResult, file.name);
       setState(() {
         messages[messages.length - 1] = ChatMessage(
           role: 'jade',
-          text: 'I uploaded `${file.name}` and sent it to JamesOS for ingestion.',
+          text: '$uploadMessage\n\nNow I am running the first processing pass...',
           action: 'file_uploaded',
-          sources: const ['attachments'],
+        );
+      });
+      scrollToBottom();
+
+      final processingResult = await api.processAttachments(settings);
+      final processed = processingResult['processed']?.toString() ?? '0';
+      final failed = processingResult['failed']?.toString() ?? '0';
+      final results = processingResult['results'];
+      String processingSummary = 'Processing pass complete. Processed: $processed. Failed: $failed.';
+      if (results is List && results.isNotEmpty && results.first is Map) {
+        final first = Map<String, dynamic>.from(results.first as Map);
+        final summary = first['summary'];
+        if (summary is String && summary.trim().isNotEmpty) processingSummary = summary;
+      }
+
+      setState(() {
+        messages[messages.length - 1] = ChatMessage(
+          role: 'jade',
+          text: '$uploadMessage\n\n$processingSummary',
+          action: 'file_processed',
         );
       });
       await refreshDashboard();
     } catch (e) {
       setState(() {
-        if (messages.isNotEmpty && messages.last.text.startsWith('Uploading `')) {
+        if (messages.isNotEmpty && (messages.last.text.startsWith('I received `') || messages.last.text.startsWith('Uploading `'))) {
           messages[messages.length - 1] = ChatMessage(
             role: 'jade',
-            text: 'I could not upload that file.\n\n`$e`',
+            text: 'I could not finish that upload/processing flow.\n\n`$e`',
             confidenceLabel: '🔴 Low',
             action: 'file_upload_error',
           );
         } else {
           messages.add(ChatMessage(
             role: 'jade',
-            text: 'I could not upload that file.\n\n`$e`',
+            text: 'I could not finish that upload/processing flow.\n\n`$e`',
             confidenceLabel: '🔴 Low',
             action: 'file_upload_error',
           ));
