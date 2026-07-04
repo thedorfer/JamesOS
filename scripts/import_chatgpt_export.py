@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from jamesos.services.chatgpt_importer import import_chatgpt_export
+from jamesos.services.chatgpt_importer_v2 import import_chatgpt_export
 
 
 def main() -> None:
