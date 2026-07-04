@@ -9,6 +9,7 @@ from jamesos.services.jade_brain import (
 )
 from jamesos.services.knowledge_graph import graph_lookup
 from jamesos.services.memory_service import remember
+from jamesos.services.chatgpt_history_search import chatgpt_history_context
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -120,6 +121,8 @@ def _score_context(context: dict, intent: str, mode: str) -> int:
         score += 10
     if results.get("conversation_summaries"):
         score += 5
+    if results.get("chatgpt_history"):
+        score += 25
     if mode != "personal":
         score += 5
     if intent in {"sensitive_file", "weather"}:
@@ -135,6 +138,10 @@ class JadeReasoner:
         sources = plan_sources(intent)
 
         context = gather_context(question, intent, sources)
+        history_context = chatgpt_history_context(question, limit=6)
+        if "No matching imported ChatGPT history found." not in history_context:
+            context.setdefault("results", {})["chatgpt_history"] = history_context
+
         entities = {
             "people": context.get("people", []),
             "tickets": context.get("tickets", []),
@@ -144,7 +151,7 @@ class JadeReasoner:
             question=question,
             intent=intent,
             entities=entities,
-            sources=sources,
+            sources=sources + ["chatgpt_history"],
             mode=mode,
             confidence=_score_context(context, intent, mode),
             evidence=context,
@@ -164,12 +171,24 @@ class JadeReasoner:
     def answer(self, plan: ReasoningPlan, use_ai: bool = True) -> dict:
         question_for_brain = plan.question
         allow_tools = True
+        history_context = plan.evidence.get("results", {}).get("chatgpt_history", "")
+
+        if history_context:
+            question_for_brain = (
+                f"{history_context}\n\n"
+                "# Response Task\n"
+                "Use the imported ChatGPT history above when it helps. Answer James directly and practically. "
+                "Do not mention raw JSON, indexes, file paths, or implementation details unless he asks.\n"
+                f"Question: {plan.question}"
+            )
+
         if plan.mode != "personal":
             context_package = build_context_package(plan.question, plan.mode)
             question_for_brain = (
                 f"{context_package}\n\n"
+                f"{history_context}\n\n"
                 "# Response Task\n"
-                "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, or graph implementation.\n"
+                "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, paths, or graph implementation.\n"
                 f"Question: {plan.question}"
             )
             allow_tools = False
