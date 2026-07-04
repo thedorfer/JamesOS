@@ -337,6 +337,7 @@ class _ChatScreenState extends State<ChatScreen> {
         AppMode.gcu => Icons.school_outlined,
         AppMode.family => Icons.home_outlined,
         AppMode.jamesOS => Icons.memory_outlined,
+        AppMode.imports => Icons.move_to_inbox_outlined,
         AppMode.personal => Icons.auto_awesome_outlined,
       };
 
