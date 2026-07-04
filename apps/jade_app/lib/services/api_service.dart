@@ -53,6 +53,23 @@ class ApiService {
     );
   }
 
+  Future<Map<String, dynamic>> exploreMemory(
+    JadeSettings settings,
+    String query, {
+    int limit = 12,
+  }) async {
+    final uri = Uri.parse('${settings.apiBase}/memory/explore').replace(
+      queryParameters: {'q': query, 'limit': '$limit'},
+    );
+    final res = await http.get(uri, headers: {'X-JamesOS-Key': settings.apiKey});
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Memory search failed: ${res.statusCode} ${res.body}');
+    }
+    final decoded = jsonDecode(res.body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'status': 'ok', 'results': decoded};
+  }
+
   Future<Map<String, dynamic>> uploadAttachment(
     JadeSettings settings,
     String filename,
