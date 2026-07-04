@@ -1,4 +1,5 @@
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
@@ -21,6 +22,7 @@ class ChatScreen extends StatefulWidget {
 
 class _ChatScreenState extends State<ChatScreen> {
   final input = TextEditingController();
+  final memoryInput = TextEditingController();
   final scroll = ScrollController();
   final api = ApiService();
   final tts = FlutterTts();
@@ -28,6 +30,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   JadeSettings settings = JadeSettings();
   bool loading = false;
+  bool memoryLoading = false;
   bool serverOnline = false;
   bool speaking = false;
   bool listening = false;
@@ -35,8 +38,12 @@ class _ChatScreenState extends State<ChatScreen> {
   bool voiceAutoSubmitted = false;
   AppMode selectedMode = AppMode.personal;
   List<DashboardCard> dashboardCards = [];
+  List<Map<String, dynamic>> memoryResults = [];
+  String memoryStatus = 'Search imported ChatGPT history, candidate memories, decisions, projects, and timelines.';
 
   final messages = <ChatMessage>[ChatMessage(role: 'jade', text: 'Hi James. Jade is ready.')];
+
+  bool get voicePluginsAvailable => defaultTargetPlatform != TargetPlatform.linux;
 
   @override
   void initState() {
@@ -49,55 +56,63 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     input.dispose();
+    memoryInput.dispose();
     scroll.dispose();
-    tts.stop();
-    recognizer.stop();
+    if (voicePluginsAvailable) {
+      tts.stop();
+      recognizer.stop();
+    }
     super.dispose();
   }
 
+  Future<void> safeStopVoice() async {
+    if (!voicePluginsAvailable) return;
+    try {
+      await tts.stop();
+      await recognizer.stop();
+    } catch (_) {}
+  }
+
   Future<void> configureVoice() async {
-    await tts.setLanguage('en-US');
-    await tts.setSpeechRate(0.46);
-    await tts.setPitch(1.03);
-    await tts.awaitSpeakCompletion(false);
-    tts.setStartHandler(() {
-      if (mounted) setState(() => speaking = true);
-    });
-    tts.setCompletionHandler(() {
+    if (!voicePluginsAvailable) return;
+    try {
+      await tts.setLanguage('en-US');
+      await tts.setSpeechRate(0.46);
+      await tts.setPitch(1.03);
+      await tts.awaitSpeakCompletion(false);
+      tts.setStartHandler(() { if (mounted) setState(() => speaking = true); });
+      tts.setCompletionHandler(() { if (mounted) setState(() => speaking = false); });
+      tts.setCancelHandler(() { if (mounted) setState(() => speaking = false); });
+      tts.setErrorHandler((_) { if (mounted) setState(() => speaking = false); });
+    } catch (_) {
       if (mounted) setState(() => speaking = false);
-    });
-    tts.setCancelHandler(() {
-      if (mounted) setState(() => speaking = false);
-    });
-    tts.setErrorHandler((_) {
-      if (mounted) setState(() => speaking = false);
-    });
+    }
   }
 
   Future<void> configureSpeechInput() async {
-    final ok = await recognizer.initialize(
-      onStatus: (status) {
-        if (!mounted) return;
-        final active = status == 'listening';
-        if (listening != active) setState(() => listening = active);
-
-        if ((status == 'done' || status == 'notListening') &&
-            input.text.trim().isNotEmpty &&
-            !loading &&
-            !voiceAutoSubmitted) {
-          voiceAutoSubmitted = true;
-          Future.delayed(const Duration(milliseconds: 250), () {
-            if (mounted && input.text.trim().isNotEmpty && !loading) {
-              askJade();
-            }
-          });
-        }
-      },
-      onError: (_) {
-        if (mounted) setState(() => listening = false);
-      },
-    );
-    if (mounted) setState(() => speechAvailable = ok);
+    if (!voicePluginsAvailable) {
+      if (mounted) setState(() => speechAvailable = false);
+      return;
+    }
+    try {
+      final ok = await recognizer.initialize(
+        onStatus: (status) {
+          if (!mounted) return;
+          final active = status == 'listening';
+          if (listening != active) setState(() => listening = active);
+          if ((status == 'done' || status == 'notListening') && input.text.trim().isNotEmpty && !loading && !voiceAutoSubmitted) {
+            voiceAutoSubmitted = true;
+            Future.delayed(const Duration(milliseconds: 250), () {
+              if (mounted && input.text.trim().isNotEmpty && !loading) askJade();
+            });
+          }
+        },
+        onError: (_) { if (mounted) setState(() => listening = false); },
+      );
+      if (mounted) setState(() => speechAvailable = ok);
+    } catch (_) {
+      if (mounted) setState(() => speechAvailable = false);
+    }
   }
 
   String speechText(String text) => text
@@ -110,17 +125,21 @@ class _ChatScreenState extends State<ChatScreen> {
       .replaceAll('\n', '. ')
       .trim();
 
-  bool shouldAutoSpeak(String text) => settings.voiceReplies && selectedMode.isChatty && speechText(text).length <= 450;
+  bool shouldAutoSpeak(String text) => voicePluginsAvailable && settings.voiceReplies && selectedMode.isChatty && speechText(text).length <= 450;
 
   Future<void> speak(String text, {bool force = false}) async {
+    if (!voicePluginsAvailable) return;
     if (!force && !shouldAutoSpeak(text)) return;
     final cleaned = speechText(text);
     if (cleaned.isEmpty) return;
-    await tts.stop();
-    await tts.speak(cleaned);
+    try {
+      await tts.stop();
+      await tts.speak(cleaned);
+    } catch (_) {}
   }
 
   Future<void> toggleSpeech() async {
+    if (!voicePluginsAvailable) return;
     if (speaking) {
       await tts.stop();
       setState(() => speaking = false);
@@ -131,6 +150,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> toggleListening() async {
+    if (!voicePluginsAvailable) return;
     if (listening) {
       await recognizer.stop();
       if (mounted) setState(() => listening = false);
@@ -139,10 +159,10 @@ class _ChatScreenState extends State<ChatScreen> {
     if (!speechAvailable) await configureSpeechInput();
     if (!speechAvailable) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Speech input is not available.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Speech input is not available on this build.')));
       return;
     }
-    await tts.stop();
+    await safeStopVoice();
     if (mounted) setState(() => speaking = false);
     voiceAutoSubmitted = false;
     await recognizer.listen(
@@ -162,15 +182,11 @@ class _ChatScreenState extends State<ChatScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Add your JamesOS API key in Settings first.')));
       return;
     }
-
     try {
       final file = await openFile();
       if (file == null) return;
-
-      await tts.stop();
-      await recognizer.stop();
+      await safeStopVoice();
       final bytes = await file.readAsBytes();
-
       setState(() {
         speaking = false;
         listening = false;
@@ -179,18 +195,12 @@ class _ChatScreenState extends State<ChatScreen> {
         loading = true;
       });
       scrollToBottom();
-
       final uploadResult = await api.uploadAttachment(settings, file.name, bytes);
       final uploadMessage = api.uploadMessage(uploadResult, file.name);
       setState(() {
-        messages[messages.length - 1] = ChatMessage(
-          role: 'jade',
-          text: '$uploadMessage\n\nNow I am running the first processing pass...',
-          action: 'file_uploaded',
-        );
+        messages[messages.length - 1] = ChatMessage(role: 'jade', text: '$uploadMessage\n\nNow I am running the first processing pass...', action: 'file_uploaded');
       });
       scrollToBottom();
-
       final processingResult = await api.processAttachments(settings);
       final processed = processingResult['processed']?.toString() ?? '0';
       final failed = processingResult['failed']?.toString() ?? '0';
@@ -201,32 +211,13 @@ class _ChatScreenState extends State<ChatScreen> {
         final summary = first['summary'];
         if (summary is String && summary.trim().isNotEmpty) processingSummary = summary;
       }
-
       setState(() {
-        messages[messages.length - 1] = ChatMessage(
-          role: 'jade',
-          text: '$uploadMessage\n\n$processingSummary',
-          action: 'file_processed',
-        );
+        messages[messages.length - 1] = ChatMessage(role: 'jade', text: '$uploadMessage\n\n$processingSummary', action: 'file_processed');
       });
       await refreshDashboard();
     } catch (e) {
       setState(() {
-        if (messages.isNotEmpty && (messages.last.text.startsWith('I received `') || messages.last.text.startsWith('Uploading `'))) {
-          messages[messages.length - 1] = ChatMessage(
-            role: 'jade',
-            text: 'I could not finish that upload/processing flow.\n\n`$e`',
-            confidenceLabel: '🔴 Low',
-            action: 'file_upload_error',
-          );
-        } else {
-          messages.add(ChatMessage(
-            role: 'jade',
-            text: 'I could not finish that upload/processing flow.\n\n`$e`',
-            confidenceLabel: '🔴 Low',
-            action: 'file_upload_error',
-          ));
-        }
+        messages.add(ChatMessage(role: 'jade', text: 'I could not finish that upload/processing flow.\n\n`$e`', confidenceLabel: '🔴 Low', action: 'file_upload_error'));
       });
     } finally {
       if (mounted) setState(() => loading = false);
@@ -270,15 +261,36 @@ class _ChatScreenState extends State<ChatScreen> {
     }
   }
 
+  Future<void> searchMemory([String? query]) async {
+    final q = (query ?? memoryInput.text).trim();
+    if (q.isEmpty || memoryLoading) return;
+    if (settings.apiKey.isEmpty) return;
+    setState(() {
+      memoryLoading = true;
+      memoryStatus = 'Searching memory for `$q`...';
+    });
+    try {
+      final result = await api.exploreMemory(settings, q, limit: 12);
+      final raw = result['results'];
+      final rows = raw is List ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : <Map<String, dynamic>>[];
+      setState(() {
+        memoryResults = rows;
+        memoryStatus = rows.isEmpty ? 'No imported memory matches found.' : 'Found ${rows.length} strong matches from imported memory.';
+      });
+    } catch (e) {
+      setState(() => memoryStatus = 'Memory search failed: $e');
+    } finally {
+      if (mounted) setState(() => memoryLoading = false);
+    }
+  }
+
   Future<void> askJade({String? overrideQuestion, bool showUserMessage = true}) async {
     final question = (overrideQuestion ?? input.text).trim();
     if (question.isEmpty || loading) return;
-    await recognizer.stop();
+    await safeStopVoice();
     setState(() {
       listening = false;
-      if (showUserMessage) {
-        messages.add(ChatMessage(role: 'user', text: question));
-      }
+      if (showUserMessage) messages.add(ChatMessage(role: 'user', text: question));
       messages.add(ChatMessage(role: 'jade', text: 'Thinking...'));
       loading = true;
       input.clear();
@@ -309,8 +321,7 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   void clearChat() {
-    tts.stop();
-    recognizer.stop();
+    safeStopVoice();
     setState(() {
       speaking = false;
       listening = false;
@@ -321,8 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> changeMode(AppMode? mode) async {
     if (mode == null || mode == selectedMode) return;
-    await tts.stop();
-    await recognizer.stop();
+    await safeStopVoice();
     setState(() {
       selectedMode = mode;
       speaking = false;
@@ -333,6 +343,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   IconData modeIcon(AppMode mode) => switch (mode) {
         AppMode.chat => Icons.casino_outlined,
+        AppMode.memory => Icons.travel_explore_outlined,
         AppMode.work => Icons.work_outline,
         AppMode.gcu => Icons.school_outlined,
         AppMode.family => Icons.home_outlined,
@@ -344,11 +355,7 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget buildModeDropdown() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.045),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.22)),
-      ),
+      decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.045), borderRadius: BorderRadius.circular(999), border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.22))),
       child: DropdownButtonHideUnderline(
         child: DropdownButton<AppMode>(
           value: selectedMode,
@@ -396,7 +403,7 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Expanded(child: Text('Good afternoon, James', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold))),
-          IconButton(tooltip: voiceTooltip, onPressed: settings.voiceReplies ? toggleSpeech : null, icon: Icon(speaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined)),
+          IconButton(tooltip: voiceTooltip, onPressed: voicePluginsAvailable && settings.voiceReplies ? toggleSpeech : null, icon: Icon(speaking ? Icons.stop_circle_outlined : Icons.volume_up_outlined)),
           IconButton(tooltip: 'Refresh live cards', onPressed: refreshDashboard, icon: const Icon(Icons.refresh)),
         ]),
         const SizedBox(height: 10),
@@ -415,6 +422,53 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  Widget buildMemoryExplorer() {
+    final suggestions = ['JamesOS', 'GCU grading', 'Malcolm paving', 'Colorado move', 'UnityStitches', 'phone ingestion'];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.indigo.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(22), border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.18))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [const Icon(Icons.travel_explore_outlined, color: Colors.tealAccent), const SizedBox(width: 8), const Expanded(child: Text('Memory Explorer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))), if (memoryLoading) const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))]),
+        const SizedBox(height: 8),
+        Text(memoryStatus, style: TextStyle(color: Colors.white.withValues(alpha: 0.72))),
+        const SizedBox(height: 12),
+        TextField(
+          controller: memoryInput,
+          textInputAction: TextInputAction.search,
+          onSubmitted: searchMemory,
+          decoration: InputDecoration(prefixIcon: const Icon(Icons.search), hintText: 'Search imported history...', suffixIcon: IconButton(icon: const Icon(Icons.arrow_forward), onPressed: memoryLoading ? null : () => searchMemory())),
+        ),
+        const SizedBox(height: 10),
+        Wrap(spacing: 8, runSpacing: 8, children: suggestions.map((s) => ActionChip(label: Text(s), onPressed: () { memoryInput.text = s; searchMemory(s); })).toList()),
+        const SizedBox(height: 12),
+        ...memoryResults.map(buildMemoryResultCard),
+      ]),
+    );
+  }
+
+  Widget buildMemoryResultCard(Map<String, dynamic> item) {
+    final title = item['title']?.toString() ?? 'Untitled memory';
+    final date = item['created_at']?.toString() ?? '';
+    final projects = item['projects'] is List ? (item['projects'] as List).join(', ') : 'Unclassified';
+    final snippet = item['snippet']?.toString() ?? '';
+    final messagesCount = item['message_count']?.toString() ?? '0';
+    return Card(
+      margin: const EdgeInsets.only(top: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+          const SizedBox(height: 4),
+          Text('$date • $projects • $messagesCount messages', style: TextStyle(color: Colors.white.withValues(alpha: 0.60), fontSize: 12)),
+          const SizedBox(height: 8),
+          Text(snippet, maxLines: 5, overflow: TextOverflow.ellipsis),
+          Align(alignment: Alignment.centerRight, child: TextButton(onPressed: () => askJade(overrideQuestion: 'Summarize this imported memory result: $title', showUserMessage: false), child: const Text('Ask Jade'))),
+        ]),
+      ),
+    );
+  }
+
   Widget buildTopBarTitle() {
     return Row(children: [Text(settings.assistantName), const SizedBox(width: 10), Flexible(child: StatusChip(online: serverOnline, label: 'OS', onTap: refreshStatus))]);
   }
@@ -426,7 +480,12 @@ class _ChatScreenState extends State<ChatScreen> {
       appBar: AppBar(title: buildTopBarTitle(), actions: [IconButton(onPressed: clearChat, icon: const Icon(Icons.delete_outline)), IconButton(onPressed: openSettings, icon: const Icon(Icons.settings))]),
       body: Column(children: [
         if (!paired) Container(width: double.infinity, padding: const EdgeInsets.all(12), color: Colors.amber.withValues(alpha: 0.18), child: const Text('Add your JamesOS API key in Settings.')),
-        Expanded(child: ListView.builder(controller: scroll, padding: const EdgeInsets.all(16), itemCount: messages.length + 1, itemBuilder: (_, i) { if (i == 0) return buildDashboardCard(); return ChatBubble(message: messages[i - 1], showMetadata: !selectedMode.isChatty); })),
+        Expanded(child: ListView.builder(controller: scroll, padding: const EdgeInsets.all(16), itemCount: messages.length + 1 + (selectedMode == AppMode.memory ? 1 : 0), itemBuilder: (_, i) {
+          if (i == 0) return buildDashboardCard();
+          if (selectedMode == AppMode.memory && i == 1) return buildMemoryExplorer();
+          final offset = selectedMode == AppMode.memory ? 2 : 1;
+          return ChatBubble(message: messages[i - offset], showMetadata: !selectedMode.isChatty);
+        })),
         MessageInput(controller: input, loading: loading, listening: listening, speechAvailable: speechAvailable, onSend: askJade, onVoice: toggleListening, onAttach: attachFile),
       ]),
     );
