@@ -157,6 +157,18 @@ class JadeReasoner:
             evidence=context,
         )
 
+    def _is_chatgpt_history_request(self, question: str) -> bool:
+        q = question.lower()
+        return any(
+            phrase in q
+            for phrase in [
+                "chatgpt history",
+                "imported chatgpt history",
+                "chatgpt-history",
+                "chat gpt history",
+            ]
+        )
+
     def collect_graph(self, plan: ReasoningPlan) -> None:
         graph = {}
         for person in plan.entities.get("people", []):
@@ -172,6 +184,10 @@ class JadeReasoner:
         question_for_brain = plan.question
         allow_tools = True
         history_context = plan.evidence.get("results", {}).get("chatgpt_history", "")
+        history_request = self._is_chatgpt_history_request(plan.question)
+
+        if history_context or history_request or plan.mode == "memory":
+            allow_tools = False
 
         if history_context:
             question_for_brain = (

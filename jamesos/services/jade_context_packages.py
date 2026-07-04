@@ -12,7 +12,7 @@ from jamesos.services.world_model import (
 )
 
 
-VALID_MODES = {"personal", "chat", "work", "gcu", "family", "jamesos"}
+VALID_MODES = {"personal", "memory", "chat", "work", "gcu", "family", "jamesos"}
 
 
 def normalize_mode(mode: str | None) -> str:
@@ -30,6 +30,7 @@ def mode_label(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "Personal",
+        "memory": "Memory",
         "chat": "Chat",
         "work": "Work",
         "gcu": "GCU",
@@ -42,6 +43,7 @@ def mode_query(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "James priorities today family work GCU JamesOS calendar reminders",
+        "memory": "Imported ChatGPT history long-term memory reports timeline indexed context",
         "chat": "James Jade humor casual banter fun playful chat",
         "work": "WGL work tickets paving Kevin Malcolm Tom Ian deployment SFM2 SBX blockers",
         "gcu": "GCU teaching grading students announcements assignments due dates CST SYM DSC",
@@ -54,6 +56,7 @@ def mode_directive(mode: str | None) -> str:
     mode = normalize_mode(mode)
     return {
         "personal": "Prioritize James's most useful personal-assistant context across work, GCU, family, JamesOS, calendar, and memory.",
+        "memory": "Prioritize imported ChatGPT history, long-term memory, reports, timeline, and indexed context. Do not route to weather or other external tools unless James explicitly asks.",
         "chat": "Casual chat mode. Be witty, warm, brief, and conversational. Do not produce a briefing, task list, or long analysis unless James explicitly asks.",
         "work": "Prioritize WGL work, tickets, deployments, blockers, Oracle/PLSQL, SFM2/SBX/R2QA, and people such as Kevin, Malcolm, Tom, Ian, and Elias.",
         "gcu": "Prioritize teaching work, grading, announcements, students, courses, assignments, and instructor-ready wording.",
@@ -79,6 +82,7 @@ def build_context_package(question: str, mode: str | None = None) -> str:
 
     reports = {
         "personal": ["Daily Briefing", "Proactive Assistant", "People"],
+        "memory": ["Daily Briefing", "Proactive Assistant", "People"],
         "chat": [],
         "work": ["Work Intelligence", "Proactive Assistant", "People"],
         "gcu": ["Daily Briefing", "Proactive Assistant"],
