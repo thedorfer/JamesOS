@@ -1,5 +1,6 @@
 enum AppMode {
   personal,
+  memory,
   chat,
   work,
   gcu,
@@ -11,6 +12,7 @@ enum AppMode {
 extension AppModeDetails on AppMode {
   String get key => switch (this) {
         AppMode.personal => 'personal',
+        AppMode.memory => 'memory',
         AppMode.chat => 'chat',
         AppMode.work => 'work',
         AppMode.gcu => 'gcu',
@@ -21,6 +23,7 @@ extension AppModeDetails on AppMode {
 
   String get label => switch (this) {
         AppMode.personal => 'Personal',
+        AppMode.memory => 'Memory',
         AppMode.chat => 'Chat',
         AppMode.work => 'Work',
         AppMode.gcu => 'GCU',
@@ -40,6 +43,11 @@ extension AppModeDetails on AppMode {
           'Start with one plain-English headline. Then summarize only what matters under: Needs Attention, Today, Waiting On, Suggestions, and Continue Working. '
           'Prioritize family logistics, calendar conflicts, important personal emails, errands, packages, bills, health reminders, and unfinished personal projects. '
           'Make every item actionable. When source details exist, describe them naturally and mention that more detail is available instead of showing raw paths or IDs.',
+        AppMode.memory =>
+          'Open Memory Explorer. Give James a concise memory health and search briefing. '
+          'Use imported ChatGPT history, long-term memory, reports, timeline, and indexed context. '
+          'Show sections: What I Can Search, Strongest Imported Areas, Things To Try, and Memory Health. '
+          'Do not expose raw file paths unless James asks. Focus on how this history can help him right now.',
         AppMode.chat =>
           'Say something light, funny, or interesting. Keep it short and conversational.',
         AppMode.work =>
