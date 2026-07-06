@@ -52,13 +52,23 @@ def _score_from_bm25(rank: Any) -> int:
 
 def _snippet_for_text(text: str, terms: list[str], context=120) -> str:
     low = text.lower()
+    snippets: list[str] = []
     for term in terms:
-        idx = low.find(term.lower())
-        if idx >= 0:
+        t = term.lower()
+        start_idx = 0
+        while True:
+            idx = low.find(t, start_idx)
+            if idx < 0:
+                break
             start = max(0, idx - context)
             end = min(len(text), idx + len(term) + context)
-            return text[start:end].strip().replace("\n", " ")
-    # fallback: start of text
+            snippet = text[start:end].strip().replace("\n", " ")
+            snippets.append(snippet)
+            start_idx = idx + len(t)
+    if snippets:
+        # join multiple matched snippets with ellipses
+        return " ... ".join(dict.fromkeys(snippets))
+    # fallback: return the first 240 chars
     return text.strip().replace("\n", " ")[: context * 2]
 
 
@@ -78,9 +88,27 @@ def _search_files_for_terms(root: Path, terms: list[str], limit: int = 10) -> li
             continue
         low = txt.lower()
         score = 0
-        full_query = " ".join(terms)
+        full_query = " ".join(terms).strip()
+
+        # prefer certain vault areas
+        preferred = {"Memory", "People", "Brain"}
+        if any(p.lower() in str(path).lower() for p in preferred):
+            score += 10
+
+        # penalize generic report/status files by filename hints
+        generic_hints = ["automatic context", "ai inbox cleanup", "import report", "status", "report"]
+        if any(h in path.name.lower() for h in generic_hints):
+            score -= 20
+
+        # boost if title/path contains important terms
+        boosts = [t.lower() for t in ["malcolm", "paving", "88858", "kevin", "sfm2", "sbx"]]
+        if any(b in path.name.lower() or b in str(path).lower() for b in boosts):
+            score += 30
+
+        # full query exact match
         if full_query and full_query.lower() in low:
             score += 60
+
         # count matched unique terms
         matched = 0
         for t in terms:
@@ -89,7 +117,8 @@ def _search_files_for_terms(root: Path, terms: list[str], limit: int = 10) -> li
                 score += 10
         if matched == 0:
             continue
-        snippet = _snippet_for_text(txt, terms)
+
+        snippet = _snippet_for_text(txt, terms, context=240)
         title = path.stem
         results.append({
             "source": "file",
@@ -102,6 +131,58 @@ def _search_files_for_terms(root: Path, terms: list[str], limit: int = 10) -> li
         if len(results) >= limit:
             break
     return results
+
+
+def _extract_key_facts_from_text(text: str, terms: list[str], max_facts: int = 5) -> list[str]:
+    """Heuristic extraction of key facts: return up to `max_facts` lines containing terms or short sentences with entities."""
+    facts: list[str] = []
+    lines = [l.strip() for l in re.split(r"[\n\r]+", text) if l.strip()]
+    for line in lines:
+        low = line.lower()
+        if any(t.lower() in low for t in terms):
+            # truncate long lines
+            s = line
+            if len(s) > 240:
+                s = s[:240].rstrip() + "..."
+            facts.append(s)
+        if len(facts) >= max_facts:
+            break
+    # fallback: take first sentences
+    if not facts:
+        sentences = re.split(r"(?<=[.!?])\s+", text)
+        for s in sentences:
+            if s.strip():
+                facts.append(s.strip()[:240])
+            if len(facts) >= max_facts:
+                break
+    return facts
+
+
+def memory_answer_context(query: str, limit: int = 8) -> dict[str, Any]:
+    """Return structured context useful for building prompts: top sources, snippets, and key facts."""
+    res = search_unified(query, limit=limit)
+    terms = expand_terms(query)
+    out: list[dict[str, Any]] = []
+    for item in res.get("results", [])[:limit]:
+        entry = {
+            "title": item.get("title"),
+            "source_type": item.get("source_type"),
+            "path": item.get("path"),
+            "snippet": item.get("snippet"),
+            "score": item.get("score"),
+            "key_facts": [],
+        }
+        # attempt to read and extract richer facts when file exists
+        p = item.get("path") or ""
+        try:
+            if p and Path(p).exists():
+                txt = Path(p).read_text(encoding="utf-8")
+                entry["snippet"] = _snippet_for_text(txt, terms, context=300)
+                entry["key_facts"] = _extract_key_facts_from_text(txt, terms)
+        except Exception:
+            pass
+        out.append(entry)
+    return {"status": "ok", "query": query, "sources": out, "count": len(out)}
 
 
 def search_unified(query: str, limit: int = 10) -> dict[str, Any]:

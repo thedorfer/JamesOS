@@ -10,7 +10,10 @@ from jamesos.services.jade_brain import (
 from jamesos.services.knowledge_graph import graph_lookup
 from jamesos.services.identity_profile import identity_context
 from jamesos.services.memory_service import remember
-from jamesos.services.unified_memory_search import history_context as unified_history_context
+from jamesos.services.unified_memory_search import (
+    history_context as unified_history_context,
+    memory_answer_context,
+)
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -60,37 +63,6 @@ def _clean_jade_answer(answer: str, plan: ReasoningPlan, result: dict) -> str:
         "to better understand",
         "it appears",
     ]
-
-    if plan.intent == "person" and any(b in lower for b in banned_starts):
-        people = plan.entities.get("people", [])
-        person = people[0] if people else "that person"
-
-        graph = plan.evidence.get("results", {}).get("knowledge_graph", {})
-        graph_blob = str(graph)
-
-        bullets = []
-
-        if "Paving" in graph_blob:
-            bullets.append("Connected to your Paving work")
-        if "88858" in graph_blob:
-            bullets.append("Related to ticket 88858")
-        if "Malcolm" in graph_blob:
-            bullets.append("Mentioned with Malcolm")
-        if "SFM2" in graph_blob:
-            bullets.append("Shows up around SFM2")
-        if "SBX" in graph_blob:
-            bullets.append("Shows up around SBX")
-        if "GCU" in graph_blob:
-            bullets.append("Shows up in some GCU-related memory too, but that looks lower-confidence")
-
-        if not bullets:
-            bullets.append("I found mentions, but not enough high-trust context to say much yet")
-
-        return (
-            f"{person} looks mostly tied to your recent work context.\n\n"
-            "What I know:\n"
-            + "\n".join(f"- {b}" for b in bullets)
-        )
 
     answer = answer.replace("Based on the data provided, ", "")
     answer = answer.replace("Based on the context provided, ", "")
@@ -191,12 +163,34 @@ class JadeReasoner:
         if history_context or history_request or plan.mode == "memory":
             allow_tools = False
 
+        memory_block = ""
         if history_context:
+            # structured memory facts to include in prompt
+            try:
+                mem = memory_answer_context(plan.question, limit=6)
+            except Exception:
+                mem = None
+            if mem and mem.get("status") == "ok":
+                parts: list[str] = ["# Retrieved Memory Sources"]
+                for s in mem.get("sources", []):
+                    parts.append(f"## {s.get('title', '')} ({s.get('source_type', '')})")
+                    parts.append(f"Path: {s.get('path', '')}")
+                    parts.append("")
+                    parts.append(str(s.get("snippet", ""))[:2000])
+                    parts.append("")
+                    kf = s.get("key_facts") or []
+                    if kf:
+                        parts.append("Key facts:")
+                        for f in kf:
+                            parts.append(f"- {f}")
+                        parts.append("")
+                memory_block = "\n".join(parts)
+
             question_for_brain = (
-                f"{history_context}\n\n"
+                f"{memory_block}\n\n"
                 "# Response Task\n"
-                "Use the imported ChatGPT history above when it helps. Answer James directly and practically. "
-                "Do not mention raw JSON, indexes, file paths, or implementation details unless he asks.\n"
+                "Summarize the facts found in the memory sources above as concise bullets. Do not invent facts. "
+                "If the evidence is thin, list what was found and what is missing. Answer James directly and practically.\n"
                 f"Question: {plan.question}"
             )
 
