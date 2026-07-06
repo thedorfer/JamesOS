@@ -88,31 +88,41 @@ def _items_from_json(data: Any) -> list[dict[str, Any]]:
 
 def _parse_markdown_messages(path: Path) -> list[dict[str, Any]]:
     text = path.read_text(encoding="utf-8")
-    if "## Transcript" not in text:
+    headers = list(re.finditer(r"^###\s+(.+)$", text, flags=re.M))
+    if not headers:
         return []
+
     rows: list[dict[str, Any]] = []
-    parts = re.split(r"^###\s+", text, flags=re.M)
-    if len(parts) <= 1:
-        return []
-    for part in parts[1:]:
-        header, _, body = part.partition("\n")
-        role = header.split()[0].strip() if header else "unknown"
+    for index, match in enumerate(headers):
+        header_text = match.group(1).strip()
+        start = match.end()
+        end = headers[index + 1].start() if index + 1 < len(headers) else len(text)
+        body = text[start:end].lstrip("\n").rstrip()
+
+        role = "unknown"
         created_at = ""
         model = None
-        if " - " in header:
-            maybe_model, _, maybe_date = header.rpartition(" - ")
-            created_at = maybe_date.strip()
-            if "(" in maybe_model and ")" in maybe_model:
-                model_match = re.search(r"\(([^)]+)\)", maybe_model)
-                if model_match:
-                    model = model_match.group(1)
+
+        if " - " in header_text:
+            role_part, _, created_at = header_text.rpartition(" - ")
+            created_at = created_at.strip()
+        else:
+            role_part = header_text
+
+        role_match = re.match(r"^(user|assistant|tool|system)\s*(?:\(([^)]+)\))?$", role_part.strip(), flags=re.I)
+        if role_match:
+            role = role_match.group(1).lower()
+            model = role_match.group(2)
+        else:
+            role = role_part.split()[0].strip().lower() if role_part else "unknown"
+
         rows.append({
             "external_id": f"{path.stem}-{len(rows)+1}",
             "role": role,
             "created_at": created_at,
             "model": model,
             "parent": None,
-            "text": body.strip(),
+            "text": body,
         })
     return rows
 
@@ -315,42 +325,12 @@ def rebuild_message_index() -> dict[str, Any]:
         DB_PATH.unlink()
     init_db()
     indexed = 0
+    parsed = 0
     scanned = 0
 
-    json_files = sorted(BRAIN_ROOT.rglob("*.json"))
-    if json_files:
-        for json_path in json_files:
-            scanned += 1
-            conv_id, title = _conversation_metadata_from_json(json_path)
-            try:
-                payload = json.loads(json_path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            items = _items_from_json(payload)
-            conversation = items[0] if items else {}
-            rows = _rows_from_mapping(conversation)
-            if not rows:
-                continue
-
-            message_dir = json_path.parent / "messages"
-            for idx, row in enumerate(rows, start=1):
-                external_id = row.get("external_id") or f"{conv_id}-{idx}"
-                message_path = message_dir / f"{json_path.stem}-msg-{idx:04d}.md"
-                _write_message_markdown(conv_id, title, row, message_path)
-                index_message({
-                    "external_id": external_id,
-                    "conversation_id": conv_id,
-                    "title": title,
-                    "role": row.get("role"),
-                    "created_at": row.get("created_at"),
-                    "model": row.get("model"),
-                    "parent": row.get("parent"),
-                    "text": row.get("text"),
-                    "path": str(message_path),
-                })
-                indexed += 1
-    else:
-        for md_path in sorted(BRAIN_ROOT.rglob("*.md")):
+    markdown_files = sorted(BRAIN_ROOT.rglob("*.md"))
+    if markdown_files:
+        for md_path in markdown_files:
             if md_path.parent.name == "messages":
                 continue
             scanned += 1
@@ -358,6 +338,7 @@ def rebuild_message_index() -> dict[str, Any]:
             rows = _parse_markdown_messages(md_path)
             if not rows:
                 continue
+            parsed += len(rows)
             message_dir = md_path.parent / "messages"
             for idx, row in enumerate(rows, start=1):
                 external_id = row.get("external_id") or f"{conv_id}-{idx}"
@@ -375,10 +356,44 @@ def rebuild_message_index() -> dict[str, Any]:
                     "path": str(message_path),
                 })
                 indexed += 1
+    else:
+        for json_path in sorted(BRAIN_ROOT.rglob("*.json")):
+            scanned += 1
+            conv_id, title = _conversation_metadata_from_json(json_path)
+            try:
+                payload = json.loads(json_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            items = _items_from_json(payload)
+            conversation = items[0] if items else {}
+            rows = _rows_from_mapping(conversation)
+            if not rows:
+                continue
+
+            parsed += len(rows)
+            message_dir = json_path.parent / "messages"
+            for idx, row in enumerate(rows, start=1):
+                external_id = row.get("external_id") or f"{conv_id}-{idx}"
+                message_path = message_dir / f"{json_path.stem}-msg-{idx:04d}.md"
+                _write_message_markdown(conv_id, title, row, message_path)
+                index_message({
+                    "external_id": external_id,
+                    "conversation_id": conv_id,
+                    "title": title,
+                    "role": row.get("role"),
+                    "created_at": row.get("created_at"),
+                    "model": row.get("model"),
+                    "parent": row.get("parent"),
+                    "text": row.get("text"),
+                    "path": str(message_path),
+                })
+                indexed += 1
 
     return {
         "status": "ok",
         "scanned": scanned,
+        "parsed": parsed,
+        "parsed_messages": parsed,
         "indexed": indexed,
         "db_path": str(DB_PATH),
     }
