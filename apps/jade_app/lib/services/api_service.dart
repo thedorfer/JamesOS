@@ -10,7 +10,10 @@ class ApiService {
     return {'statusCode': res.statusCode, 'body': res.body};
   }
 
-  Future<List<DashboardCard>> dashboard(JadeSettings settings, String mode) async {
+  Future<List<DashboardCard>> dashboard(
+    JadeSettings settings,
+    String mode,
+  ) async {
     final res = await http.get(
       Uri.parse('${settings.apiBase}/dashboard?mode=$mode'),
       headers: {'X-JamesOS-Key': settings.apiKey},
@@ -25,23 +28,28 @@ class ApiService {
         .toList();
   }
 
-  Future<ChatMessage> ask(JadeSettings settings, String question, {String mode = 'personal'}) async {
+  Future<ChatMessage> ask(
+    JadeSettings settings,
+    String question, {
+    String mode = 'personal',
+  }) async {
     final res = await http.post(
       Uri.parse('${settings.apiBase}/ask'),
       headers: {
         'Content-Type': 'application/json',
         'X-JamesOS-Key': settings.apiKey,
       },
-      body: jsonEncode({'question': question, 'use_ai': settings.useAi, 'mode': mode}),
+      body: jsonEncode({
+        'question': question,
+        'use_ai': settings.useAi,
+        'mode': mode,
+      }),
     );
 
     final data = jsonDecode(res.body);
-    final planner = data['planner'];
-    final reasoner = data['reasoner'];
-    final reasonerSources = reasoner is Map ? reasoner['sources'] : null;
-    final rawSources = reasonerSources ?? planner;
-    final sources = rawSources is List
-        ? rawSources.map((item) => item.toString()).toList()
+    final rawWorkingMemory = data['working_memory'];
+    final sources = rawWorkingMemory is List
+        ? rawWorkingMemory.map((item) => item.toString()).toList()
         : <String>[];
 
     return ChatMessage(
@@ -58,10 +66,13 @@ class ApiService {
     String query, {
     int limit = 12,
   }) async {
-    final uri = Uri.parse('${settings.apiBase}/memory/explore').replace(
-      queryParameters: {'q': query, 'limit': '$limit'},
+    final uri = Uri.parse(
+      '${settings.apiBase}/memory/explore',
+    ).replace(queryParameters: {'q': query, 'limit': '$limit'});
+    final res = await http.get(
+      uri,
+      headers: {'X-JamesOS-Key': settings.apiKey},
     );
-    final res = await http.get(uri, headers: {'X-JamesOS-Key': settings.apiKey});
     if (res.statusCode < 200 || res.statusCode >= 300) {
       throw Exception('Memory search failed: ${res.statusCode} ${res.body}');
     }
@@ -81,7 +92,9 @@ class ApiService {
     );
 
     request.headers['X-JamesOS-Key'] = settings.apiKey;
-    request.files.add(http.MultipartFile.fromBytes('files', bytes, filename: filename));
+    request.files.add(
+      http.MultipartFile.fromBytes('files', bytes, filename: filename),
+    );
 
     final streamed = await request.send();
     final body = await streamed.stream.bytesToString();
@@ -114,7 +127,10 @@ class ApiService {
     return {'status': 'ok', 'result': decoded};
   }
 
-  String uploadMessage(Map<String, dynamic> uploadResult, String fallbackFilename) {
+  String uploadMessage(
+    Map<String, dynamic> uploadResult,
+    String fallbackFilename,
+  ) {
     final message = uploadResult['message'];
     if (message is String && message.trim().isNotEmpty) return message;
 

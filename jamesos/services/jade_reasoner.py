@@ -2,23 +2,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jamesos.services.jade_brain import (
-    LOCAL_PERSON_MEMORY_RULE,
-    PAVING_TICKETS,
     detect_intent,
     plan_sources,
-    gather_context,
     answer_with_brain,
 )
-from jamesos.services.knowledge_graph import graph_lookup
-from jamesos.services.identity_profile import identity_context
-from jamesos.services.memory_service import remember
-from jamesos.services.unified_memory_search import (
-    history_context as unified_history_context,
-    memory_answer_context,
+from jamesos.services.jade_memory_router import (
+    KNOWLEDGE_GRAPH_AUTHORITY_RULE,
+    LOCAL_PEOPLE_RULE,
+    MISSING_MEMORY_RULE,
+    RetrievalBundle,
+    retrieve_for_question,
 )
-from jamesos.services.knowledge_graph_service import load_entity_page
+from jamesos.services.knowledge_graph import graph_lookup
+from jamesos.services.memory_service import remember
 from jamesos.services.jade_context_packages import (
-    build_context_package,
     mode_label,
     normalize_mode,
 )
@@ -33,6 +30,7 @@ class ReasoningPlan:
     mode: str = "personal"
     confidence: int = 25
     evidence: dict[str, Any] = field(default_factory=dict)
+    retrieval_bundle: RetrievalBundle | None = None
 
 
 def _clean_jade_answer(answer: str, plan: ReasoningPlan, result: dict) -> str:
@@ -85,20 +83,13 @@ def confidence_label(score: int) -> str:
     return "🔴 Low"
 
 
-def _score_context(context: dict, intent: str, mode: str) -> int:
-    results = context.get("results", {})
+def _score_retrieval(bundle: RetrievalBundle, intent: str, mode: str) -> int:
     score = 25
 
-    if results.get("knowledge_graph"):
-        score += 25
-    if results.get("indexes"):
-        score += 25
-    if results.get("memory"):
-        score += 10
-    if results.get("conversation_summaries"):
-        score += 5
-    if results.get("chatgpt_history") or results.get("memory"):
-        score += 25
+    if bundle.primary_context:
+        score += 45
+    if bundle.secondary_context:
+        score += 15
     if mode != "personal":
         score += 5
     if intent in {"sensitive_file", "weather"}:
@@ -111,87 +102,32 @@ class JadeReasoner:
     def understand(self, question: str, mode: str | None = None) -> ReasoningPlan:
         mode = normalize_mode(mode)
         intent = detect_intent(question)
-        sources = plan_sources(intent)
-
-        context = gather_context(question, intent, sources)
-        # Try loading Memory V2 pages for detected entities first
-        results_block = []
-        people = context.get("people", []) or []
-        tickets = context.get("tickets", []) or []
-        projects = context.get("projects", []) or []
-        people_to_load = list(people)
-        if "malcolm" in question.lower():
-            people_to_load = ["Malcolm", "Malcolm Wrench"] + people_to_load
-        people_to_load = list(dict.fromkeys(people_to_load))
-        person_page_aliases = {
-            "Malcolm Wrench": [
-                "Malcolm Wrench",
-                "Wrench, Malcolm R",
-                "Wrench, Malcolm",
-                "Wrench Malcolm (cgi)",
-            ],
-        }
-        for p in people_to_load:
-            try:
-                for page_name in person_page_aliases.get(p, [p]):
-                    r = load_entity_page("people", page_name)
-                    if r.get("status") == "ok":
-                        results_block.append(
-                            {
-                                "title": p,
-                                "content": r.get("content"),
-                                "source_type": "knowledge_graph",
-                            }
-                        )
-                        break
-            except Exception:
-                pass
-        for pr in projects:
-            try:
-                r = load_entity_page("projects", pr)
-                if r.get("status") == "ok":
-                    results_block.append({"title": pr, "content": r.get("content"), "source_type": "knowledge_graph"})
-            except Exception:
-                pass
-        if "paving" in question.lower():
-            tickets = list(dict.fromkeys([*PAVING_TICKETS, *tickets]))
-            context["tickets"] = tickets
-        for t in tickets:
-            try:
-                r = load_entity_page("tickets", t)
-                if r.get("status") == "ok":
-                    results_block.append({"title": t, "content": r.get("content"), "source_type": "knowledge_graph"})
-            except Exception:
-                pass
-
-        # If we have memory v2 sources, attach as primary memory context; otherwise fall back to unified history
-        if results_block:
-            context.setdefault("results", {})["knowledge_graph"] = results_block
-            # Compatibility key for older clients and diagnostics.
-            context.setdefault("results", {})["memory_v2"] = results_block
-            context["local_memory_available"] = True
-        else:
-            history_ctx = unified_history_context(question, limit=6)
-            if "No matching memory found." not in history_ctx:
-                context.setdefault("results", {})["memory"] = history_ctx
-                context["local_memory_available"] = True
-            else:
-                context["local_memory_available"] = False
-
-        entities = {
-            "people": context.get("people", []),
-            "tickets": context.get("tickets", []),
-            "projects": context.get("projects", []),
+        bundle = retrieve_for_question(question, intent=intent, mode=mode)
+        source_names = ["knowledge_graph"] if bundle.primary_context else []
+        source_names.extend(
+            str(item.get("source_type") or "evidence")
+            for item in bundle.secondary_context
+        )
+        sources = list(dict.fromkeys(source_names or plan_sources(intent)))
+        context = {
+            "results": {
+                "knowledge_graph": bundle.primary_context,
+                "memory_v2": bundle.primary_context,
+                "memory": bundle.secondary_context,
+            },
+            "local_memory_available": bundle.has_local_context,
+            "retrieval_bundle": bundle.as_dict(),
         }
 
         return ReasoningPlan(
             question=question,
             intent=intent,
-            entities=entities,
-            sources=sources + ["memory"],
+            entities=bundle.entities,
+            sources=sources,
             mode=mode,
-            confidence=_score_context(context, intent, mode),
+            confidence=_score_retrieval(bundle, intent, mode),
             evidence=context,
+            retrieval_bundle=bundle,
         )
 
     def _is_chatgpt_history_request(self, question: str) -> bool:
@@ -222,6 +158,8 @@ class JadeReasoner:
         )
 
     def collect_graph(self, plan: ReasoningPlan) -> None:
+        if plan.retrieval_bundle and plan.retrieval_bundle.primary_context:
+            return
         graph = {}
         for person in plan.entities.get("people", []):
             graph[person] = graph_lookup(person, limit=10)
@@ -233,86 +171,37 @@ class JadeReasoner:
             plan.confidence = min(plan.confidence + 10, 95)
 
     def answer(self, plan: ReasoningPlan, use_ai: bool = True) -> dict:
-        question_for_brain = plan.question
-        allow_tools = True
-        history_context = plan.evidence.get("results", {}).get("memory", "")
-        identity_block = identity_context()
+        bundle = plan.retrieval_bundle
+        if bundle is None:
+            results = plan.evidence.get("results", {})
+            primary = results.get("knowledge_graph") or results.get("memory_v2") or []
+            secondary = results.get("memory") or []
+            if not isinstance(secondary, list):
+                secondary = []
+            local_query = (
+                plan.intent in {"person", "work"} or plan.mode == "memory"
+            ) and not self._explicit_world_knowledge_request(plan.question)
+            bundle = RetrievalBundle(
+                primary_context=list(primary),
+                secondary_context=list(secondary),
+                rules=[
+                    KNOWLEDGE_GRAPH_AUTHORITY_RULE,
+                    LOCAL_PEOPLE_RULE,
+                    MISSING_MEMORY_RULE,
+                ],
+                entities=plan.entities,
+                local_entity_query=local_query,
+                explicit_world_knowledge=self._explicit_world_knowledge_request(plan.question),
+            )
+
         history_request = self._is_chatgpt_history_request(plan.question)
-        local_memory_question = (
-            plan.intent in {"person", "work"} or plan.mode == "memory"
-        ) and not self._explicit_world_knowledge_request(plan.question)
-
-        if history_context or history_request or plan.mode == "memory" or local_memory_question:
-            allow_tools = False
-
-        memory_block = ""
-        # prefer MemoryV2 structured pages if available
-        knowledge_pages = (
-            plan.evidence.get("results", {}).get("knowledge_graph")
-            or plan.evidence.get("results", {}).get("memory_v2")
+        allow_tools = not (
+            bundle.local_entity_query or history_request or plan.mode == "memory"
         )
-        if knowledge_pages:
-            parts: list[str] = ["# JamesOS Knowledge Graph Pages"]
-            for s in knowledge_pages:
-                parts.append(f"## {s.get('title', '')} (knowledge_graph)")
-                parts.append("")
-                parts.append(str(s.get("content", ""))[:3000])
-                parts.append("")
-            memory_block = "\n".join(parts)
-            question_for_brain = (
-                f"{memory_block}\n\n"
-                "# Response Task\n"
-                f"{LOCAL_PERSON_MEMORY_RULE} "
-                "Use the retrieved Knowledge Graph pages before any other knowledge. "
-                "Drill into Evidence only when the Knowledge Graph does not answer the question. "
-                "Do not identify a named person as a public figure or guess their identity. "
-                "If the pages do not support an answer, say “I don’t have enough local memory.” "
-                "Answer James directly with specific facts and clearly separate confirmed facts from missing details.\n"
-                f"Question: {plan.question}"
-            )
-        elif history_context:
-            # structured memory facts to include in prompt
-            try:
-                mem = memory_answer_context(plan.question, limit=6)
-            except Exception:
-                mem = None
-            if mem and mem.get("status") == "ok":
-                parts: list[str] = ["# Retrieved Memory Sources"]
-                for s in mem.get("sources", []):
-                    parts.append(f"## {s.get('title', '')} ({s.get('source_type', '')})")
-                    parts.append(f"Path: {s.get('path', '')}")
-                    parts.append("")
-                    parts.append(str(s.get("snippet", ""))[:2000])
-                    parts.append("")
-                    kf = s.get("key_facts") or []
-                    if kf:
-                        parts.append("Key facts:")
-                        for f in kf:
-                            parts.append(f"- {f}")
-                        parts.append("")
-                memory_block = "\n".join(parts)
+        if bundle.explicit_world_knowledge:
+            allow_tools = True
 
-            question_for_brain = (
-                f"{memory_block}\n\n"
-                "# Response Task\n"
-                "Summarize the facts found in the memory sources above as concise bullets. Do not invent facts. "
-                "If the evidence is thin, list what was found and what is missing. Answer James directly and practically.\n"
-                f"Question: {plan.question}"
-            )
-
-        if plan.mode != "personal":
-            context_package = build_context_package(plan.question, plan.mode)
-            question_for_brain = (
-                f"{context_package}\n\n"
-                f"{memory_block or history_context}\n\n"
-                "# Response Task\n"
-                f"{LOCAL_PERSON_MEMORY_RULE} "
-                "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, paths, or graph implementation.\n"
-                f"Question: {plan.question}"
-            )
-            allow_tools = False
-
-        if local_memory_question and not plan.evidence.get("local_memory_available", False):
+        if bundle.local_entity_query and not bundle.has_local_context:
             result = {
                 "answer": "I don’t have enough local memory.",
                 "action": "local_memory_missing",
@@ -322,17 +211,20 @@ class JadeReasoner:
             }
         else:
             result = answer_with_brain(
-                question_for_brain,
+                plan.question,
                 use_ai=use_ai,
                 allow_tools=allow_tools,
                 intent_override=plan.intent,
+                retrieval_bundle=bundle,
+                confidence_override=plan.confidence,
+                mode=plan.mode,
             )
 
-        if use_ai and history_context:
-            pass
         result["question"] = plan.question
         result["mode"] = plan.mode
         result["mode_label"] = mode_label(plan.mode)
+        result["working_memory"] = bundle.working_memory
+        result["retrieval_bundle"] = bundle.as_dict()
 
         confidence = result.get("confidence", plan.confidence)
         result["confidence"] = confidence

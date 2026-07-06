@@ -1,15 +1,13 @@
 from pathlib import Path
 import json
 import re
-from datetime import datetime, date, timedelta
+from datetime import datetime
+from typing import Any
 
 from jamesos.config import VAULT
-from jamesos.services.memory_service import search_memory, remember
-from jamesos.services.typed_index import search_typed_indexes
 from jamesos.services.tool_router import detect_tool, route_tool
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.personality import jade_personality_prompt
-from jamesos.services.knowledge_graph import graph_lookup
 from jamesos.services.identity_profile import identity_context
 
 
@@ -120,76 +118,6 @@ def detect_query_entities(question: str) -> dict[str, list[str]]:
     }
 
 
-def gather_context(question: str, intent: str, sources: list[str]) -> dict:
-    entities = detect_query_entities(question)
-    context = {
-        "question": question,
-        "intent": intent,
-        "sources": sources,
-        "people": entities["people"],
-        "projects": entities["projects"],
-        "tickets": entities["tickets"],
-        "results": {},
-    }
-
-    if "memory" in sources:
-        context["results"]["memory"] = search_memory(question, limit=8)
-
-    if context.get("people") or context.get("tickets"):
-        graph_terms = context.get("people") or context.get("tickets")
-        context["results"]["knowledge_graph"] = {
-            term: graph_lookup(term, limit=10)
-            for term in graph_terms
-        }
-
-    if any(s in sources for s in ["work", "people", "gcu", "knowledge", "reports", "files"]):
-        context["results"]["indexes"] = search_typed_indexes(question)
-
-    if "conversation_summaries" in sources:
-        context["results"]["conversation_summaries"] = _load_conversations().get("conversations", [])[-8:]
-
-    return context
-
-
-def _source_trust(source: str) -> int:
-    trust = {
-        "files": 95,
-        "indexes": 85,
-        "work": 85,
-        "people": 80,
-        "gmail": 80,
-        "calendar": 80,
-        "memory": 70,
-        "conversation_summaries": 55,
-        "knowledge_graph": 65,
-        "reports": 65,
-        "chat": 45,
-    }
-    return trust.get(source, 50)
-
-
-def _rank_context(context: dict) -> list[str]:
-    lines = []
-    results = context.get("results", {})
-
-    for source, matches in sorted(results.items(), key=lambda item: _source_trust(item[0]), reverse=True):
-        trust = _source_trust(source)
-        lines.append(f"\n## Source: {source} (trust {trust}/100)")
-
-        if isinstance(matches, list):
-            for m in matches[:5]:
-                if isinstance(m, dict):
-                    lines.append(json.dumps(m, indent=2)[:2500])
-                else:
-                    lines.append(str(m)[:2500])
-        elif isinstance(matches, dict):
-            lines.append(json.dumps(matches, indent=2)[:5000])
-        else:
-            lines.append(str(matches)[:2500])
-
-    return lines
-
-
 def _sensitive_file_lookup(question: str) -> dict | None:
     q = question.lower()
 
@@ -243,25 +171,6 @@ def _sensitive_file_lookup(question: str) -> dict | None:
     }
 
 
-def _confidence_from_context(context: dict, intent: str) -> int:
-    results = context.get("results", {})
-    score = 25
-
-    if results.get("knowledge_graph"):
-        score += 20
-    if results.get("indexes"):
-        score += 25
-    if results.get("memory"):
-        score += 10
-    if results.get("conversation_summaries"):
-        score += 5
-
-    if intent in {"sensitive_file", "weather"}:
-        score = 95
-
-    return min(score, 95)
-
-
 def _append_confidence(answer: str, confidence: int) -> str:
     if confidence >= 90:
         label = "high"
@@ -273,11 +182,100 @@ def _append_confidence(answer: str, confidence: int) -> str:
     return f"{answer}\n\n*Confidence: {label} ({confidence}%)*"
 
 
+def _bundle_list(bundle: Any, name: str) -> list[dict]:
+    if bundle is None:
+        return []
+    value = getattr(bundle, name, None)
+    if value is None and isinstance(bundle, dict):
+        value = bundle.get(name)
+    return list(value) if isinstance(value, list) else []
+
+
+def _bundle_rules(bundle: Any) -> list[str]:
+    if bundle is None:
+        return []
+    value = getattr(bundle, "rules", None)
+    if value is None and isinstance(bundle, dict):
+        value = bundle.get("rules")
+    return [str(rule) for rule in value] if isinstance(value, list) else []
+
+
+def _render_retrieval_context(bundle: Any) -> str:
+    lines: list[str] = ["# Retrieval Context"]
+    primary = _bundle_list(bundle, "primary_context")
+    secondary = _bundle_list(bundle, "secondary_context")
+
+    lines.extend(["", "## Primary — JamesOS Knowledge Graph"])
+    if primary:
+        for item in primary:
+            lines.extend(
+                [
+                    "",
+                    f"### {item.get('title', 'Untitled')}",
+                    str(item.get("content") or "")[:4500],
+                ]
+            )
+    else:
+        lines.extend(["", "No Knowledge Graph pages were retrieved."])
+
+    lines.extend(["", "## Secondary — Evidence"])
+    if secondary:
+        for item in secondary:
+            content = item.get("content") or item.get("snippet") or ""
+            lines.extend(
+                [
+                    "",
+                    f"### {item.get('title', 'Local evidence')} ({item.get('source_type', 'evidence')})",
+                    str(content)[:1800],
+                ]
+            )
+            facts = item.get("key_facts") or []
+            if facts:
+                lines.extend(f"- {fact}" for fact in facts[:5])
+    else:
+        lines.extend(["", "No secondary Evidence was retrieved."])
+    return "\n".join(lines)
+
+
+def build_jade_prompt(
+    question: str,
+    intent: str,
+    retrieval_bundle: Any,
+    mode: str = "personal",
+) -> str:
+    hard_rules = [
+        "Knowledge Graph is authoritative for local named people. Do not infer family relationships from last names.",
+        "Do not use public or world knowledge for named local people unless the user explicitly asks.",
+        "Never include blocked context.",
+        "Do not invent missing facts. If local context is insufficient, say “I don’t have enough local memory”.",
+    ]
+    rules = list(dict.fromkeys([*hard_rules, *_bundle_rules(retrieval_bundle)]))
+    rules_text = "\n".join(f"- {rule}" for rule in rules)
+    retrieval_text = _render_retrieval_context(retrieval_bundle)
+    return (
+        f"{jade_personality_prompt()}\n\n"
+        f"{identity_context()}\n\n"
+        "# Answering Rules\n"
+        f"{rules_text}\n\n"
+        f"{retrieval_text}\n\n"
+        "# Response Task\n"
+        "Answer James directly and concisely from the supplied Retrieval Context. "
+        "Use Primary context first and Secondary Evidence only to clarify or support it. "
+        "Do not describe retrieval internals, JSON, graph nodes, or file paths.\n"
+        f"Mode: {mode}\n"
+        f"Intent: {intent}\n"
+        f"Question: {question}"
+    )
+
+
 def answer_with_brain(
     question: str,
     use_ai: bool = True,
     allow_tools: bool = True,
     intent_override: str | None = None,
+    retrieval_bundle: Any = None,
+    confidence_override: int | None = None,
+    mode: str = "personal",
 ) -> dict:
     intent = intent_override or detect_intent(question)
 
@@ -320,49 +318,35 @@ def answer_with_brain(
             "tool_result": routed,
         }
 
-    sources = plan_sources(intent)
-    context = gather_context(question, intent, sources)
-    ranked_context = "\n".join(_rank_context(context))
-
-    confidence = _confidence_from_context(context, intent)
+    primary_context = _bundle_list(retrieval_bundle, "primary_context")
+    secondary_context = _bundle_list(retrieval_bundle, "secondary_context")
+    confidence = confidence_override if confidence_override is not None else (
+        85 if primary_context else 60 if secondary_context else 25
+    )
+    prompt = build_jade_prompt(
+        question=question,
+        intent=intent,
+        retrieval_bundle=retrieval_bundle,
+        mode=mode,
+    )
 
     if use_ai and ollama_enabled():
-        prompt = (
-            jade_personality_prompt()
-            + "\n\n"
-            + identity_context()
-            + "\n\nYou are answering as Jade. "
-            + "Do not invent people, jobs, meetings, emails, dates, or details. "
-            + "Use only facts present in high-trust source context. "
-            + LOCAL_PERSON_MEMORY_RULE
-            + " If local memory is missing, say “I don’t have enough local memory” rather than guessing. "
-            + "Do not use prior Jade answers as facts unless a higher-trust source confirms them. "
-            + "If the context is weak, unrelated, or low-trust, say that plainly. "
-            + "Do not dump raw fields unless they matter. "
-            + "Synthesize the answer like a sharp personal assistant. "
-            + "Use short sections or bullets when helpful. "
-            + "Do not moralize or lecture James about accessing his own local files. "
-            + "For sensitive local documents, be discreet and factual. "
-            + "Do not end with generic filler.\n\n"
-            + f"Question: {question}\n"
-            + f"Intent: {intent}\n"
-            + f"Planned sources: {sources}\n\n"
-            + f"Context:\n{ranked_context[:16000]}"
-        )
         answer = ask_ollama(prompt)
     else:
-        answer = ranked_context[:6000]
+        answer = _render_retrieval_context(retrieval_bundle)[:6000]
 
     return {
         "question": question,
         "answer": _append_confidence(answer, confidence),
         "action": "brain",
         "intent": intent,
-        "planner": sources,
+        "planner": [
+            *(["knowledge_graph"] if primary_context else []),
+            *(["evidence"] if secondary_context else []),
+        ],
         "context_summary": {
-            "people": context.get("people", []),
-            "tickets": context.get("tickets", []),
-            "sources": sources,
+            "primary_count": len(primary_context),
+            "secondary_count": len(secondary_context),
         },
         "confidence": confidence,
     }
