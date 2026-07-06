@@ -8,14 +8,14 @@ from jamesos.services.knowledge_graph_service import build_knowledge_graph
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Compatibility wrapper for the JamesOS Knowledge Graph builder."
+        description="Build synthesized JamesOS Knowledge Graph wiki pages."
     )
     parser.add_argument(
         "limit",
         nargs="?",
         type=int,
         default=6,
-        help="Maximum source mentions per entity (default: 6)",
+        help="Maximum evidence links per entity (default: 6)",
     )
     parser.add_argument(
         "--people-threshold",
@@ -29,17 +29,18 @@ def main(argv: list[str] | None = None) -> int:
         help="Generate People pages for all raw email contacts",
     )
     args = parser.parse_args(argv)
-    print("Building Knowledge Graph (memory-v2 compatibility command)...")
-    res = build_knowledge_graph(
+
+    print("Building Knowledge Graph...")
+    result = build_knowledge_graph(
         limit_per_entity=args.limit,
         people_threshold=args.people_threshold,
         include_all_contacts=args.include_all_contacts,
     )
-    built_counts = {name: len(paths) for name, paths in res["built"].items()}
+    counts = {name: len(paths) for name, paths in result["built"].items()}
     print("Done.")
-    print("Built:", built_counts)
-    print("People:", res["people"])
-    print("Report:", res["report"])
+    print("Built:", counts)
+    print("People:", result["people"])
+    print("Report:", result["report"])
     return 0
 
 

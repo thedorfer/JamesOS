@@ -59,7 +59,7 @@ def test_import_eml_uses_sent_date_and_extracts_entities(tmp_path: Path, monkeyp
     monkeypatch.setattr(memory_v2, "TIMELINE_DIR", timeline)
     catalog = memory_v2._email_catalog()
     assert catalog[0]["people"] == ["James Example", "Kevin Example", "Malcolm Example"]
-    assert catalog[0]["projects"] == ["CGI/WGL"]
+    assert catalog[0]["projects"] == ["CGI/WGL", "Paving"]
     assert catalog[0]["tickets"] == ["88858"]
     memory_v2._build_email_timeline(catalog)
     assert (timeline / "2025-01-14.md").exists()

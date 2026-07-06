@@ -18,8 +18,9 @@ CONVERSATIONS_FILE = BRAIN_ROOT / "conversation_summaries.json"
 FILES_ROOT = VAULT / "JamesOS" / "Knowledge" / "Files"
 PAVING_TICKETS = ("88858", "88637", "87229")
 LOCAL_PERSON_MEMORY_RULE = (
-    "Use only JamesOS memory for named people unless the user explicitly asks "
-    "for public/world knowledge."
+    "Use JamesOS Knowledge Graph first. Do not use public/world knowledge for "
+    "named people unless explicitly asked. Use only JamesOS memory for named "
+    "people unless the user explicitly asks for public/world knowledge."
 )
 _QUESTION_WORDS = {
     "What",

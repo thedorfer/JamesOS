@@ -86,6 +86,7 @@ def test_memory_pages_are_inserted_into_prompt_and_tools_are_disabled(monkeypatc
     JadeReasoner().answer(plan)
 
     assert "Malcolm helped test paving ticket 88858." in captured["question"]
+    assert "Use JamesOS Knowledge Graph first." in captured["question"]
     assert "Use only JamesOS memory for named people" in captured["question"]
     assert captured["allow_tools"] is False
     assert captured["intent_override"] == "person"

@@ -16,7 +16,7 @@ from jamesos.services.unified_memory_search import (
     history_context as unified_history_context,
     memory_answer_context,
 )
-from jamesos.services.memory_v2 import load_entity_page
+from jamesos.services.knowledge_graph_service import load_entity_page
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -140,7 +140,7 @@ class JadeReasoner:
                             {
                                 "title": p,
                                 "content": r.get("content"),
-                                "source_type": "memory_v2",
+                                "source_type": "knowledge_graph",
                             }
                         )
                         break
@@ -150,7 +150,7 @@ class JadeReasoner:
             try:
                 r = load_entity_page("projects", pr)
                 if r.get("status") == "ok":
-                    results_block.append({"title": pr, "content": r.get("content"), "source_type": "memory_v2"})
+                    results_block.append({"title": pr, "content": r.get("content"), "source_type": "knowledge_graph"})
             except Exception:
                 pass
         if "paving" in question.lower():
@@ -160,12 +160,14 @@ class JadeReasoner:
             try:
                 r = load_entity_page("tickets", t)
                 if r.get("status") == "ok":
-                    results_block.append({"title": t, "content": r.get("content"), "source_type": "memory_v2"})
+                    results_block.append({"title": t, "content": r.get("content"), "source_type": "knowledge_graph"})
             except Exception:
                 pass
 
         # If we have memory v2 sources, attach as primary memory context; otherwise fall back to unified history
         if results_block:
+            context.setdefault("results", {})["knowledge_graph"] = results_block
+            # Compatibility key for older clients and diagnostics.
             context.setdefault("results", {})["memory_v2"] = results_block
             context["local_memory_available"] = True
         else:
@@ -245,11 +247,14 @@ class JadeReasoner:
 
         memory_block = ""
         # prefer MemoryV2 structured pages if available
-        mem_v2 = plan.evidence.get("results", {}).get("memory_v2")
-        if mem_v2:
-            parts: list[str] = ["# MemoryV2 Retrieved Pages"]
-            for s in mem_v2:
-                parts.append(f"## {s.get('title', '')} (memory_v2)")
+        knowledge_pages = (
+            plan.evidence.get("results", {}).get("knowledge_graph")
+            or plan.evidence.get("results", {}).get("memory_v2")
+        )
+        if knowledge_pages:
+            parts: list[str] = ["# JamesOS Knowledge Graph Pages"]
+            for s in knowledge_pages:
+                parts.append(f"## {s.get('title', '')} (knowledge_graph)")
                 parts.append("")
                 parts.append(str(s.get("content", ""))[:3000])
                 parts.append("")
@@ -258,7 +263,8 @@ class JadeReasoner:
                 f"{memory_block}\n\n"
                 "# Response Task\n"
                 f"{LOCAL_PERSON_MEMORY_RULE} "
-                "Use the retrieved local pages before any other knowledge. "
+                "Use the retrieved Knowledge Graph pages before any other knowledge. "
+                "Drill into Evidence only when the Knowledge Graph does not answer the question. "
                 "Do not identify a named person as a public figure or guess their identity. "
                 "If the pages do not support an answer, say “I don’t have enough local memory.” "
                 "Answer James directly with specific facts and clearly separate confirmed facts from missing details.\n"

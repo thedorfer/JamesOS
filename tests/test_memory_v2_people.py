@@ -1,7 +1,13 @@
 import json
 
 from jamesos.services import memory_v2
-from jamesos.services.memory_v2 import _normalize_person, _promoted_people
+from jamesos.services.memory_v2 import (
+    KNOWLEDGE_GRAPH_ROOT,
+    _build_person_page,
+    _build_project_page,
+    _normalize_person,
+    _promoted_people,
+)
 
 
 def test_promoted_people_respects_known_threshold_and_manual_context() -> None:
@@ -76,3 +82,37 @@ def test_health_reports_people_promotion_counts(tmp_path, monkeypatch) -> None:
 
 def test_person_normalization_removes_wrapping_quotes() -> None:
     assert _normalize_person("'Volkoff, Eugene'") == "Volkoff, Eugene"
+
+
+def test_knowledge_graph_uses_new_root() -> None:
+    assert KNOWLEDGE_GRAPH_ROOT.name == "KnowledgeGraph"
+
+
+def test_malcolm_and_paving_pages_are_synthesized_without_todos() -> None:
+    sources = [
+        {
+            "title": "FD for the Paving Order Creation",
+            "source_type": "outlook_email",
+            "path": "/evidence/paving.md",
+            "snippet": "Malcolm Wrench sent the Functional Definition for Paving Order Creation.",
+            "date_sent": "2026-02-10T21:46:58+00:00",
+            "people": ["Malcolm Wrench", "Ian Wilkinson", "Kevin Bates"],
+            "projects": ["Paving"],
+            "tickets": ["88858"],
+            "terms": ["WGL", "CGI"],
+        }
+    ]
+
+    person = _build_person_page("Malcolm Wrench", sources)
+    project = _build_project_page("Paving", sources)
+
+    assert "Director, Consulting Expert" in person
+    assert "Functional Definition for Paving Order Creation" in person
+    assert "Ian Wilkinson" in person
+    assert "Kevin Bates" in person
+    assert "## Evidence Summary" in person
+    assert "## Source Links" in person
+    assert "TODO" not in person
+    assert "Malcolm Wrench" in project
+    assert "88858" in project
+    assert "TODO" not in project
