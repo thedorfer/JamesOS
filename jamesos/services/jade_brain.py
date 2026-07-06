@@ -272,6 +272,8 @@ def answer_with_brain(question: str, use_ai: bool = True, allow_tools: bool = Tr
     if use_ai and ollama_enabled():
         prompt = (
             jade_personality_prompt()
+            + "\n\n"
+            + identity_context()
             + "\n\nYou are answering as Jade. "
             + "Do not invent people, jobs, meetings, emails, dates, or details. "
             + "Use only facts present in high-trust source context. "

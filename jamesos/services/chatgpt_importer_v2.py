@@ -11,6 +11,7 @@ from typing import Any
 
 from jamesos.config import VAULT
 from jamesos.core.queue import enqueue_job
+from jamesos.services.chatgpt_search_v2 import index_message, write_message_markdown
 
 ARCHIVE_ROOT = VAULT / "Archive" / "ChatGPT" / "Exports"
 BRAIN_ROOT = VAULT / "JamesOS" / "Brain" / "Conversations" / "ChatGPT"
@@ -287,6 +288,31 @@ def import_chatgpt_export(zip_path: str | Path, limit: int | None = None) -> dic
         json_path = out_dir / f"{base}.json"
         md_path.write_text(_md(conv, rows, projects, created), encoding="utf-8")
         _write_json(json_path, {"id": conv_id, "title": title, "created_at": created.isoformat(timespec="seconds"), "projects": projects, "message_count": len(rows), "markdown_path": str(md_path), "candidate_memories": memories, "candidate_decisions": decisions})
+
+        message_dir = out_dir / "messages"
+        for idx, row in enumerate(rows, start=1):
+            external_id = str(row.get("external_id") or f"{conv_id}-{idx}")
+            message_path = message_dir / f"{base}-msg-{idx:04d}.md"
+            write_message_markdown(conv_id, title, {
+                "external_id": external_id,
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "model": row.get("model"),
+                "parent": row.get("parent"),
+                "text": row.get("text"),
+            }, message_path)
+            index_message({
+                "external_id": external_id,
+                "conversation_id": conv_id,
+                "title": title,
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "model": row.get("model"),
+                "parent": row.get("parent"),
+                "text": row.get("text"),
+                "path": str(message_path),
+            })
+
         _append_jsonl(index_path, {"id": conv_id, "title": title, "created_at": created.isoformat(timespec="seconds"), "projects": projects, "message_count": len(rows), "path": str(md_path), "snippet": full_text[:1000]})
         _write_candidates(MEMORY_ROOT, conv_id, title, memories, "Memories")
         _write_candidates(DECISION_ROOT, conv_id, title, decisions, "Decisions")

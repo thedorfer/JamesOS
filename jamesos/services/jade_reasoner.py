@@ -8,8 +8,9 @@ from jamesos.services.jade_brain import (
     answer_with_brain,
 )
 from jamesos.services.knowledge_graph import graph_lookup
+from jamesos.services.identity_profile import identity_context
 from jamesos.services.memory_service import remember
-from jamesos.services.chatgpt_history_search import chatgpt_history_context
+from jamesos.services.chatgpt_search_v2 import history_context as chatgpt_history_context
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -184,6 +185,7 @@ class JadeReasoner:
         question_for_brain = plan.question
         allow_tools = True
         history_context = plan.evidence.get("results", {}).get("chatgpt_history", "")
+        identity_block = identity_context()
         history_request = self._is_chatgpt_history_request(plan.question)
 
         if history_context or history_request or plan.mode == "memory":
@@ -210,6 +212,9 @@ class JadeReasoner:
             allow_tools = False
 
         result = answer_with_brain(question_for_brain, use_ai=use_ai, allow_tools=allow_tools)
+
+        if use_ai and history_context:
+            pass
         result["question"] = plan.question
         result["mode"] = plan.mode
         result["mode_label"] = mode_label(plan.mode)

@@ -11,6 +11,7 @@ from typing import Any
 
 from jamesos.config import VAULT
 from jamesos.core.queue import enqueue_job
+from jamesos.services.chatgpt_search_v2 import index_message, write_message_markdown
 
 IMPORT_ROOT = VAULT / "JamesOS" / "Imports" / "ChatGPT"
 ARCHIVE_ROOT = VAULT / "Archive" / "ChatGPT" / "Exports"
@@ -264,6 +265,30 @@ def import_chatgpt_export(zip_path: str | Path, limit: int | None = None) -> dic
             "candidate_memories": memories,
             "candidate_decisions": decisions,
         })
+
+        message_dir = out_dir / "messages"
+        for idx, row in enumerate(rows, start=1):
+            external_id = str(row.get("node_id") or f"{conv_id}-{idx}")
+            message_path = message_dir / f"{base}-msg-{idx:04d}.md"
+            write_message_markdown(conv_id, title, {
+                "external_id": external_id,
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "model": None,
+                "parent": None,
+                "text": row.get("text"),
+            }, message_path)
+            index_message({
+                "external_id": external_id,
+                "conversation_id": conv_id,
+                "title": title,
+                "role": row.get("role"),
+                "created_at": row.get("created_at"),
+                "model": None,
+                "parent": None,
+                "text": row.get("text"),
+                "path": str(message_path),
+            })
 
         _append_jsonl(index_path, {
             "id": conv_id,
