@@ -10,7 +10,7 @@ from jamesos.services.jade_brain import (
 from jamesos.services.knowledge_graph import graph_lookup
 from jamesos.services.identity_profile import identity_context
 from jamesos.services.memory_service import remember
-from jamesos.services.chatgpt_search_v2 import history_context as chatgpt_history_context
+from jamesos.services.unified_memory_search import history_context as unified_history_context
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -122,7 +122,7 @@ def _score_context(context: dict, intent: str, mode: str) -> int:
         score += 10
     if results.get("conversation_summaries"):
         score += 5
-    if results.get("chatgpt_history"):
+    if results.get("chatgpt_history") or results.get("memory"):
         score += 25
     if mode != "personal":
         score += 5
@@ -139,9 +139,9 @@ class JadeReasoner:
         sources = plan_sources(intent)
 
         context = gather_context(question, intent, sources)
-        history_context = chatgpt_history_context(question, limit=6)
-        if "No matching imported ChatGPT history found." not in history_context:
-            context.setdefault("results", {})["chatgpt_history"] = history_context
+        history_ctx = unified_history_context(question, limit=6)
+        if "No matching memory found." not in history_ctx:
+            context.setdefault("results", {})["memory"] = history_ctx
 
         entities = {
             "people": context.get("people", []),
@@ -152,7 +152,7 @@ class JadeReasoner:
             question=question,
             intent=intent,
             entities=entities,
-            sources=sources + ["chatgpt_history"],
+            sources=sources + ["memory"],
             mode=mode,
             confidence=_score_context(context, intent, mode),
             evidence=context,
@@ -184,7 +184,7 @@ class JadeReasoner:
     def answer(self, plan: ReasoningPlan, use_ai: bool = True) -> dict:
         question_for_brain = plan.question
         allow_tools = True
-        history_context = plan.evidence.get("results", {}).get("chatgpt_history", "")
+        history_context = plan.evidence.get("results", {}).get("memory", "")
         identity_block = identity_context()
         history_request = self._is_chatgpt_history_request(plan.question)
 
