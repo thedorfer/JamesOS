@@ -6,6 +6,7 @@ from jamesos.services.unified_memory_search import (
     search_unified,
     memory_health,
 )
+from jamesos.services.memory_v2 import build_memory_v2, load_entity_page, health as memory_v2_health
 
 router = APIRouter()
 
@@ -26,3 +27,21 @@ def memory_context(q: str, limit: int = 8, x_jamesos_key: str | None = Header(de
 def memory_health_report(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return memory_health()
+
+
+@router.get("/memory-v2/health")
+def memory_v2_health_report(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return memory_v2_health()
+
+
+@router.post("/memory-v2/build")
+def memory_v2_build(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return build_memory_v2()
+
+
+@router.get("/memory-v2/entity")
+def memory_v2_entity(type: str, name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return load_entity_page(type, name)

@@ -14,6 +14,7 @@ from jamesos.services.unified_memory_search import (
     history_context as unified_history_context,
     memory_answer_context,
 )
+from jamesos.services.memory_v2 import load_entity_page
 from jamesos.services.jade_context_packages import (
     build_context_package,
     mode_label,
@@ -111,9 +112,40 @@ class JadeReasoner:
         sources = plan_sources(intent)
 
         context = gather_context(question, intent, sources)
-        history_ctx = unified_history_context(question, limit=6)
-        if "No matching memory found." not in history_ctx:
-            context.setdefault("results", {})["memory"] = history_ctx
+        # Try loading Memory V2 pages for detected entities first
+        results_block = []
+        people = context.get("people", []) or []
+        tickets = context.get("tickets", []) or []
+        projects = context.get("projects", []) or []
+        for p in people:
+            try:
+                r = load_entity_page("people", p)
+                if r.get("status") == "ok":
+                    results_block.append({"title": p, "content": r.get("content"), "source_type": "memory_v2"})
+            except Exception:
+                pass
+        for t in tickets:
+            try:
+                r = load_entity_page("tickets", t)
+                if r.get("status") == "ok":
+                    results_block.append({"title": t, "content": r.get("content"), "source_type": "memory_v2"})
+            except Exception:
+                pass
+        for pr in projects:
+            try:
+                r = load_entity_page("projects", pr)
+                if r.get("status") == "ok":
+                    results_block.append({"title": pr, "content": r.get("content"), "source_type": "memory_v2"})
+            except Exception:
+                pass
+
+        # If we have memory v2 sources, attach as primary memory context; otherwise fall back to unified history
+        if results_block:
+            context.setdefault("results", {})["memory_v2"] = results_block
+        else:
+            history_ctx = unified_history_context(question, limit=6)
+            if "No matching memory found." not in history_ctx:
+                context.setdefault("results", {})["memory"] = history_ctx
 
         entities = {
             "people": context.get("people", []),
@@ -164,7 +196,17 @@ class JadeReasoner:
             allow_tools = False
 
         memory_block = ""
-        if history_context:
+        # prefer MemoryV2 structured pages if available
+        mem_v2 = plan.evidence.get("results", {}).get("memory_v2")
+        if mem_v2:
+            parts: list[str] = ["# MemoryV2 Retrieved Pages"]
+            for s in mem_v2:
+                parts.append(f"## {s.get('title', '')} (memory_v2)")
+                parts.append("")
+                parts.append(str(s.get("content", ""))[:3000])
+                parts.append("")
+            memory_block = "\n".join(parts)
+        elif history_context:
             # structured memory facts to include in prompt
             try:
                 mem = memory_answer_context(plan.question, limit=6)
