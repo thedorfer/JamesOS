@@ -16,6 +16,26 @@ from jamesos.services.identity_profile import identity_context
 BRAIN_ROOT = VAULT / "JamesOS" / "Brain"
 CONVERSATIONS_FILE = BRAIN_ROOT / "conversation_summaries.json"
 FILES_ROOT = VAULT / "JamesOS" / "Knowledge" / "Files"
+PAVING_TICKETS = ("88858", "88637", "87229")
+LOCAL_PERSON_MEMORY_RULE = (
+    "Use only JamesOS memory for named people unless the user explicitly asks "
+    "for public/world knowledge."
+)
+_QUESTION_WORDS = {
+    "What",
+    "Who",
+    "Where",
+    "When",
+    "Why",
+    "How",
+    "Do",
+    "Does",
+    "Did",
+    "Tell",
+    "Please",
+    "My",
+    "From",
+}
 
 
 def _load_conversations() -> dict:
@@ -71,13 +91,43 @@ def plan_sources(intent: str) -> list[str]:
     return plans.get(intent, plans["general"])
 
 
+def detect_query_entities(question: str) -> dict[str, list[str]]:
+    lower = question.lower()
+    people = {
+        name
+        for name in re.findall(r"\b[A-Z][a-z]+\b", question)
+        if name not in _QUESTION_WORDS
+    }
+    if re.search(r"\bmalcolm\b", lower):
+        people.discard("Malcolm")
+        if re.search(r"\bmalcolm\s+wrench\b", lower):
+            people.discard("Wrench")
+        people.add("Malcolm Wrench")
+
+    projects: set[str] = set()
+    if re.search(r"\bpaving\b", lower):
+        projects.add("Paving")
+
+    tickets = set(re.findall(r"\b\d{5}\b", question))
+    if "Paving" in projects:
+        tickets.update(PAVING_TICKETS)
+
+    return {
+        "people": sorted(people),
+        "projects": sorted(projects),
+        "tickets": sorted(tickets),
+    }
+
+
 def gather_context(question: str, intent: str, sources: list[str]) -> dict:
+    entities = detect_query_entities(question)
     context = {
         "question": question,
         "intent": intent,
         "sources": sources,
-        "people": sorted(set(re.findall(r"\b[A-Z][a-z]+\b", question))),
-        "tickets": sorted(set(re.findall(r"\b\d{5}\b", question))),
+        "people": entities["people"],
+        "projects": entities["projects"],
+        "tickets": entities["tickets"],
         "results": {},
     }
 
@@ -222,8 +272,13 @@ def _append_confidence(answer: str, confidence: int) -> str:
     return f"{answer}\n\n*Confidence: {label} ({confidence}%)*"
 
 
-def answer_with_brain(question: str, use_ai: bool = True, allow_tools: bool = True) -> dict:
-    intent = detect_intent(question)
+def answer_with_brain(
+    question: str,
+    use_ai: bool = True,
+    allow_tools: bool = True,
+    intent_override: str | None = None,
+) -> dict:
+    intent = intent_override or detect_intent(question)
 
     if intent in {"remember", "note"}:
         from jamesos.services.agent import handle_jade_message
@@ -278,6 +333,8 @@ def answer_with_brain(question: str, use_ai: bool = True, allow_tools: bool = Tr
             + "\n\nYou are answering as Jade. "
             + "Do not invent people, jobs, meetings, emails, dates, or details. "
             + "Use only facts present in high-trust source context. "
+            + LOCAL_PERSON_MEMORY_RULE
+            + " If local memory is missing, say “I don’t have enough local memory” rather than guessing. "
             + "Do not use prior Jade answers as facts unless a higher-trust source confirms them. "
             + "If the context is weak, unrelated, or low-trust, say that plainly. "
             + "Do not dump raw fields unless they matter. "

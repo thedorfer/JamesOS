@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jamesos.services.jade_brain import (
+    LOCAL_PERSON_MEMORY_RULE,
+    PAVING_TICKETS,
     detect_intent,
     plan_sources,
     gather_context,
@@ -117,18 +119,31 @@ class JadeReasoner:
         people = context.get("people", []) or []
         tickets = context.get("tickets", []) or []
         projects = context.get("projects", []) or []
-        for p in people:
+        people_to_load = list(people)
+        if "malcolm" in question.lower():
+            people_to_load = ["Malcolm", "Malcolm Wrench"] + people_to_load
+        people_to_load = list(dict.fromkeys(people_to_load))
+        person_page_aliases = {
+            "Malcolm Wrench": [
+                "Malcolm Wrench",
+                "Wrench, Malcolm R",
+                "Wrench, Malcolm",
+                "Wrench Malcolm (cgi)",
+            ],
+        }
+        for p in people_to_load:
             try:
-                r = load_entity_page("people", p)
-                if r.get("status") == "ok":
-                    results_block.append({"title": p, "content": r.get("content"), "source_type": "memory_v2"})
-            except Exception:
-                pass
-        for t in tickets:
-            try:
-                r = load_entity_page("tickets", t)
-                if r.get("status") == "ok":
-                    results_block.append({"title": t, "content": r.get("content"), "source_type": "memory_v2"})
+                for page_name in person_page_aliases.get(p, [p]):
+                    r = load_entity_page("people", page_name)
+                    if r.get("status") == "ok":
+                        results_block.append(
+                            {
+                                "title": p,
+                                "content": r.get("content"),
+                                "source_type": "memory_v2",
+                            }
+                        )
+                        break
             except Exception:
                 pass
         for pr in projects:
@@ -138,18 +153,33 @@ class JadeReasoner:
                     results_block.append({"title": pr, "content": r.get("content"), "source_type": "memory_v2"})
             except Exception:
                 pass
+        if "paving" in question.lower():
+            tickets = list(dict.fromkeys([*PAVING_TICKETS, *tickets]))
+            context["tickets"] = tickets
+        for t in tickets:
+            try:
+                r = load_entity_page("tickets", t)
+                if r.get("status") == "ok":
+                    results_block.append({"title": t, "content": r.get("content"), "source_type": "memory_v2"})
+            except Exception:
+                pass
 
         # If we have memory v2 sources, attach as primary memory context; otherwise fall back to unified history
         if results_block:
             context.setdefault("results", {})["memory_v2"] = results_block
+            context["local_memory_available"] = True
         else:
             history_ctx = unified_history_context(question, limit=6)
             if "No matching memory found." not in history_ctx:
                 context.setdefault("results", {})["memory"] = history_ctx
+                context["local_memory_available"] = True
+            else:
+                context["local_memory_available"] = False
 
         entities = {
             "people": context.get("people", []),
             "tickets": context.get("tickets", []),
+            "projects": context.get("projects", []),
         }
 
         return ReasoningPlan(
@@ -174,6 +204,21 @@ class JadeReasoner:
             ]
         )
 
+    def _explicit_world_knowledge_request(self, question: str) -> bool:
+        q = question.lower()
+        return any(
+            phrase in q
+            for phrase in [
+                "public knowledge",
+                "world knowledge",
+                "general knowledge",
+                "search the web",
+                "search web",
+                "look online",
+                "public figure",
+            ]
+        )
+
     def collect_graph(self, plan: ReasoningPlan) -> None:
         graph = {}
         for person in plan.entities.get("people", []):
@@ -191,8 +236,11 @@ class JadeReasoner:
         history_context = plan.evidence.get("results", {}).get("memory", "")
         identity_block = identity_context()
         history_request = self._is_chatgpt_history_request(plan.question)
+        local_memory_question = (
+            plan.intent in {"person", "work"} or plan.mode == "memory"
+        ) and not self._explicit_world_knowledge_request(plan.question)
 
-        if history_context or history_request or plan.mode == "memory":
+        if history_context or history_request or plan.mode == "memory" or local_memory_question:
             allow_tools = False
 
         memory_block = ""
@@ -206,6 +254,16 @@ class JadeReasoner:
                 parts.append(str(s.get("content", ""))[:3000])
                 parts.append("")
             memory_block = "\n".join(parts)
+            question_for_brain = (
+                f"{memory_block}\n\n"
+                "# Response Task\n"
+                f"{LOCAL_PERSON_MEMORY_RULE} "
+                "Use the retrieved local pages before any other knowledge. "
+                "Do not identify a named person as a public figure or guess their identity. "
+                "If the pages do not support an answer, say “I don’t have enough local memory.” "
+                "Answer James directly with specific facts and clearly separate confirmed facts from missing details.\n"
+                f"Question: {plan.question}"
+            )
         elif history_context:
             # structured memory facts to include in prompt
             try:
@@ -240,14 +298,29 @@ class JadeReasoner:
             context_package = build_context_package(plan.question, plan.mode)
             question_for_brain = (
                 f"{context_package}\n\n"
-                f"{history_context}\n\n"
+                f"{memory_block or history_context}\n\n"
                 "# Response Task\n"
+                f"{LOCAL_PERSON_MEMORY_RULE} "
                 "Answer James's question directly. Do not describe the raw context package, JSON, nodes, edges, paths, or graph implementation.\n"
                 f"Question: {plan.question}"
             )
             allow_tools = False
 
-        result = answer_with_brain(question_for_brain, use_ai=use_ai, allow_tools=allow_tools)
+        if local_memory_question and not plan.evidence.get("local_memory_available", False):
+            result = {
+                "answer": "I don’t have enough local memory.",
+                "action": "local_memory_missing",
+                "intent": plan.intent,
+                "planner": ["memory"],
+                "confidence": 25,
+            }
+        else:
+            result = answer_with_brain(
+                question_for_brain,
+                use_ai=use_ai,
+                allow_tools=allow_tools,
+                intent_override=plan.intent,
+            )
 
         if use_ai and history_context:
             pass
