@@ -10,6 +10,7 @@ from jamesos.services.tool_router import detect_tool, route_tool
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.personality import jade_personality_prompt
 from jamesos.services.knowledge_graph import graph_lookup
+from jamesos.services.identity_profile import identity_context
 
 
 BRAIN_ROOT = VAULT / "JamesOS" / "Brain"
