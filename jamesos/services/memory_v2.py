@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jamesos.config import VAULT
+from jamesos.config import NOTES_VAULT, VAULT
 from .unified_memory_search import search_unified, memory_answer_context
 
 
@@ -19,6 +20,9 @@ TOPICS_DIR = MEMORY_V2_ROOT / "Topics"
 INDEX_DIR = MEMORY_V2_ROOT / "Index"
 TIMELINE_DIR = VAULT / "JamesOS" / "Timeline" / "Email" / "Outlook"
 EMAIL_ROOT = VAULT / "JamesOS" / "Brain" / "Email" / "Outlook"
+CONTACTS_INDEX_PATH = INDEX_DIR / "contacts_index.jsonl"
+PEOPLE_STATS_PATH = INDEX_DIR / "people_stats.json"
+DEFAULT_PEOPLE_THRESHOLD = 5
 
 
 _KNOWN_PEOPLE = [
@@ -118,6 +122,10 @@ def _json_metadata(text: str, label: str) -> list[str]:
     return [str(value) for value in values if str(value).strip()]
 
 
+def _normalize_person(name: str) -> str:
+    return name.strip().strip("'\"").strip()
+
+
 def _email_catalog() -> list[dict[str, Any]]:
     sources: list[dict[str, Any]] = []
     if not EMAIL_ROOT.exists():
@@ -140,12 +148,101 @@ def _email_catalog() -> list[dict[str, Any]]:
             "key_facts": [],
             "date_sent": date_match.group(1).strip() if date_match else "",
             "from": from_match.group(1).strip() if from_match else "",
-            "people": _json_metadata(text, "People"),
+            "people": list(
+                dict.fromkeys(
+                    normalized
+                    for value in _json_metadata(text, "People")
+                    if (normalized := _normalize_person(value))
+                )
+            ),
+            "email_addresses": _json_metadata(text, "Email addresses"),
             "projects": _json_metadata(text, "Projects"),
             "tickets": _json_metadata(text, "Tickets"),
         }
         sources.append(source)
     return sources
+
+
+def _promotion_context_text() -> str:
+    files = [VAULT / "JamesOS" / "Memory" / "Notes" / "work_contacts.md"]
+    roots = [
+        VAULT / "JamesOS" / "Reports" / "Context",
+        VAULT / "JamesOS" / "Knowledge" / "Projects",
+        NOTES_VAULT / "Work" / "Active Tickets",
+        NOTES_VAULT / "Work" / "Completed",
+        NOTES_VAULT / "Work" / "Ready for Testing",
+        NOTES_VAULT / "Work" / "Waiting",
+    ]
+    for root in roots:
+        if root.exists():
+            files.extend(root.rglob("*.md"))
+
+    text: list[str] = []
+    seen: set[Path] = set()
+    for path in files:
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        try:
+            text.append(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError):
+            continue
+    return "\n".join(text).casefold()
+
+
+def _promoted_people(
+    contact_counts: dict[str, int],
+    memory_people: set[str],
+    threshold: int,
+    include_all_contacts: bool,
+    promotion_context: str,
+) -> set[str]:
+    promoted = set(_KNOWN_PEOPLE) | set(memory_people)
+    if include_all_contacts:
+        promoted.update(contact_counts)
+        return promoted
+    for person, count in contact_counts.items():
+        if count >= threshold or (len(person.strip()) >= 3 and person.casefold() in promotion_context):
+            promoted.add(person)
+    return promoted
+
+
+def _write_contacts_index(
+    suppressed: set[str],
+    email_by_person: dict[str, list[dict[str, Any]]],
+) -> None:
+    CONTACTS_INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = CONTACTS_INDEX_PATH.with_suffix(".jsonl.tmp")
+    with temp_path.open("w", encoding="utf-8") as handle:
+        for person in sorted(suppressed, key=str.casefold):
+            sources = email_by_person.get(person, [])
+            dates = sorted(source.get("date_sent", "") for source in sources if source.get("date_sent"))
+            row = {
+                "name": person,
+                "contact_count": len(sources),
+                "first_seen": dates[0] if dates else "",
+                "last_seen": dates[-1] if dates else "",
+            }
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    temp_path.replace(CONTACTS_INDEX_PATH)
+
+
+def _write_people_stats(stats: dict[str, Any]) -> None:
+    PEOPLE_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PEOPLE_STATS_PATH.write_text(
+        json.dumps(stats, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _remove_suppressed_people_pages(promoted: set[str]) -> int:
+    desired = {PEOPLE_DIR / f"{_slug(person)}.md" for person in promoted}
+    removed = 0
+    for path in PEOPLE_DIR.glob("*.md"):
+        if path not in desired:
+            path.unlink()
+            removed += 1
+    return removed
 
 
 def _merge_sources(primary: list[dict[str, Any]], secondary: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -195,8 +292,20 @@ def _build_email_timeline(email_sources: list[dict[str, Any]]) -> list[str]:
     return paths
 
 
-def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
+def build_memory_v2(
+    limit_per_entity: int = 6,
+    people_threshold: int | None = None,
+    include_all_contacts: bool = False,
+) -> dict[str, Any]:
     _ensure_dirs()
+    if people_threshold is None:
+        try:
+            people_threshold = int(
+                os.environ.get("MEMORY_V2_PEOPLE_THRESHOLD", DEFAULT_PEOPLE_THRESHOLD)
+            )
+        except ValueError:
+            people_threshold = DEFAULT_PEOPLE_THRESHOLD
+    people_threshold = max(1, people_threshold)
     report_lines = ["# Memory V2 Report", ""]
     built = {"people": [], "projects": [], "tickets": [], "timeline": []}
     email_sources = _email_catalog()
@@ -230,9 +339,21 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     for p in _KNOWN_PEOPLE:
         discovered["people"].add(p)
     memory_discovered = {key: set(values) for key, values in discovered.items()}
-    discovered["people"].update(email_by_person)
+    contact_counts = {person: len(sources) for person, sources in email_by_person.items()}
+    promoted_people = _promoted_people(
+        contact_counts=contact_counts,
+        memory_people=memory_discovered["people"],
+        threshold=people_threshold,
+        include_all_contacts=include_all_contacts,
+        promotion_context=_promotion_context_text(),
+    )
+    raw_contacts = set(email_by_person)
+    suppressed_contacts = raw_contacts - promoted_people
+    discovered["people"] = promoted_people
     discovered["projects"].update(email_by_project)
     discovered["tickets"].update(email_by_ticket)
+    _write_contacts_index(suppressed_contacts, email_by_person)
+    removed_people_pages = _remove_suppressed_people_pages(promoted_people)
 
     # Build people pages
     for person in sorted(discovered["people"]):
@@ -283,6 +404,11 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     _write_markdown(index_path, "\n".join(idx_lines))
 
     report_lines.append(f"People built: {len(built['people'])}")
+    report_lines.append(f"Raw contacts: {len(raw_contacts)}")
+    report_lines.append(f"Suppressed contacts: {len(suppressed_contacts)}")
+    report_lines.append(f"Stale people pages removed: {removed_people_pages}")
+    report_lines.append(f"People promotion threshold: {people_threshold}")
+    report_lines.append(f"Include all contacts: {include_all_contacts}")
     report_lines.append(f"Projects built: {len(built['projects'])}")
     report_lines.append(f"Tickets built: {len(built['tickets'])}")
     report_lines.append(f"Timeline days built: {len(built['timeline'])}")
@@ -291,7 +417,21 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
 
-    return {"status": "ok", "built": built, "report": str(report_path)}
+    people_stats = {
+        "promoted_people_count": len(promoted_people),
+        "raw_contact_count": len(raw_contacts),
+        "suppressed_contact_count": len(suppressed_contacts),
+        "people_threshold": people_threshold,
+        "include_all_contacts": include_all_contacts,
+        "removed_people_pages": removed_people_pages,
+    }
+    _write_people_stats(people_stats)
+    return {
+        "status": "ok",
+        "built": built,
+        "people": people_stats,
+        "report": str(report_path),
+    }
 
 
 def load_entity_page(entity_type: str, name: str) -> dict[str, Any]:
@@ -314,14 +454,46 @@ def load_entity_page(entity_type: str, name: str) -> dict[str, Any]:
 
 
 def health() -> dict[str, Any]:
+    stats: dict[str, Any] = {}
+    if PEOPLE_STATS_PATH.exists():
+        try:
+            stats = json.loads(PEOPLE_STATS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            stats = {}
+    promoted_count = int(
+        stats.get(
+            "promoted_people_count",
+            sum(1 for _ in PEOPLE_DIR.glob("*.md")) if PEOPLE_DIR.exists() else 0,
+        )
+    )
+    contacts_index_count = 0
+    if CONTACTS_INDEX_PATH.exists():
+        try:
+            with CONTACTS_INDEX_PATH.open(encoding="utf-8") as handle:
+                contacts_index_count = sum(1 for _ in handle)
+        except OSError:
+            contacts_index_count = 0
+    suppressed_count = int(
+        stats.get(
+            "suppressed_contact_count",
+            contacts_index_count,
+        )
+    )
+    raw_contact_count = int(
+        stats.get("raw_contact_count", promoted_count + suppressed_count)
+    )
     return {
         "status": "ok",
+        "promoted_people_count": promoted_count,
+        "raw_contact_count": raw_contact_count,
+        "suppressed_contact_count": suppressed_count,
         "paths": {
             "people": str(PEOPLE_DIR),
             "projects": str(PROJECTS_DIR),
             "tickets": str(TICKETS_DIR),
             "timeline": str(TIMELINE_DIR),
             "index": str(INDEX_DIR),
+            "contacts_index": str(CONTACTS_INDEX_PATH),
         },
         "counts": {
             "people": sum(1 for _ in PEOPLE_DIR.glob("*.md")) if PEOPLE_DIR.exists() else 0,
