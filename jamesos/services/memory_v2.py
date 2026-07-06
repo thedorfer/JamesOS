@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 import re
+from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +17,8 @@ PROJECTS_DIR = MEMORY_V2_ROOT / "Projects"
 TICKETS_DIR = MEMORY_V2_ROOT / "Tickets"
 TOPICS_DIR = MEMORY_V2_ROOT / "Topics"
 INDEX_DIR = MEMORY_V2_ROOT / "Index"
+TIMELINE_DIR = VAULT / "JamesOS" / "Timeline" / "Email" / "Outlook"
+EMAIL_ROOT = VAULT / "JamesOS" / "Brain" / "Email" / "Outlook"
 
 
 _KNOWN_PEOPLE = [
@@ -33,7 +38,7 @@ _TICKET_RE = re.compile(r"\b(8\d{4})\b")
 
 
 def _ensure_dirs() -> None:
-    for d in (PEOPLE_DIR, PROJECTS_DIR, TICKETS_DIR, TOPICS_DIR, INDEX_DIR):
+    for d in (PEOPLE_DIR, PROJECTS_DIR, TICKETS_DIR, TOPICS_DIR, INDEX_DIR, TIMELINE_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -102,10 +107,109 @@ def extract_entities_from_text(text: str) -> dict[str, list[str]]:
     return {"people": people, "projects": projects, "tickets": tickets}
 
 
+def _json_metadata(text: str, label: str) -> list[str]:
+    match = re.search(rf"^{re.escape(label)}:\s*(\[.*\])\s*$", text, re.MULTILINE)
+    if not match:
+        return []
+    try:
+        values = json.loads(match.group(1))
+    except json.JSONDecodeError:
+        return []
+    return [str(value) for value in values if str(value).strip()]
+
+
+def _email_catalog() -> list[dict[str, Any]]:
+    sources: list[dict[str, Any]] = []
+    if not EMAIL_ROOT.exists():
+        return sources
+    for path in sorted(EMAIL_ROOT.rglob("*.md")):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        title_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
+        date_match = re.search(r"^Date Sent:\s*(.+)$", text, re.MULTILINE)
+        from_match = re.search(r"^From:\s*(.*)$", text, re.MULTILINE)
+        message_match = re.search(r"^## Message\s*$\n+(.*?)(?=^## |\Z)", text, re.MULTILINE | re.DOTALL)
+        source = {
+            "title": title_match.group(1).strip() if title_match else path.stem,
+            "source_type": "outlook_email",
+            "path": str(path),
+            "snippet": (message_match.group(1).strip() if message_match else text)[:2000],
+            "score": 100,
+            "key_facts": [],
+            "date_sent": date_match.group(1).strip() if date_match else "",
+            "from": from_match.group(1).strip() if from_match else "",
+            "people": _json_metadata(text, "People"),
+            "projects": _json_metadata(text, "Projects"),
+            "tickets": _json_metadata(text, "Tickets"),
+        }
+        sources.append(source)
+    return sources
+
+
+def _merge_sources(primary: list[dict[str, Any]], secondary: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for source in primary + secondary:
+        key = str(source.get("path") or source.get("title") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        merged.append(source)
+        if len(merged) >= limit:
+            break
+    return merged
+
+
+def _build_email_timeline(email_sources: list[dict[str, Any]]) -> list[str]:
+    by_date: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for source in email_sources:
+        try:
+            date_key = datetime.fromisoformat(source["date_sent"]).date().isoformat()
+        except (KeyError, TypeError, ValueError):
+            continue
+        by_date[date_key].append(source)
+
+    paths: list[str] = []
+    for date_key, sources in sorted(by_date.items()):
+        lines = [f"# Email Timeline — {date_key}", ""]
+        for source in sources:
+            lines.extend(
+                [
+                    f"## {source['title']}",
+                    "",
+                    f"- From: {source.get('from', '')}",
+                    f"- People: {', '.join(source.get('people') or []) or 'None'}",
+                    f"- Projects: {', '.join(source.get('projects') or []) or 'None'}",
+                    f"- Tickets: {', '.join(source.get('tickets') or []) or 'None'}",
+                    f"- Source: {source['path']}",
+                    "",
+                    source.get("snippet", "")[:500],
+                    "",
+                ]
+            )
+        path = TIMELINE_DIR / f"{date_key}.md"
+        _write_markdown(path, "\n".join(lines))
+        paths.append(str(path))
+    return paths
+
+
 def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     _ensure_dirs()
     report_lines = ["# Memory V2 Report", ""]
-    built = {"people": [], "projects": [], "tickets": []}
+    built = {"people": [], "projects": [], "tickets": [], "timeline": []}
+    email_sources = _email_catalog()
+    email_by_person: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    email_by_project: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    email_by_ticket: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for source in email_sources:
+        for person in source["people"]:
+            email_by_person[person].append(source)
+        for project in source["projects"]:
+            email_by_project[project].append(source)
+        for ticket in source["tickets"]:
+            email_by_ticket[ticket].append(source)
 
     # Seed entity lists by scanning a few broad queries
     queries = ["", "paving", "Malcolm", "JamesOS", "88858", "SFM2"]
@@ -125,11 +229,17 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     # ensure known people present
     for p in _KNOWN_PEOPLE:
         discovered["people"].add(p)
+    memory_discovered = {key: set(values) for key, values in discovered.items()}
+    discovered["people"].update(email_by_person)
+    discovered["projects"].update(email_by_project)
+    discovered["tickets"].update(email_by_ticket)
 
     # Build people pages
     for person in sorted(discovered["people"]):
-        res = memory_answer_context(person, limit=limit_per_entity)
-        sources = res.get("sources", [])
+        memory_sources = []
+        if person in memory_discovered["people"]:
+            memory_sources = memory_answer_context(person, limit=limit_per_entity).get("sources", [])
+        sources = _merge_sources(email_by_person.get(person, []), memory_sources, limit_per_entity)
         md = _build_person_page(person, sources)
         path = PEOPLE_DIR / f"{_slug(person)}.md"
         _write_markdown(path, md)
@@ -137,8 +247,10 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
 
     # Build project pages
     for project in sorted(discovered["projects"]):
-        res = memory_answer_context(project, limit=limit_per_entity)
-        sources = res.get("sources", [])
+        memory_sources = []
+        if project in memory_discovered["projects"]:
+            memory_sources = memory_answer_context(project, limit=limit_per_entity).get("sources", [])
+        sources = _merge_sources(email_by_project.get(project, []), memory_sources, limit_per_entity)
         md = _build_project_page(project, sources)
         path = PROJECTS_DIR / f"{_slug(project)}.md"
         _write_markdown(path, md)
@@ -146,12 +258,16 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
 
     # Build ticket pages
     for ticket in sorted(discovered["tickets"]):
-        res = memory_answer_context(ticket, limit=limit_per_entity)
-        sources = res.get("sources", [])
+        memory_sources = []
+        if ticket in memory_discovered["tickets"]:
+            memory_sources = memory_answer_context(ticket, limit=limit_per_entity).get("sources", [])
+        sources = _merge_sources(email_by_ticket.get(ticket, []), memory_sources, limit_per_entity)
         md = _build_ticket_page(ticket, sources)
         path = TICKETS_DIR / f"ticket_{_slug(ticket)}.md"
         _write_markdown(path, md)
         built["tickets"].append(str(path))
+
+    built["timeline"] = _build_email_timeline(email_sources)
 
     # Simple index file
     index_path = INDEX_DIR / "index.md"
@@ -169,6 +285,8 @@ def build_memory_v2(limit_per_entity: int = 6) -> dict[str, Any]:
     report_lines.append(f"People built: {len(built['people'])}")
     report_lines.append(f"Projects built: {len(built['projects'])}")
     report_lines.append(f"Tickets built: {len(built['tickets'])}")
+    report_lines.append(f"Timeline days built: {len(built['timeline'])}")
+    report_lines.append(f"Outlook emails included: {len(email_sources)}")
     report_path = VAULT / "JamesOS" / "Reports" / "Memory V2 Report.md"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text("\n".join(report_lines), encoding="utf-8")
@@ -202,11 +320,13 @@ def health() -> dict[str, Any]:
             "people": str(PEOPLE_DIR),
             "projects": str(PROJECTS_DIR),
             "tickets": str(TICKETS_DIR),
+            "timeline": str(TIMELINE_DIR),
             "index": str(INDEX_DIR),
         },
         "counts": {
             "people": sum(1 for _ in PEOPLE_DIR.glob("*.md")) if PEOPLE_DIR.exists() else 0,
             "projects": sum(1 for _ in PROJECTS_DIR.glob("*.md")) if PROJECTS_DIR.exists() else 0,
             "tickets": sum(1 for _ in TICKETS_DIR.glob("*.md")) if TICKETS_DIR.exists() else 0,
+            "timeline": sum(1 for _ in TIMELINE_DIR.glob("*.md")) if TIMELINE_DIR.exists() else 0,
         },
     }
