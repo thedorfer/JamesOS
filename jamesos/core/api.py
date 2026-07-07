@@ -53,6 +53,9 @@ from jamesos.services.control_center import (
     services as control_center_services,
     storage as control_center_storage,
 )
+from jamesos.services.comfyui_client import health as comfyui_health
+from jamesos.services.image_worker import health as image_worker_health, plan as image_worker_plan
+from jamesos.services.model_registry import get_model, list_models
 from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.server_config import (
     integration_health,
@@ -67,6 +70,7 @@ from jamesos.services.unitystitches_product_pipeline import (
     list_drafts as list_unitystitches_drafts,
 )
 from jamesos.services.worker_registry import get_worker, list_workers
+from jamesos.services.workflow_manager import get_workflow, list_workflows
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
@@ -135,6 +139,10 @@ class PlannerPlanRequest(BaseModel):
     intent: str = ""
     prompt: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImageWorkerPlanRequest(BaseModel):
+    package: dict[str, Any] = Field(default_factory=dict)
 
 
 class PhoneEventRequest(BaseModel):
@@ -392,6 +400,54 @@ def worker_detail_route(worker_name: str, x_jamesos_key: str | None = Header(def
         return get_worker(worker_name)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/models")
+def models_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_models()
+
+
+@app.get("/models/{model_name}")
+def model_detail_route(model_name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_model(model_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/workflows")
+def workflows_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_workflows()
+
+
+@app.get("/workflows/{workflow_name}")
+def workflow_detail_route(workflow_name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_workflow(workflow_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/image-worker/health")
+def image_worker_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return image_worker_health()
+
+
+@app.post("/image-worker/plan")
+def image_worker_plan_route(req: ImageWorkerPlanRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return image_worker_plan(req.package)
+
+
+@app.get("/comfyui/health")
+def comfyui_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return comfyui_health()
 
 
 @app.get("/jobs")

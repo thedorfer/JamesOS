@@ -4,7 +4,7 @@ ComfyUI is planned as the local image generation engine for JamesOS creative wor
 
 ## Current Status
 
-ComfyUI execution is not implemented yet.
+ComfyUI execution is not implemented yet. JamesOS now includes readiness foundations only: Model Registry, Workflow Manager, Image Worker planning, and `/system_stats` health checks.
 
 Current JamesOS rules:
 
@@ -17,16 +17,20 @@ Control Center exposes ComfyUI readiness without execution:
 
 ```text
 GET /control-center/integrations
+GET /comfyui/health
+GET /image-worker/health
 ```
 
 Expected safety fields:
 
 ```text
-configured_api_url: http://localhost:8188
+configured_api_url: http://127.0.0.1:8188
 max_concurrent_image_jobs: 1
 one_image_job_at_a_time: true
 execution_enabled: false
 ```
+
+See [ComfyUI service](COMFYUI_SERVICE.md) for localhost service setup.
 
 ## Target Hardware
 
@@ -40,10 +44,10 @@ This GPU can run many Stable Diffusion workflows, but future workflows should be
 
 ## Planned Local Paths
 
-Future workflows:
+Workflow registry:
 
 ```text
-~/JamesOSData/JamesOS/AI/ComfyUI/workflows/
+~/JamesOSData/JamesOS/AI/model_registry.yaml
 ```
 
 Future generated assets:
@@ -80,7 +84,7 @@ integrations:
 
 ## Future Client Responsibilities
 
-The future `jamesos/services/comfyui_client.py` should:
+The future execution version of `jamesos/services/comfyui_client.py` may:
 
 - load workflow JSON
 - inject positive prompt

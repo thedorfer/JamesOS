@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from jamesos.config import VAULT
-from jamesos.services import creative_studio, job_queue, server_config
+from jamesos.services import comfyui_client, creative_studio, image_worker, job_queue, model_registry, server_config, workflow_manager
 from jamesos.services.knowledge_graph import GRAPH_FILE, GRAPH_REPORT
 
 
@@ -98,14 +98,25 @@ def storage() -> dict[str, Any]:
 
 def gpu_comfyui_readiness() -> dict[str, Any]:
     creative = _safe_call({"status": "degraded"}, creative_studio.health)
-    configured_api_url = creative.get("comfyui_api_url", "http://localhost:8188")
+    configured_api_url = creative.get("comfyui_api_url", "http://127.0.0.1:8188")
+    if configured_api_url == "http://localhost:8188":
+        configured_api_url = "http://127.0.0.1:8188"
     max_jobs = int(creative.get("max_concurrent_image_jobs", 1) or 1)
+    comfy = _safe_call({"status": "not_running", "running": False}, lambda: comfyui_client.health(configured_api_url, timeout=0.5))
+    registry = _safe_call({"present": False}, model_registry.health)
+    workflows = _safe_call({"workflows": {}}, workflow_manager.list_workflows)
     return {
         "configured_api_url": configured_api_url,
+        "running": bool(comfy.get("running", False)),
+        "comfyui_status": comfy.get("status", "not_running"),
+        "selected_install_path": comfy.get("install_path", {}),
+        "model_registry_present": bool(registry.get("present", False)),
+        "workflow_registry_present": bool(workflows.get("workflows")),
         "max_concurrent_image_jobs": max_jobs,
         "one_image_job_at_a_time": max_jobs == 1,
         "execution_enabled": False,
-        "status": "configured_not_running",
+        "image_execution_enabled": False,
+        "status": "running" if comfy.get("running") else "configured_not_running",
         "notes": "Control Center reports readiness only; JamesOS does not execute ComfyUI yet.",
     }
 
@@ -123,7 +134,13 @@ def integrations() -> dict[str, Any]:
             "configured": True,
             "execution_enabled": False,
             "publish_enabled": False,
+            "image_execution_enabled": False,
             "configured_api_url": comfyui["configured_api_url"],
+            "running": comfyui["running"],
+            "selected_install_path": comfyui["selected_install_path"],
+            "model_registry_present": comfyui["model_registry_present"],
+            "workflow_registry_present": comfyui["workflow_registry_present"],
+            "one_image_job_at_a_time": comfyui["one_image_job_at_a_time"],
             "gpu_target": integration_rows.get("comfyui", {}).get("gpu_target", "GTX 1080 Ti"),
             "notes": "Local image engine planned; execution remains disabled.",
         },
@@ -191,6 +208,10 @@ def jobs() -> dict[str, Any]:
 def services() -> dict[str, Any]:
     server = _safe_call({"status": "degraded"}, server_config.service_health)
     creative = _safe_call({"status": "degraded"}, creative_studio.health)
+    image = _safe_call({"status": "degraded", "execution_enabled": False}, image_worker.health)
+    registry = _safe_call({"status": "degraded", "execution_enabled": False}, model_registry.health)
+    workflows = _safe_call({"status": "degraded", "execution_enabled": False}, workflow_manager.list_workflows)
+    comfy = _safe_call({"status": "not_running", "execution_enabled": False}, comfyui_client.health)
     kg = knowledge_graph_status()
     queue = jobs()
     return {
@@ -204,6 +225,14 @@ def services() -> dict[str, Any]:
             },
             "knowledge_graph": kg,
             "creative_studio": creative,
+            "image_worker": image,
+            "model_registry": registry,
+            "workflow_manager": {
+                "status": workflows.get("status", "ok"),
+                "workflow_count": len(workflows.get("workflows", {})),
+                "execution_enabled": False,
+            },
+            "comfyui_client": comfy,
             "server_config": server,
         },
     }
@@ -217,6 +246,7 @@ def health() -> dict[str, Any]:
         "jobs": jobs(),
         "integrations": {
             "comfyui_execution_enabled": False,
+            "image_execution_enabled": False,
             "printify_execution_enabled": False,
             "etsy_execution_enabled": False,
             "publish_enabled": False,
@@ -318,6 +348,7 @@ def human_summary() -> dict[str, Any]:
         },
         "safety": {
             "comfyui_execution_enabled": False,
+            "image_execution_enabled": False,
             "printify_execution_enabled": False,
             "etsy_execution_enabled": False,
             "publish_enabled": False,

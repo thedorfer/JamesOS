@@ -121,7 +121,18 @@ Everything remains draft-only. ComfyUI, Printify, Etsy, publishing, ordering, an
 
 ## Phase 5: Local ComfyUI Image Generation
 
-Planned:
+Status: readiness foundation in place; generation remains disabled.
+
+Active readiness pieces:
+
+- ComfyUI health check against `http://127.0.0.1:8188/system_stats`
+- Model Registry at `~/JamesOSData/JamesOS/AI/model_registry.yaml`
+- Workflow Manager for listing, selection, and path validation
+- Image Worker safe execution plans
+- one image job at a time
+- execution enabled false
+
+Planned execution:
 
 - local ComfyUI API on the desktop
 - GTX 1080 Ti-aware workflow choices

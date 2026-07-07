@@ -1,6 +1,6 @@
 # JamesOS Control Center
 
-The Control Center is the server/admin readiness layer for JamesOS. It gathers local health, storage, queue, Knowledge Graph, Creative Studio, and integration status in one place.
+The Control Center is the server/admin readiness layer for JamesOS. It gathers local health, storage, queue, Knowledge Graph, Creative Studio, image readiness, and integration status in one place.
 
 It is read-only for external systems. It does not call ComfyUI, Printify, Etsy, or any publishing/order API.
 
@@ -13,6 +13,9 @@ Control Center reports:
 - approval-needed jobs
 - Knowledge Graph file/report status and node/edge counts when available
 - Creative Studio health and safety flags
+- ComfyUI running/not-running status, configured URL, and detected install path
+- Model Registry and Workflow Manager presence
+- Image Worker execution-disabled readiness
 - server config health
 - integration readiness for ComfyUI, Printify, Etsy, Tasker/phone ingestion, and Outlook import
 - storage path checks for JamesOSData, Knowledge Graph, Creative Studio, Queue, Reports, Phone, Email, and ChatGPT data
@@ -79,6 +82,6 @@ Control Center sits across the JamesOS pipeline:
 Evidence -> Knowledge Graph -> Reasoner -> Planner -> Job Queue -> Workers / Creative Studio
 ```
 
-Evidence comes from notes, email/calendar imports, ChatGPT history, reports, phone ingestion, files, and future draft packages. The Knowledge Graph and Working Memory organize that evidence. The Reasoner answers through Jade, the Planner proposes queued work, and the Job Queue enforces approval before consequential automation. Workers are registered but do not execute yet. Creative Studio builds on the queue for future draft-only creative work.
+Evidence comes from notes, email/calendar imports, ChatGPT history, reports, phone ingestion, files, and future draft packages. The Knowledge Graph and Working Memory organize that evidence. The Reasoner answers through Jade, the Planner proposes queued work, and the Job Queue enforces approval before consequential automation. Workers are registered but do not execute yet. Creative Studio builds on the queue for future draft-only creative work. Image Worker plans remain disabled and approval-gated.
 
 Control Center does not replace those systems. It gives James a compact view of whether they are present, healthy, and still safe.

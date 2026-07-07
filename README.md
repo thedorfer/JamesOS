@@ -19,6 +19,7 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Provides a Flutter Jade app for Linux and Android.
 - Plans draft-only creative automation for UnityStitches, ComfyUI, Printify, and Etsy.
 - Provides a read-only Etsy performance-history foundation for future UnityStitches learning.
+- Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning foundations with execution disabled.
 
 ## Core Architecture
 
@@ -103,6 +104,20 @@ idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy
 
 The image, Printify, Etsy, publishing, ordering, and sending stages remain disabled placeholders.
 
+ComfyUI readiness routes are available for local planning and health only:
+
+```text
+GET /models
+GET /models/{model_name}
+GET /workflows
+GET /workflows/{workflow_name}
+GET /image-worker/health
+POST /image-worker/plan
+GET /comfyui/health
+```
+
+Image execution remains disabled and approval-gated.
+
 UnityStitches can generate exactly two local draft product packages per run:
 
 - one women's underwear product
@@ -183,6 +198,10 @@ GET /workers/{worker_name}
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop setup](docs/SETUP_DESKTOP.md)
 - [ComfyUI setup](docs/COMFYUI_SETUP.md)
+- [ComfyUI service](docs/COMFYUI_SERVICE.md)
+- [Model Registry](docs/MODEL_REGISTRY.md)
+- [Workflow Manager](docs/WORKFLOW_MANAGER.md)
+- [Image Worker](docs/IMAGE_WORKER.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Control Center](docs/CONTROL_CENTER.md)
 - [Planner](docs/PLANNER.md)

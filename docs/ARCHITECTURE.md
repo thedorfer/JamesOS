@@ -16,7 +16,7 @@ Generated reports, queues, imports, indexes, product drafts, attachment manifest
 The core reasoning and automation pipeline is:
 
 ```text
-Evidence -> indexes/reports/timeline -> Knowledge Graph / Working Memory -> Reasoner -> Planner -> Job Queue -> Workers / Creative Studio
+Evidence -> indexes/reports/timeline -> Knowledge Graph / Working Memory -> Reasoner -> Planner -> Creative Intelligence -> Creative Studio Pipeline -> Workers / Image Worker
 ```
 
 Evidence sources include:
@@ -91,7 +91,7 @@ API routes:
 
 ## Worker Registry
 
-The worker registry defines future workers/addons/plugins without running them. Initial workers include Knowledge Graph, Creative Studio, ComfyUI, UnityStitches, Printify, Etsy, phone ingestion, and briefing workers.
+The worker registry defines future workers/addons/plugins without running them. Initial workers include Knowledge Graph, Creative Studio, Image Worker, Workflow Manager, Model Registry, ComfyUI health client, UnityStitches, Printify, Etsy, phone ingestion, and briefing workers.
 
 API routes:
 
@@ -99,6 +99,23 @@ API routes:
 - `GET /workers/{worker_name}`
 
 All worker execution flags are false in this phase.
+
+## Image Readiness
+
+The future image path is:
+
+```text
+Planner -> Creative Intelligence -> Creative Studio Pipeline -> Image Worker -> ComfyUI
+```
+
+Current implementation is readiness-only:
+
+- Model Registry creates `~/JamesOSData/JamesOS/AI/model_registry.yaml`
+- Workflow Manager lists and selects configured workflow placeholders
+- Image Worker creates safe plans with `execution_enabled: false`
+- ComfyUI client checks `/system_stats` only
+
+No ComfyUI workflow execution, Printify call, Etsy call, upload, publish, order, or send operation is implemented.
 
 ## Server Configuration And Health
 
@@ -182,7 +199,7 @@ Every UnityStitches step remains draft-only and approval-gated.
 
 ComfyUI is the planned local image engine, running on James's desktop GPU target: GTX 1080 Ti. JamesOS owns the workflow, storage, safety model, and approvals; ComfyUI only renders images after an approved local workflow requests it.
 
-No ComfyUI execution is implemented in this documentation/config pass.
+ComfyUI readiness is implemented for health and planning only. No workflow execution is implemented.
 
 ## Printify And Etsy
 

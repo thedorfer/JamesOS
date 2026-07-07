@@ -15,6 +15,10 @@ GET /workers/{worker_name}
 
 - `knowledge_graph_worker`
 - `creative_studio_worker`
+- `image_worker`
+- `workflow_manager`
+- `model_registry`
+- `comfyui_client`
 - `comfyui_worker`
 - `unitystitches_worker`
 - `printify_worker`
