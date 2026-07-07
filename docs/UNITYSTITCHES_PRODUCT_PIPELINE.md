@@ -19,6 +19,18 @@ Each run generates exactly two local drafts:
 
 The rotating product comes from config and is not hardcoded to shirts.
 
+## Product / Niche Compatibility
+
+UnityStitches asks Creative Intelligence for compatible product/niche packages before writing drafts.
+
+Important shop rule:
+
+- teacher, school staff, classroom, education, GCU, kids, student, back-to-school, special education, speech therapy, occupational therapy, and child-related niches must never pair with women's underwear, panties, thongs, lingerie, or intimate apparel
+
+If the required product is `womens_underwear`, UnityStitches selects only underwear-safe niches such as LGBTQ+ pride, trans pride, nonbinary pride, ally/supporter, self-love, body positivity, mental health positivity, be yourself affirmation, mom/family pride, Thai/English identity, custom pronoun/name, holiday pride, seasonal inclusive, Valentines love-is-love, Pride Month, or clean adult spouse/partner humor.
+
+If the niche is teacher/school/education related, UnityStitches selects only non-intimate products such as shirts, sweatshirts, hoodies, totes, mugs, stickers, classroom accessories, or seasonal gifts.
+
 ## Config
 
 ```text
@@ -74,4 +86,4 @@ Supported phrases:
 
 ## Draft Contents
 
-Each draft includes product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, `needs_review` status, approval requirement, and false external execution flags.
+Each draft includes product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.

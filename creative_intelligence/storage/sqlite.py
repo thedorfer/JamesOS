@@ -52,6 +52,9 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
                 score REAL NOT NULL,
                 keywords_json TEXT NOT NULL,
                 prompts_json TEXT NOT NULL,
+                compatibility_status TEXT NOT NULL DEFAULT 'unknown',
+                compatibility_reason TEXT NOT NULL DEFAULT '',
+                blocked_terms_json TEXT NOT NULL DEFAULT '[]',
                 metadata_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
@@ -128,7 +131,16 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
             );
             """
         )
+        _ensure_column(conn, "product_plans", "compatibility_status", "TEXT NOT NULL DEFAULT 'unknown'")
+        _ensure_column(conn, "product_plans", "compatibility_reason", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "product_plans", "blocked_terms_json", "TEXT NOT NULL DEFAULT '[]'")
     return {"status": "ok", "db_path": str(db_path)}
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
 
 def now_iso() -> str:
@@ -331,8 +343,8 @@ def save_product_plan(plan: "ProductPlan", db_path: Path = DB_PATH) -> "ProductP
         conn.execute(
             """
             INSERT OR REPLACE INTO product_plans
-            (id, title, niche, audience, product_type, score, keywords_json, prompts_json, metadata_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, title, niche, audience, product_type, score, keywords_json, prompts_json, compatibility_status, compatibility_reason, blocked_terms_json, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plan.id,
@@ -343,6 +355,9 @@ def save_product_plan(plan: "ProductPlan", db_path: Path = DB_PATH) -> "ProductP
                 plan.score,
                 json.dumps(plan.keywords, sort_keys=True),
                 json.dumps(plan.prompts, sort_keys=True),
+                plan.compatibility_status,
+                plan.compatibility_reason,
+                json.dumps(plan.blocked_terms, sort_keys=True),
                 json.dumps(plan.metadata, sort_keys=True),
                 plan.created_at,
             ),

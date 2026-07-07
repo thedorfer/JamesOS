@@ -10,6 +10,7 @@ import yaml
 from jamesos.config import VAULT
 from jamesos.services.creative_studio import create_pipeline
 from jamesos.services.planner import create_plan
+from creative_intelligence.services.compatibility_service import assess_compatibility, select_compatible_package
 
 
 CONFIG_PATH = VAULT / "JamesOS" / "Config" / "unitystitches_products.yaml"
@@ -116,12 +117,27 @@ def _niche(config: dict[str, Any], run_date: str, index: int) -> str:
     return niches[(_date_index(run_date) + index) % len(niches)]
 
 
+def _niches(config: dict[str, Any]) -> list[str]:
+    return [str(item) for item in config.get("niches", [])] or list(DEFAULT_CONFIG["niches"])
+
+
+def _compatible_package(config: dict[str, Any], product_type: str, run_date: str, index: int) -> dict[str, Any]:
+    return select_compatible_package(
+        product_type,
+        _niches(config),
+        start_index=_date_index(run_date) + index,
+    )
+
+
 def _product_label(product_type: str) -> str:
     return product_type.replace("_", " ").title()
 
 
 def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str, Any]:
     label = _product_label(product_type)
+    compatibility = assess_compatibility(product_type, niche)
+    if not compatibility["compatible"]:
+        raise ValueError(compatibility["compatibility_reason"])
     concept = f"{label} with an inclusive {niche} affirmation design"
     title = f"{label} - {niche} Affirmation"
     tags = [
@@ -157,6 +173,9 @@ def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str
         "printify_blueprint_search_terms": [label.lower(), product_type.replace("_", " "), "print on demand"],
         "printify_notes": "No Printify API call made. Search terms are for future manual or approved draft setup.",
         "status": "needs_review",
+        "compatibility_status": compatibility["compatibility_status"],
+        "compatibility_reason": compatibility["compatibility_reason"],
+        "blocked_terms": compatibility["blocked_terms"],
         "approval_required": True,
         "external_execution_enabled": False,
         "comfyui_execution_enabled": False,
@@ -199,10 +218,10 @@ def generate_daily_product_drafts(run_date: str | None = None) -> dict[str, Any]
     config = load_config()
     selected_date = run_date or today_string()
     product_types = _draft_product_types(config, selected_date)
-    drafts = [
-        _draft(product_type, _niche(config, selected_date, index), selected_date, index)
-        for index, product_type in enumerate(product_types)
-    ]
+    drafts = []
+    for index, product_type in enumerate(product_types):
+        package = _compatible_package(config, product_type, selected_date, index)
+        drafts.append(_draft(package["product_type"], package["niche"], selected_date, index))
     if len(drafts) != 2:
         raise ValueError("UnityStitches daily generation must produce exactly 2 drafts")
 

@@ -16,6 +16,8 @@ class ProductPlan(BaseModel):
     score: float = 0.0
     keywords: list[str] = Field(default_factory=list)
     prompts: list[str] = Field(default_factory=list)
+    compatibility_status: str = "unknown"
+    compatibility_reason: str = ""
+    blocked_terms: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
-

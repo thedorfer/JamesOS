@@ -143,6 +143,35 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
         self.run_with_pipeline(scenario)
 
+    def test_daily_generation_never_creates_teacher_underwear(self) -> None:
+        def scenario(vault: Path) -> None:
+            for day in [
+                "2026-07-07",
+                "2026-07-08",
+                "2026-07-09",
+                "2026-07-10",
+                "2026-07-11",
+                "2026-07-12",
+                "2026-07-13",
+                "2026-07-14",
+                "2026-07-15",
+                "2026-07-16",
+                "2026-07-17",
+                "2026-07-18",
+                "2026-07-19",
+                "2026-07-20",
+                "2026-07-21",
+            ]:
+                result = unity.generate_daily_product_drafts(day)
+                for draft in result["drafts"]:
+                    self.assertEqual(draft["compatibility_status"], "allowed")
+                    self.assertEqual(draft["blocked_terms"], [])
+                    if draft["product_type"] == "womens_underwear":
+                        self.assertNotIn("teacher", draft["niche"].lower())
+                        self.assertNotIn("school", draft["niche"].lower())
+
+        self.run_with_pipeline(scenario)
+
 
 if __name__ == "__main__":
     unittest.main()

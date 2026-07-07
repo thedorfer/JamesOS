@@ -30,6 +30,39 @@ See [Etsy Read-Only Performance History](ETSY_READONLY_PERFORMANCE.md).
 
 Scoring works without Etsy data using local placeholder heuristics.
 
+Compatibility rules run before scoring. Incompatible product/niche combinations are blocked, not merely scored lower.
+
+Hard shop rule:
+
+- teacher, school staff, classroom, education, GCU, kids, student, back-to-school, special education, speech therapy, occupational therapy, and child-related niches must never pair with women's underwear, panties, thongs, lingerie, or intimate apparel
+
+Underwear-safe niches include:
+
+- LGBTQ+ pride
+- trans pride
+- nonbinary pride
+- ally/supporter
+- self-love and confidence
+- body positivity
+- mental health positivity
+- be yourself affirmation
+- mom pride / family pride
+- Thai/English identity
+- custom pronoun/name
+- holiday pride
+- seasonal inclusive
+- Valentines love-is-love
+- Pride Month
+- clean, non-explicit adult spouse/partner humor
+
+Teacher/school niches may pair with non-intimate products such as shirts, sweatshirts, hoodies, totes, mugs, stickers, classroom accessories, and seasonal gifts.
+
+Creative packages include:
+
+- `compatibility_status`
+- `compatibility_reason`
+- `blocked_terms`
+
 When `performance_history` contains data, scoring can:
 
 - boost niches and product types with real sales
@@ -37,4 +70,3 @@ When `performance_history` contains data, scoring can:
 - reduce scores for crowded low-conversion patterns
 
 The scoring layer reads local performance history only. It does not call Etsy directly.
-

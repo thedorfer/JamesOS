@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from creative_intelligence.services.compatibility_service import annotate_candidate
+
 
 def _etsy_adjustment(candidate: dict[str, Any]) -> float:
     try:
@@ -49,6 +51,10 @@ def _etsy_adjustment(candidate: dict[str, Any]) -> float:
 
 
 def score_candidate(candidate: dict[str, Any]) -> float:
+    annotated = annotate_candidate(candidate)
+    if annotated["compatibility_status"] == "blocked":
+        raise ValueError(annotated["compatibility_reason"])
+
     keywords = candidate.get("keywords") or []
     name = str(candidate.get("name") or candidate.get("title") or "")
     audience = str(candidate.get("audience") or "")
@@ -64,7 +70,9 @@ def score_candidate(candidate: dict[str, Any]) -> float:
 def rank_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ranked = []
     for candidate in candidates:
-        enriched = dict(candidate)
+        enriched = annotate_candidate(dict(candidate))
+        if enriched["compatibility_status"] == "blocked":
+            continue
         enriched["score"] = score_candidate(enriched)
         ranked.append(enriched)
     return sorted(ranked, key=lambda item: item["score"], reverse=True)

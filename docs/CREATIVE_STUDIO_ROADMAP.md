@@ -96,6 +96,8 @@ Status: foundation in place.
 - exactly two drafts per run:
   - one women's underwear product
   - one rotating configured product
+- Creative Intelligence compatibility checks before package creation
+- hard block on teacher/school/child-related underwear or intimate-apparel pairings
 
 Target product direction:
 
@@ -109,6 +111,11 @@ Target product direction:
 - Thai/English identity
 - seasonal and holiday pride
 - Pride Month
+
+Product compatibility boundary:
+
+- women's underwear may only use underwear-safe niches such as pride, self-love, confidence, body positivity, mental health positivity, Thai/English identity, pronouns/names, seasonal inclusive, and clean adult partner humor
+- teacher, school, education, classroom, student, kids, special education, speech therapy, occupational therapy, back-to-school, and child-related niches may only use non-intimate products such as shirts, sweatshirts, hoodies, totes, mugs, stickers, classroom accessories, and seasonal gifts
 
 Everything remains draft-only. ComfyUI, Printify, Etsy, publishing, ordering, and sending remain disabled.
 
