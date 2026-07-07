@@ -64,6 +64,67 @@ DEFAULT_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 
+NEGATIVE_PRINT_DESIGN_TERMS = [
+    "person",
+    "human",
+    "model",
+    "wearing",
+    "shirt on body",
+    "product photo",
+    "lifestyle photo",
+    "room",
+    "shelf",
+    "mannequin",
+    "face",
+    "hands",
+    "body",
+    "realistic person",
+    "portrait",
+    "mockup",
+    "blurry text",
+    "misspelled text",
+    "watermark",
+]
+
+
+def _text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return ", ".join(str(item).strip() for item in value if str(item).strip())
+    return str(value).strip()
+
+
+def _clean_prompt(text: str) -> str:
+    cleaned = " ".join(text.replace("..", ".").split())
+    return cleaned.lstrip(" .,:;-\n\t")
+
+
+def _sentence(label: str, value: Any) -> str:
+    rendered = _text(value)
+    return f"{label}: {rendered}." if rendered else ""
+
+
+def _join_parts(parts: list[str]) -> str:
+    return _clean_prompt(" ".join(part.strip() for part in parts if part and part.strip()))
+
+
+def _negative_prompt(extra: str = "", include_design_terms: bool = True) -> str:
+    terms = [
+        "copyrighted logos",
+        "trademarked characters",
+        "hateful symbols",
+        "explicit content",
+        "upload",
+        "publishing",
+    ]
+    if include_design_terms:
+        terms.extend(NEGATIVE_PRINT_DESIGN_TERMS)
+    if extra:
+        terms.append(extra)
+    return _clean_prompt(", ".join(dict.fromkeys(term for term in terms if term)))
+
+
 def initialize_prompt_library(root: Path | None = None) -> dict[str, Any]:
     library_root = root or PROMPT_ROOT
     library_root.mkdir(parents=True, exist_ok=True)
@@ -119,54 +180,125 @@ def select_prompt_template(package: dict[str, Any], root: Path | None = None) ->
     return get_prompt_template(name, root)["template"]
 
 
+def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]) -> dict[str, Any]:
+    product_type = _text(recipe.get("product_type") or creative_spec.get("product_type") or "design_art")
+    niche = _text(recipe.get("niche") or creative_spec.get("niche"))
+    provider = _text(recipe.get("provider") or creative_spec.get("pod_provider") or creative_spec.get("provider") or "printify")
+    is_mockup_stage = "mockup" in _text(creative_spec.get("stage") or recipe.get("stage")).lower()
+    assets = recipe.get("assets") or creative_spec.get("selected_assets") or creative_spec.get("assets") or []
+    motifs = recipe.get("motifs") or creative_spec.get("motifs") or []
+    positive_parts = [
+        _sentence("Design goal", recipe.get("design_goal")),
+        f"Standalone print design for {product_type}" + (f" and {niche}." if niche else "."),
+        _sentence("Artwork type", recipe.get("artwork_type") or "flat print design"),
+        _sentence("Background", recipe.get("background") or "white or transparent-background-friendly"),
+        _sentence("Layout", recipe.get("layout") or "centered composition"),
+        _sentence("Palette", recipe.get("palette")),
+        _sentence("Text", recipe.get("text") or creative_spec.get("text")),
+        _sentence("Typography", recipe.get("typography") or creative_spec.get("typography")),
+        _sentence("Motifs", motifs),
+        _sentence("Assets/reference motifs", assets),
+        _sentence("Effects", recipe.get("effects") or "clean vector-style print art"),
+        _sentence("Provider", provider),
+        _sentence("Print notes", recipe.get("print_notes") or "high contrast, large readable typography, print-on-demand ready, no person, no mockup"),
+    ]
+    if not is_mockup_stage:
+        positive_parts.extend([
+            "Vector-style or clean graphic artwork.",
+            "Centered composition.",
+            "No person.",
+            "No human model.",
+            "No product mockup.",
+            "No lifestyle background.",
+            "High contrast.",
+            "Large readable typography.",
+            "Print-on-demand ready.",
+        ])
+    positive = _join_parts(positive_parts)
+    lower = " ".join([_text(recipe.get("artwork_type")), product_type, niche, _text(recipe.get("layout"))]).lower()
+    if is_mockup_stage:
+        workflow_type = "mockup"
+    elif "transparent" in lower or "sticker" in lower:
+        workflow_type = "transparent_png"
+    else:
+        workflow_type = "print_design_basic"
+    negative = _negative_prompt(_text(creative_spec.get("safety_notes")), include_design_terms=not is_mockup_stage)
+    return {
+        "positive_prompt": positive,
+        "negative_prompt": negative,
+        "width": int(creative_spec.get("width") or recipe.get("width") or 768),
+        "height": int(creative_spec.get("height") or recipe.get("height") or 768),
+        "recommended_workflow_type": workflow_type,
+        "recommended_model_family": "flux" if "flux" in lower else ("sdxl" if "sdxl" in lower else "sd15"),
+        "creative_spec": creative_spec,
+        "design_recipe": recipe,
+        "execution_enabled": False,
+    }
+
+
 def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, Any]:
-    brand_voice = str(creative_spec.get("brand_voice") or "")
-    product_type = str(creative_spec.get("product_type") or "product")
-    niche = str(creative_spec.get("niche") or "")
-    audience = str(creative_spec.get("audience") or "")
-    emotional_hook = str(creative_spec.get("emotional_hook") or "")
-    style = str(creative_spec.get("style") or "bold")
+    recipe = creative_spec.get("design_recipe")
+    if isinstance(recipe, dict) and recipe:
+        return _recipe_prompt_package(creative_spec, recipe)
+
+    brand_voice = _text(creative_spec.get("brand_voice"))
+    product_type = _text(creative_spec.get("product_type") or "product")
+    niche = _text(creative_spec.get("niche"))
+    audience = _text(creative_spec.get("audience"))
+    emotional_hook = _text(creative_spec.get("emotional_hook"))
+    style = _text(creative_spec.get("style") or "bold")
     colors = creative_spec.get("colors") or []
-    text = str(creative_spec.get("text") or "")
-    typography = str(creative_spec.get("typography") or "")
+    text = _text(creative_spec.get("text"))
+    typography = _text(creative_spec.get("typography"))
     assets = creative_spec.get("assets") or []
-    stage = str(creative_spec.get("stage") or creative_spec.get("image_stage") or "design_art")
-    layout = str(creative_spec.get("layout") or "flat centered print artwork")
-    print_requirements = str(
+    stage = _text(creative_spec.get("stage") or creative_spec.get("image_stage") or "design_art")
+    layout = _text(creative_spec.get("layout") or "flat centered print artwork")
+    print_requirements = _text(
         creative_spec.get("print_requirements")
         or "flat design only, print-ready graphic, POD-safe, high contrast, large readable text, white or transparent-background-friendly background"
     )
-    safety_notes = str(creative_spec.get("safety_notes") or "marketplace-safe, no copyrighted logos")
+    safety_notes = _text(creative_spec.get("safety_notes") or "marketplace-safe, no copyrighted logos")
 
-    color_text = ", ".join(str(item) for item in colors) if isinstance(colors, list) else str(colors)
-    asset_text = ", ".join(str(item) for item in assets) if isinstance(assets, list) else str(assets)
+    color_text = _text(colors)
+    asset_text = _text(assets)
     is_mockup_stage = "mockup" in stage.lower()
     if is_mockup_stage:
-        positive = (
-            f"{brand_voice}. Local review mockup concept for {product_type} artwork for {niche}. "
-            f"Audience: {audience}. Emotional hook: {emotional_hook}. Text: {text}. "
-            f"Typography: {typography}. Colors: {color_text}. Assets/reference motifs: {asset_text}. "
-            f"Layout: {layout}. {print_requirements}. Review-only mockup, no upload."
-        ).strip()
+        positive = _join_parts([
+            brand_voice,
+            f"Local review mockup concept for {product_type}" + (f" artwork for {niche}." if niche else "."),
+            _sentence("Audience", audience),
+            _sentence("Emotional hook", emotional_hook),
+            _sentence("Text", text),
+            _sentence("Typography", typography),
+            _sentence("Colors", color_text),
+            _sentence("Assets/reference motifs", asset_text),
+            _sentence("Layout", layout),
+            print_requirements,
+            "Review-only mockup, no upload.",
+        ])
     else:
-        positive = (
-            f"{brand_voice}. Standalone print design, flat centered print artwork for {product_type} and {niche}. "
-            "Flat design only, no human model, no person wearing product, no room or lifestyle background, "
-            "white or transparent-background-friendly background, print-ready graphic, POD-safe, high contrast, large readable text. "
-            f"Audience: {audience}. Emotional hook: {emotional_hook}. "
-            f"Text: {text}. Typography: {typography}. Colors: {color_text}. "
-            f"Assets/reference motifs: {asset_text}. Layout: {layout}. {print_requirements}."
-        ).strip()
-    negative = (
-        "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, "
-        "blurry, misspelled text, upload, publishing"
-        + (
-            ""
-            if is_mockup_stage
-            else ", person, human, model, wearing, shirt on body, product photo, lifestyle photo, room, shelf, mannequin, face, hands, body, realistic person, portrait, mockup"
-        )
-        + f". {safety_notes}"
-    ).strip()
+        positive = _join_parts([
+            brand_voice,
+            f"Standalone print design, flat centered print artwork for {product_type}" + (f" and {niche}." if niche else "."),
+            "Vector-style or clean graphic artwork.",
+            "Centered composition.",
+            "No person.",
+            "No human model.",
+            "No product mockup.",
+            "No lifestyle background.",
+            "High contrast.",
+            "Large readable typography.",
+            "Print-on-demand ready.",
+            _sentence("Audience", audience),
+            _sentence("Emotional hook", emotional_hook),
+            _sentence("Text", text),
+            _sentence("Typography", typography),
+            _sentence("Colors", color_text),
+            _sentence("Assets/reference motifs", asset_text),
+            _sentence("Layout", layout),
+            print_requirements,
+        ])
+    negative = _negative_prompt(safety_notes, include_design_terms=not is_mockup_stage)
 
     lower = " ".join([stage, style, product_type, niche, layout, text]).lower()
     if "transparent" in lower or "sticker" in lower:

@@ -144,7 +144,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
     def test_unitystitches_draft_updated_to_ready_for_pod_review(self) -> None:
         def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
             draft_path = root / "draft.json"
-            draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "inkedjoy"}), encoding="utf-8")
+            draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "printify"}), encoding="utf-8")
             job = job_queue.create_job(
                 "image_generation",
                 {"image_plan": self.image_plan(workflow, checkpoint), "unitystitches_draft_path": str(draft_path)},
@@ -162,9 +162,34 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             draft = json.loads(draft_path.read_text(encoding="utf-8"))
             self.assertEqual(draft["design_status"], "image_generated")
             self.assertEqual(draft["provider_status"], "manual_upload_ready")
-            self.assertEqual(draft["printify_status"], "not_applicable")
+            self.assertEqual(draft["printify_status"], "ready_for_printify_review")
             self.assertEqual(draft["status"], "ready_for_pod_review")
             self.assertTrue(draft["design_image_path"])
+
+        self.run_with_worker(scenario)
+
+    def test_non_printify_draft_does_not_claim_printify_review(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            draft_path = root / "draft.json"
+            draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "inkedjoy"}), encoding="utf-8")
+            job = job_queue.create_job(
+                "image_generation",
+                {"image_plan": self.image_plan(workflow, checkpoint), "unitystitches_draft_path": str(draft_path)},
+                steps=["validation", "workflow prepared", "ComfyUI prompt queued", "image saved", "completed"],
+            )
+            job_queue.approve_job(job["job_id"])
+            with (
+                patch.object(image_worker.comfyui_client, "is_running", return_value=True),
+                patch.object(image_worker.comfyui_client, "queue_prompt", return_value={"status": "queued", "prompt_id": "abc"}),
+                patch.object(image_worker.comfyui_client, "wait_for_completion", return_value={"status": "completed", "prompt_id": "abc"}),
+                patch.object(image_worker.comfyui_client, "get_output_images", return_value=[{"filename": "out.png", "content": b"png"}]),
+            ):
+                image_worker.execute_approved_image_job(job["job_id"])
+
+            draft = json.loads(draft_path.read_text(encoding="utf-8"))
+            self.assertEqual(draft["provider_status"], "manual_upload_ready")
+            self.assertEqual(draft["printify_status"], "not_applicable")
+            self.assertEqual(draft["status"], "ready_for_pod_review")
 
         self.run_with_worker(scenario)
 
@@ -208,6 +233,9 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             payload = job["payload"]
             self.assertIn("creative_spec", payload)
             self.assertIn("prompt_package", payload)
+            self.assertIn("design_recipe", payload["creative_spec"])
+            self.assertEqual(payload["pod_provider"], "printify")
+            self.assertIn("selected_assets", payload)
             self.assertEqual(payload["brand_id"], "unitystitches")
             self.assertIn(payload["workflow_name"], {"product_art_basic", "print_design_basic"})
             self.assertEqual(payload["creative_spec"]["product_type"], "design_art")
@@ -255,6 +283,9 @@ class ImageWorkerExecutionTests(unittest.TestCase):
         source = Path("scripts/create_test_image_job.py").read_text(encoding="utf-8")
         self.assertIn("sys.path.insert", source)
         self.assertIn("next_commands", source)
+        self.assertIn("selected_provider", source)
+        self.assertIn("selected_assets", source)
+        self.assertIn("open_output_folder", source)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,12 @@ Default providers:
 - `printify`
 - `inkedjoy`
 
+Current MVP decision:
+
+- Printify is the active planned POD provider for automated shop pipeline work.
+- InkedJoy remains available as a future/manual-upload provider foundation only.
+- Both providers are read-only in JamesOS right now.
+
 Current safety boundary:
 
 - read-only foundation only
@@ -33,9 +39,25 @@ draft_creation_enabled: false
 order_enabled: false
 ```
 
+## Printify
+
+Printify is the preferred provider for current MVP planning:
+
+- Bagholder Supply Co uses Printify for now.
+- Cheeky Peach Prints uses Printify for now.
+- UnityStitches underwear/panty/thong provider rules prefer Printify for now.
+
+Status:
+
+```text
+Active planned POD provider for MVP automation. Read-only foundation; writes, draft creation, uploads, orders, and publishing remain disabled.
+```
+
+Design recipes may include `provider: printify` so prompts and plans know the intended review target. This does not call Printify or enable provider writes.
+
 ## InkedJoy
 
-InkedJoy is enabled as a configurable POD target for UnityStitches, especially for:
+InkedJoy remains a configurable future/manual provider target, especially for possible later underwear products:
 
 - `womens_underwear`
 - `panties`
@@ -45,7 +67,7 @@ InkedJoy is enabled as a configurable POD target for UnityStitches, especially f
 Status:
 
 ```text
-API access not confirmed; manual upload/draft-ready mode only.
+Future/manual-upload provider only; API access not confirmed; not active for current automation.
 ```
 
 ## API

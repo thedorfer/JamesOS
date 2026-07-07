@@ -34,12 +34,19 @@ def main() -> None:
         draft_path=args.draft_path,
     )
     job = result.get("job", {})
+    payload = job.get("payload", {})
     job_id = job.get("job_id", "JOB_ID")
     output_folder = f"~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/{job_id}/"
+    selected_provider = payload.get("pod_provider") or payload.get("image_plan", {}).get("pod_provider") or "printify"
+    selected_assets = payload.get("selected_assets") or payload.get("image_plan", {}).get("selected_assets") or []
+    result["selected_provider"] = selected_provider
+    result["selected_assets"] = selected_assets
     result["next_commands"] = {
-        "approve": f"python3 scripts/job_queue.py approve {job_id}",
+        "approve_cli": f"python3 scripts/job_queue.py approve {job_id}",
+        "approve_api": f"curl -X POST -H \"X-JamesOS-Key: $JAMESOS_API_KEY\" http://localhost:8787/jobs/{job_id}/approve",
         "execute_approved": f"curl -X POST -H \"X-JamesOS-Key: $JAMESOS_API_KEY\" http://localhost:8787/image-worker/jobs/{job_id}/execute-approved",
         "output_folder": output_folder,
+        "open_output_folder": f"xdg-open {output_folder}",
     }
     print(json.dumps(result, indent=2, sort_keys=True))
 

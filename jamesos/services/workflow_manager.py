@@ -98,11 +98,14 @@ def validate_workflow_path(workflow_name: str) -> dict[str, Any]:
 
 
 def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
+    requested = str(package.get("workflow_type") or package.get("recommended_workflow_type") or "").strip()
     text = " ".join(
         str(package.get(key, ""))
         for key in ["product_type", "niche", "title", "product_idea", "design_prompt"]
     ).lower()
-    if "mockup" in text:
+    if requested:
+        workflow_type = requested
+    elif "mockup" in text:
         workflow_type = "mockup"
     elif "print_design" in text or "design_art" in text or "product_art" in text:
         workflow_type = "print_design_basic"
@@ -115,19 +118,26 @@ def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
     else:
         workflow_type = "product_art"
     workflows = list_workflows()["workflows"]
+    def selected(workflow: dict[str, Any], alias_used: bool = False) -> dict[str, Any]:
+        result = dict(workflow)
+        result["requested_workflow_type"] = workflow_type
+        result["selected_workflow_type"] = str(result.get("type") or result.get("name") or "")
+        result["workflow_alias_used"] = alias_used
+        return result
+
     for workflow in workflows.values():
         if workflow.get("type") == workflow_type:
-            return workflow
+            return selected(workflow)
     if workflow_type in workflows:
-        return workflows[workflow_type]
+        return selected(workflows[workflow_type])
     aliases = {"typography": "typography_design", "print_design_basic": "product_art_basic", "product_art": "product_art_basic"}
     alias = aliases.get(workflow_type)
     if alias and alias in workflows:
-        return workflows[alias]
+        return selected(workflows[alias], alias_used=True)
     try:
-        return get_workflow(workflow_type)["workflow"]
+        return selected(get_workflow(workflow_type)["workflow"])
     except KeyError:
-        return get_workflow("product_art")["workflow"]
+        return selected(get_workflow("product_art")["workflow"], alias_used=workflow_type != "product_art")
 
 
 def scan_workflows(workflow_roots: list[Path] | None = None) -> list[Path]:

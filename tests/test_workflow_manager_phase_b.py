@@ -117,6 +117,35 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
 
         self.run_with_temp_workflows(scenario)
 
+    def test_print_design_request_can_use_product_art_basic_alias(self) -> None:
+        def scenario(root: Path) -> None:
+            workflow_root = root / "AI" / "Workflows"
+            workflow_root.mkdir(parents=True)
+            (workflow_root / "product_art_basic.json").write_text("{}", encoding="utf-8")
+            workflow_manager.build_workflow_inventory(workflow_roots=[workflow_root])
+
+            plan = image_worker.plan({
+                "brand_id": "unitystitches",
+                "creative_spec": {
+                    "stage": "design_art",
+                    "product_type": "design_art",
+                    "niche": "LGBTQ+ pride",
+                    "design_recipe": {
+                        "product_type": "design_art",
+                        "niche": "LGBTQ+ pride",
+                        "artwork_type": "flat print design",
+                        "text": "Love Is Love",
+                    },
+                },
+            })
+
+            self.assertEqual(plan["requested_workflow_type"], "print_design_basic")
+            self.assertEqual(plan["selected_workflow"]["name"], "product_art_basic")
+            self.assertTrue(plan["workflow_alias_used"])
+            self.assertFalse(plan["execution_enabled"])
+
+        self.run_with_temp_workflows(scenario)
+
     def test_control_center_includes_workflow_readiness(self) -> None:
         def scenario(root: Path) -> None:
             workflow_root = root / "AI" / "Workflows"

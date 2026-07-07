@@ -14,6 +14,7 @@ Current responsibilities:
 - include brand ID/name/voice from Brand Registry
 - suggest local asset metadata from Asset Library
 - prefer structured `creative_spec` input and convert it to a prompt package
+- prefer `design_recipe` inside `creative_spec` when present
 - return a reviewable image-generation plan
 - execute only approved `image_generation` or `creative_image_generation` jobs
 - save generated draft assets locally under JamesOSData
@@ -51,7 +52,14 @@ Execution rules:
 - workflow JSON and checkpoint must exist
 - workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, and height
 - outputs are saved locally only
-- Printify, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
+- Printify, InkedJoy, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
+
+Provider status language:
+
+- local generated design status remains `ready_for_pod_review`
+- `provider_status` may be `manual_upload_ready` or `provider_review_ready`
+- `ready_for_printify_review` is only used when the selected provider is actually Printify
+- there is no `ready_for_inkedjoy_review` status
 
 Flat design rules for `design_art` / `print_design_basic`:
 
@@ -64,6 +72,14 @@ Flat design rules for `design_art` / `print_design_basic`:
 - white or transparent-background-friendly background
 - high contrast and large readable text
 - mockup language is only appropriate when the stage is explicitly `mockup`
+
+Workflow selection exposes:
+
+- `requested_workflow_type`
+- `selected_workflow_type`
+- `workflow_alias_used`
+
+If `print_design_basic` is requested but only `product_art_basic` exists, JamesOS may use `product_art_basic` as a compatibility alias and sets `workflow_alias_used: true`.
 
 Structured execution errors are returned as:
 
@@ -99,6 +115,29 @@ creative_spec:
   layout:
   print_requirements:
   safety_notes:
+  design_recipe:
+    product_type:
+    niche:
+    design_goal:
+    artwork_type:
+    background:
+    layout:
+    palette:
+    text:
+    typography:
+    motifs:
+    assets:
+    effects:
+    provider:
+    print_notes:
 ```
 
 Prompt Library converts this into positive/negative prompts, image size, recommended workflow type, and recommended model family.
+
+Asset metadata is selected into `selected_assets`. JamesOS scans general Creative Studio assets plus brand assets such as:
+
+```text
+~/JamesOSData/JamesOS/Brands/UnityStitches/Assets/
+```
+
+Pride/LGBTQ/trans/intersex queries prefer matching flag assets when present. Font files remain metadata-only and do not expose file paths or binary content.

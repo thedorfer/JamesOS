@@ -52,12 +52,27 @@ curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/image-wo
 
 The job requires approval and does not execute automatically.
 
-The helper creates a `creative_spec` for UnityStitches pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered print artwork with no person and no mockup. It also prints the next approve and execute commands.
+The helper creates a `creative_spec` with a `design_recipe` for UnityStitches pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered vector-style print artwork with no person, no product mockup, and no lifestyle background.
+
+The helper output also shows:
+
+- selected provider
+- selected asset metadata
+- exact approve CLI/API commands
+- exact execute-approved curl command
+- command to open the output folder
 
 ## 5. Approve the job
 
 ```bash
 python3 scripts/job_queue.py approve JOB_ID
+```
+
+or:
+
+```bash
+curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" \
+  http://localhost:8787/jobs/JOB_ID/approve
 ```
 
 ## 6. Execute the approved job

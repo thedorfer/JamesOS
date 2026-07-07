@@ -111,10 +111,22 @@ def last_generated_image_path() -> str:
 
 def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
     creative_spec = package.get("creative_spec") if isinstance(package.get("creative_spec"), dict) else None
+    brand_id = str(package.get("brand_id") or (creative_spec or {}).get("brand_id") or get_default_brand().get("brand_id", "unitystitches"))
+    brand = get_brand(brand_id)
+    selected_style = style_registry.select_style(package)
+    selected_assets = asset_library.suggest_assets({**package, "brand_id": brand_id, "style": selected_style.get("name", "")})
+    if creative_spec:
+        creative_spec = dict(creative_spec)
+        if selected_assets and not creative_spec.get("selected_assets"):
+            creative_spec["selected_assets"] = selected_assets
+        recipe = creative_spec.get("design_recipe")
+        if isinstance(recipe, dict) and selected_assets and not recipe.get("assets"):
+            creative_spec["design_recipe"] = {**recipe, "assets": [asset.get("name") for asset in selected_assets if asset.get("name")]}
     prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec) if creative_spec else {}
     if prompt_package:
         package = {
             **package,
+            "creative_spec": creative_spec,
             "prompt": prompt_package["positive_prompt"],
             "negative_prompt": prompt_package["negative_prompt"],
             "width": prompt_package["width"],
@@ -123,11 +135,7 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         }
     workflow = workflow_manager.choose_workflow_for_package(package)
     model = model_registry.choose_model_for_workflow(workflow)
-    brand_id = str(package.get("brand_id") or get_default_brand().get("brand_id", "unitystitches"))
-    brand = get_brand(brand_id)
     selected_prompt_template = prompt_library.select_prompt_template({**package, "workflow_type": workflow.get("type", "")})
-    selected_style = style_registry.select_style(package)
-    asset_suggestions = asset_library.suggest_assets({**package, "brand_id": brand_id, "style": selected_style.get("name", "")})
     output_folder = Path(str(package.get("output_folder") or OUTPUT_FOLDER)).expanduser()
     prompt = str(
         package.get("prompt")
@@ -154,6 +162,9 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         "requires_approval": True,
         "comfyui_url": COMFYUI_URL,
         "selected_workflow": workflow,
+        "requested_workflow_type": workflow.get("requested_workflow_type") or package.get("workflow_type") or "",
+        "selected_workflow_type": workflow.get("selected_workflow_type") or workflow.get("type") or "",
+        "workflow_alias_used": bool(workflow.get("workflow_alias_used")),
         "selected_model": model,
         "selected_prompt_template": selected_prompt_template,
         "selected_style": selected_style,
@@ -162,7 +173,8 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         "brand_id": brand["brand_id"],
         "brand_name": brand["display_name"],
         "brand_voice": brand.get("brand_voice", ""),
-        "asset_suggestions": asset_suggestions,
+        "asset_suggestions": selected_assets,
+        "selected_assets": selected_assets,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
         "output_folder": str(output_folder),
@@ -194,6 +206,27 @@ def _product_art_basic_workflow() -> dict[str, Any]:
     raise JobQueueError("print_design_basic/product_art_basic workflow not found. Put it at ~/AI/Workflows/print_design_basic.json or product_art_basic.json and run /workflows/scan.")
 
 
+def _default_design_recipe(width: int, height: int, provider: str = "printify") -> dict[str, Any]:
+    return {
+        "product_type": "design_art",
+        "niche": "LGBTQ+ pride",
+        "design_goal": "Create a joyful pride design that reads clearly on POD products.",
+        "artwork_type": "flat print design",
+        "background": "white or transparent-background-friendly",
+        "layout": "centered",
+        "palette": ["rainbow", "white", "black accent"],
+        "text": "Love Is Love",
+        "typography": "bold readable rounded sans",
+        "motifs": ["hearts", "sparkles", "pride rainbow"],
+        "assets": [],
+        "effects": "clean vector-like print art",
+        "provider": provider,
+        "print_notes": "high contrast, readable at thumbnail size, no person, no mockup",
+        "width": width,
+        "height": height,
+    }
+
+
 def create_test_image_job(
     *,
     positive_prompt: str = "UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic",
@@ -206,6 +239,17 @@ def create_test_image_job(
 ) -> dict[str, Any]:
     checkpoint = _first_discovered_checkpoint()
     workflow = _product_art_basic_workflow()
+    provider = "printify"
+    design_recipe = _default_design_recipe(width, height, provider)
+    selected_assets = asset_library.suggest_assets({
+        "brand_id": brand_id,
+        "niche": design_recipe["niche"],
+        "style": "pride",
+        "product_type": design_recipe["product_type"],
+        "title": design_recipe["text"],
+    })
+    if selected_assets:
+        design_recipe["assets"] = [asset.get("name") for asset in selected_assets if asset.get("name")]
     creative_spec = {
         "brand_id": brand_id,
         "brand_name": "UnityStitches",
@@ -222,6 +266,9 @@ def create_test_image_job(
         "layout": "flat centered print artwork",
         "print_requirements": "standalone print design, white or transparent-background-friendly background, POD-safe, high contrast, large readable text, no product photo",
         "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content, no person, no model, no mockup",
+        "design_recipe": design_recipe,
+        "selected_assets": selected_assets,
+        "pod_provider": provider,
         "width": width,
         "height": height,
     }
@@ -241,14 +288,22 @@ def create_test_image_job(
         "width": width,
         "height": height,
         "brand_id": brand_id,
+        "pod_provider": provider,
         "draft_path": draft_path,
+        "selected_assets": selected_assets,
         "image_plan": {
             "selected_workflow": {
                 "name": workflow["name"],
                 "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
                 "path": workflow.get("path") or workflow.get("workflow_path"),
                 "type": workflow.get("type", "print_design_basic"),
+                "requested_workflow_type": "print_design_basic",
+                "selected_workflow_type": workflow.get("type", "print_design_basic"),
+                "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != "print_design_basic",
             },
+            "requested_workflow_type": "print_design_basic",
+            "selected_workflow_type": workflow.get("type", "print_design_basic"),
+            "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != "print_design_basic",
             "selected_model": {
                 "name": checkpoint["name"],
                 "path": checkpoint["path"],
@@ -259,10 +314,13 @@ def create_test_image_job(
             "negative_prompt": negative_prompt,
             "creative_spec": creative_spec,
             "prompt_package": prompt_package,
+            "design_recipe": design_recipe,
+            "selected_assets": selected_assets,
             "seed": seed,
             "width": width,
             "height": height,
             "brand_id": brand_id,
+            "pod_provider": provider,
         },
         "execution_enabled": False,
         "auto_execute": False,
@@ -310,6 +368,7 @@ def _plan_from_job(job: dict[str, Any]) -> dict[str, Any]:
                 "negative_prompt": prompt_package["negative_prompt"],
                 "width": prompt_package["width"],
                 "height": prompt_package["height"],
+                "workflow_type": prompt_package["recommended_workflow_type"],
                 "prompt_package": prompt_package,
             }
         return existing
@@ -414,7 +473,7 @@ def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> Non
     if not path.exists():
         return
     data = json.loads(path.read_text(encoding="utf-8"))
-    provider = str(data.get("pod_provider") or payload.get("pod_provider") or "inkedjoy").lower()
+    provider = str(data.get("pod_provider") or payload.get("pod_provider") or "printify").lower()
     update = {
         "design_image_path": image_path,
         "design_status": "image_generated",
