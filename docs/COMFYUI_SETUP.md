@@ -13,6 +13,21 @@ Current JamesOS rules:
 - Do not upload generated artwork to Printify or Etsy yet.
 - Route future image generation through the Job Queue and approval flow.
 
+Control Center exposes ComfyUI readiness without execution:
+
+```text
+GET /control-center/integrations
+```
+
+Expected safety fields:
+
+```text
+configured_api_url: http://localhost:8188
+max_concurrent_image_jobs: 1
+one_image_job_at_a_time: true
+execution_enabled: false
+```
+
 ## Target Hardware
 
 Desktop GPU target:

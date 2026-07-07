@@ -26,6 +26,17 @@ GET /server/page
 
 These routes report local configuration and safety status. They do not call external services.
 
+Control Center routes provide the combined admin/readiness view:
+
+```text
+GET /control-center
+GET /control-center/integrations
+GET /control-center/jobs
+GET /control-center/storage
+```
+
+Control Center also does not call external services.
+
 ## Current Integrations
 
 ### Jade Flutter App
@@ -58,13 +69,19 @@ Status: active foundation.
 
 The queue stores approval-gated automation jobs. Future integrations should use the queue before taking consequential action.
 
+### Control Center
+
+Status: active foundation.
+
+Control Center summarizes integration readiness, queue counts, approval-needed jobs, service health, and storage checks. It is meant to make automation readiness visible while keeping execution flags false until a later phase explicitly implements them.
+
 ## Planned Integrations
 
 ### ComfyUI
 
-Status: planned local-only image engine.
+Status: configured/readiness only, not running from JamesOS.
 
-No execution is implemented yet. Future use should run locally against the desktop ComfyUI API and save generated PNG assets under JamesOSData.
+No execution is implemented yet. Control Center reports the configured API URL, max concurrent image jobs, one-image-at-a-time readiness, and `execution_enabled: false`. Future use should run locally against the desktop ComfyUI API and save generated PNG assets under JamesOSData.
 
 ### Printify
 
@@ -84,12 +101,15 @@ Rules:
 - do not order
 - do not send to production
 - require James approval
+- keep Control Center execution and publish flags false until intentionally implemented
 
 ### Etsy
 
 Status: planned approval-only sales platform.
 
 Future Etsy work should prepare draft metadata and review pages. No live listings should be created without explicit approval.
+
+Control Center reports Etsy as not configured and non-executable in this phase.
 
 ### UnityStitches
 

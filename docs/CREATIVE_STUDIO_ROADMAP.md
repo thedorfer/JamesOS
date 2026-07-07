@@ -17,6 +17,7 @@ Status: foundation in place.
 - Job Queue
 - approval-gated job model
 - server config and integration health foundation
+- Control Center admin/readiness foundation
 - architecture and roadmap docs
 - safe placeholders for Creative Studio, UnityStitches, and ComfyUI
 
@@ -58,6 +59,7 @@ Still not included:
 
 Planned:
 
+- Control Center-backed health and approval summary in Jade
 - dashboard for creative jobs
 - draft package viewer
 - approve/reject/regenerate actions

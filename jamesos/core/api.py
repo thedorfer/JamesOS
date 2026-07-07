@@ -41,6 +41,14 @@ from jamesos.services.creative_studio import (
     health as creative_studio_health,
     list_creative_jobs,
 )
+from jamesos.services.control_center import (
+    control_center as control_center_summary,
+    health as control_center_health,
+    integrations as control_center_integrations,
+    jobs as control_center_jobs,
+    services as control_center_services,
+    storage as control_center_storage,
+)
 from jamesos.services.server_config import (
     integration_health,
     server_config,
@@ -292,6 +300,42 @@ def server_health(x_jamesos_key: str | None = Header(default=None)):
 def server_config_page(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return write_server_config_report()
+
+
+@app.get("/control-center")
+def control_center_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_summary()
+
+
+@app.get("/control-center/health")
+def control_center_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_health()
+
+
+@app.get("/control-center/services")
+def control_center_services_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_services()
+
+
+@app.get("/control-center/integrations")
+def control_center_integrations_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_integrations()
+
+
+@app.get("/control-center/jobs")
+def control_center_jobs_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_jobs()
+
+
+@app.get("/control-center/storage")
+def control_center_storage_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_storage()
 
 
 @app.get("/jobs")

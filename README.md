@@ -12,6 +12,7 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Builds local evidence into search indexes, reports, timelines, Working Memory, and Knowledge Graph pages.
 - Lets Jade answer from local context instead of guessing.
 - Provides a Job Queue for approval-first automation.
+- Provides a Control Center API/report for health, integrations, jobs, storage, and automation readiness.
 - Supports Android phone ingestion through Tasker.
 - Provides a Flutter Jade app for Linux and Android.
 - Plans draft-only creative automation for UnityStitches, ComfyUI, Printify, and Etsy.
@@ -42,6 +43,33 @@ The Job Queue stores durable jobs under:
 ```
 
 Approval-gated jobs cannot complete unless approved. This model is intended to protect future automations such as product generation, image generation, Printify drafts, Etsy drafts, email actions, and phone-driven workflows.
+
+## Control Center
+
+The Control Center summarizes JamesOS readiness without taking external action:
+
+- API and server config status
+- Job Queue counts and approval-needed jobs
+- Knowledge Graph and Creative Studio status
+- integration readiness for ComfyUI, Printify, Etsy, Tasker/phone ingestion, and Outlook import
+- storage paths for JamesOSData, Knowledge Graph, Queue, Creative Studio, Reports, Phone, Email, and ChatGPT data
+
+API routes:
+
+```text
+GET /control-center
+GET /control-center/health
+GET /control-center/services
+GET /control-center/integrations
+GET /control-center/jobs
+GET /control-center/storage
+```
+
+The generated report is:
+
+```text
+~/JamesOSData/JamesOS/Reports/Control Center.md
+```
 
 ## Jade Modes
 
@@ -121,6 +149,7 @@ python3 scripts/job_queue.py approve JOB_ID
 - [Desktop setup](docs/SETUP_DESKTOP.md)
 - [ComfyUI setup](docs/COMFYUI_SETUP.md)
 - [Integrations](docs/INTEGRATIONS.md)
+- [Control Center](docs/CONTROL_CENTER.md)
 - [Phone ingestion via Tasker](docs/PHONE_INGESTION_TASKER.md)
 - [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
 - [API](docs/api.md)

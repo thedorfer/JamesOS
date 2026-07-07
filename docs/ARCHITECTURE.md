@@ -95,11 +95,32 @@ The generated page is:
 ~/JamesOSData/JamesOS/Reports/Server Configuration.md
 ```
 
+## Control Center
+
+The Control Center is the admin/readiness layer over the current pipeline. It summarizes API health, Job Queue counts, approval-needed jobs, Knowledge Graph status, Creative Studio status, server config status, integration readiness, and important JamesOSData storage paths.
+
+API routes:
+
+- `GET /control-center`
+- `GET /control-center/health`
+- `GET /control-center/services`
+- `GET /control-center/integrations`
+- `GET /control-center/jobs`
+- `GET /control-center/storage`
+
+The generated report is:
+
+```text
+~/JamesOSData/JamesOS/Reports/Control Center.md
+```
+
+Control Center is observational. It does not execute ComfyUI, call Printify, call Etsy, publish, order, or send anything.
+
 ## Jade Creative Studio
 
 Jade Creative Studio is the planned creative automation workspace. It will use the Job Queue to prepare, review, approve, regenerate, and archive draft creative work.
 
-Phase 1 is roadmap-only for Creative Studio. It does not generate images or product drafts yet.
+The current foundation supports approval-gated placeholder creative jobs and health reporting. It does not generate images or product drafts yet.
 
 ## UnityStitches Product Pipeline
 
