@@ -60,6 +60,12 @@ from jamesos.services.server_config import (
     service_health,
     write_server_config_report,
 )
+from jamesos.services.unitystitches_product_pipeline import (
+    drafts_for_date as unitystitches_drafts_for_date,
+    generate_daily_product_drafts as generate_unitystitches_daily_drafts,
+    health as unitystitches_health,
+    list_drafts as list_unitystitches_drafts,
+)
 from jamesos.services.worker_registry import get_worker, list_workers
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
@@ -467,6 +473,30 @@ def creative_studio_pipeline_detail(job_id: str, x_jamesos_key: str | None = Hea
         return get_pipeline(job_id)
     except JobQueueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/unitystitches/health")
+def unitystitches_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return unitystitches_health()
+
+
+@app.post("/unitystitches/generate-daily-drafts")
+def unitystitches_generate_daily_drafts_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return generate_unitystitches_daily_drafts()
+
+
+@app.get("/unitystitches/drafts")
+def unitystitches_drafts_route(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_unitystitches_drafts(status=status)
+
+
+@app.get("/unitystitches/drafts/{date}")
+def unitystitches_drafts_for_date_route(date: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return unitystitches_drafts_for_date(date)
 
 
 @app.get("/creative-studio/jobs")

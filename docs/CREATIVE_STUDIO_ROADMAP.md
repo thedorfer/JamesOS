@@ -82,7 +82,7 @@ The review shell should be powered by Job Queue jobs and local draft files.
 
 ## Phase 4: UnityStitches Product Pipeline
 
-Planned:
+Status: foundation in place.
 
 - daily product draft packages
 - configurable product mix
@@ -92,6 +92,10 @@ Planned:
 - Printify blueprint search notes
 - `needs_review` status
 - `approval_required: true`
+- Creative Studio pipeline job per run
+- exactly two drafts per run:
+  - one women's underwear product
+  - one rotating configured product
 
 Target product direction:
 
@@ -106,7 +110,7 @@ Target product direction:
 - seasonal and holiday pride
 - Pride Month
 
-Everything remains draft-only.
+Everything remains draft-only. ComfyUI, Printify, Etsy, publishing, ordering, and sending remain disabled.
 
 ## Phase 5: Local ComfyUI Image Generation
 

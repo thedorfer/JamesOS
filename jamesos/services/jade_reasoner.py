@@ -99,6 +99,69 @@ def _score_retrieval(bundle: RetrievalBundle, intent: str, mode: str) -> int:
 
 
 class JadeReasoner:
+    def _unitystitches_command(self, question: str) -> dict | None:
+        lower = question.strip().lower().replace("’", "'")
+        generate_phrases = [
+            "generate today's unitystitches product drafts",
+            "generate today’s unitystitches product drafts",
+            "generate today unitystitches product drafts",
+            "generate unitystitches drafts",
+        ]
+        show_phrases = [
+            "show unitystitches drafts needing review",
+            "show product drafts needing review",
+            "show unitystitches drafts",
+        ]
+        if any(phrase in lower for phrase in generate_phrases):
+            from jamesos.services.unitystitches_product_pipeline import generate_daily_product_drafts
+
+            result = generate_daily_product_drafts()
+            drafts = result.get("drafts", [])
+            lines = [
+                f"Generated {len(drafts)} UnityStitches draft packages for {result.get('date')}.",
+                "",
+            ]
+            for draft in drafts:
+                lines.append(
+                    f"- {draft.get('product_type')}: {draft.get('title')} "
+                    f"({draft.get('status')}, approval required)"
+                )
+            lines.extend([
+                "",
+                "No ComfyUI, Printify, Etsy, publishing, ordering, or sending was executed.",
+            ])
+            return {
+                "question": question,
+                "answer": "\n".join(lines),
+                "action": "unitystitches_generate_daily_drafts",
+                "confidence": 95,
+                "confidence_label": "🟢 High",
+                "working_memory": ["UnityStitches", "Creative Studio", "Job Queue"],
+                "result": result,
+            }
+        if any(phrase in lower for phrase in show_phrases):
+            from jamesos.services.unitystitches_product_pipeline import list_drafts
+
+            result = list_drafts(status="needs_review")
+            drafts = result.get("drafts", [])
+            lines = [f"UnityStitches drafts needing review: {len(drafts)}", ""]
+            if not drafts:
+                lines.append("- None")
+            for draft in drafts[:20]:
+                lines.append(
+                    f"- {draft.get('date')} - {draft.get('product_type')}: {draft.get('title')}"
+                )
+            return {
+                "question": question,
+                "answer": "\n".join(lines),
+                "action": "unitystitches_show_drafts",
+                "confidence": 95,
+                "confidence_label": "🟢 High",
+                "working_memory": ["UnityStitches", "Creative Studio"],
+                "result": result,
+            }
+        return None
+
     def understand(self, question: str, mode: str | None = None) -> ReasoningPlan:
         mode = normalize_mode(mode)
         intent = detect_intent(question)
@@ -264,6 +327,9 @@ class JadeReasoner:
             )
 
     def run(self, question: str, use_ai: bool = True, mode: str | None = None) -> dict:
+        command_result = self._unitystitches_command(question)
+        if command_result is not None:
+            return command_result
         plan = self.understand(question, mode=mode)
         self.collect_graph(plan)
         result = self.answer(plan, use_ai=use_ai)

@@ -127,9 +127,18 @@ Control Center reports Etsy as not configured and non-executable in this phase.
 
 ### UnityStitches
 
-Status: roadmap.
+Status: active draft-only foundation.
 
-UnityStitches is planned as an inclusive product draft pipeline for Etsy/Printify. It should create draft packages, not live products.
+UnityStitches creates local product draft packages and a Creative Studio pipeline job for each daily run. It creates exactly one women's underwear draft and one rotating configured product draft. It does not create live products.
+
+Routes:
+
+```text
+GET /unitystitches/health
+POST /unitystitches/generate-daily-drafts
+GET /unitystitches/drafts
+GET /unitystitches/drafts/{date}
+```
 
 ## Approval-First Safety
 

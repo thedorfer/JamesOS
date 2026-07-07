@@ -165,9 +165,18 @@ API routes:
 
 ## UnityStitches Product Pipeline
 
-UnityStitches is the planned draft-only product pipeline for inclusive Etsy/Printify products. Future draft packages may include product concepts, niches, prompts, titles, tags, descriptions, pricing notes, blueprint notes, and review status.
+UnityStitches is the draft-only product pipeline for inclusive Etsy/Printify product ideas. It generates local product draft packages and creates a Creative Studio pipeline job for the daily run.
 
-Every future UnityStitches step should remain draft-only and approval-gated.
+Each run generates exactly two local drafts: one women's underwear product and one rotating configured product. Drafts include product concepts, niches, prompts, titles, tags, descriptions, pricing notes, blueprint search notes, and `needs_review` status.
+
+API routes:
+
+- `GET /unitystitches/health`
+- `POST /unitystitches/generate-daily-drafts`
+- `GET /unitystitches/drafts`
+- `GET /unitystitches/drafts/{date}`
+
+Every UnityStitches step remains draft-only and approval-gated.
 
 ## Local ComfyUI
 

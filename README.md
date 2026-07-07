@@ -86,7 +86,7 @@ Hidden intent detection still routes local entity, system, memory, family/privat
 
 ## Creative Roadmap
 
-Jade Creative Studio and UnityStitches are roadmap areas.
+Jade Creative Studio and UnityStitches are approval-first creative foundations.
 
 Planned future flow:
 
@@ -101,6 +101,20 @@ idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy
 ```
 
 The image, Printify, Etsy, publishing, ordering, and sending stages remain disabled placeholders.
+
+UnityStitches can generate exactly two local draft product packages per run:
+
+- one women's underwear product
+- one rotating configured product
+
+UnityStitches routes:
+
+```text
+GET /unitystitches/health
+POST /unitystitches/generate-daily-drafts
+GET /unitystitches/drafts
+GET /unitystitches/drafts/{date}
+```
 
 Current safety boundaries:
 
@@ -173,6 +187,7 @@ GET /workers/{worker_name}
 - [Planner](docs/PLANNER.md)
 - [Workers](docs/WORKERS.md)
 - [Knowledge Graph editing roadmap](docs/KNOWLEDGE_GRAPH_EDITING.md)
+- [UnityStitches product pipeline](docs/UNITYSTITCHES_PRODUCT_PIPELINE.md)
 - [Phone ingestion via Tasker](docs/PHONE_INGESTION_TASKER.md)
 - [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
 - [API](docs/api.md)

@@ -125,4 +125,4 @@ Useful reports:
 - `Server Configuration.md`
 - `Daily Briefing.md`
 - `Knowledge Graph.md`
-- `UnityStitches Product Drafts.md` when future product drafting is implemented
+- `UnityStitches Product Drafts.md`
