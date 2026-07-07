@@ -63,6 +63,7 @@ from jamesos.services.control_center import (
 )
 from jamesos.services.comfyui_client import health as comfyui_health
 from jamesos.services.image_worker import (
+    create_test_image_job,
     execute_approved_image_job,
     health as image_worker_health,
     plan as image_worker_plan,
@@ -162,6 +163,16 @@ class ImageWorkerPlanRequest(BaseModel):
 class BrandValidateRequest(BaseModel):
     product_type: str
     niche: str
+
+
+class TestImageJobRequest(BaseModel):
+    positive_prompt: str = "UnityStitches inclusive pride product art, clean bold typography, print ready design"
+    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text"
+    seed: int = 1
+    width: int = 768
+    height: int = 768
+    brand_id: str = "unitystitches"
+    draft_path: str = ""
 
 
 class PhoneEventRequest(BaseModel):
@@ -517,6 +528,24 @@ def image_worker_execute_approved_route(job_id: str, x_jamesos_key: str | None =
     require_key(x_jamesos_key)
     try:
         return execute_approved_image_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/image-worker/create-test-job")
+def image_worker_create_test_job_route(req: TestImageJobRequest | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    data = req or TestImageJobRequest()
+    try:
+        return create_test_image_job(
+            positive_prompt=data.positive_prompt,
+            negative_prompt=data.negative_prompt,
+            seed=data.seed,
+            width=data.width,
+            height=data.height,
+            brand_id=data.brand_id,
+            draft_path=data.draft_path,
+        )
     except JobQueueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

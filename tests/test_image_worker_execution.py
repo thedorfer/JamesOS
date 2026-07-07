@@ -172,6 +172,46 @@ class ImageWorkerExecutionTests(unittest.TestCase):
         self.assertNotIn("publish(", source.lower())
         self.assertNotIn("send(", source.lower())
 
+    def test_create_test_image_job_requires_approval_and_does_not_execute(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            workflow_inventory = root / "workflow_inventory.json"
+            workflow_inventory.write_text(
+                json.dumps({
+                    "status": "ok",
+                    "workflows": [
+                        {
+                            "name": "product_art_basic",
+                            "path": str(workflow),
+                            "workflow_path": str(workflow),
+                            "type": "product_art",
+                            "compatible_models": ["sdxl_base"],
+                            "enabled": False,
+                            "execution_enabled": False,
+                        }
+                    ],
+                    "summary": {"total": 1, "by_type": {"product_art": 1}},
+                    "execution_enabled": False,
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(image_worker.workflow_manager, "WORKFLOW_INVENTORY_PATH", workflow_inventory):
+                result = image_worker.create_test_image_job()
+
+            job = job_queue.get_job(result["job"]["job_id"])
+            self.assertTrue(job["requires_approval"])
+            self.assertFalse(job["approved"])
+            self.assertEqual(job["status"], "pending")
+            payload = job["payload"]
+            self.assertEqual(payload["brand_id"], "unitystitches")
+            self.assertEqual(payload["workflow_name"], "product_art_basic")
+            self.assertIn("workflow_path", payload)
+            self.assertIn("checkpoint_path", payload)
+            self.assertIn("positive_prompt", payload)
+            self.assertFalse(payload["execution_enabled"])
+            self.assertFalse(payload["auto_execute"])
+
+        self.run_with_worker(scenario)
+
 
 if __name__ == "__main__":
     unittest.main()

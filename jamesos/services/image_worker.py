@@ -17,6 +17,7 @@ from jamesos.services.job_queue import (
     mark_step,
     update_job_payload,
     update_job_status,
+    create_job,
 )
 
 
@@ -121,6 +122,92 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
 
 def plan(package: dict[str, Any]) -> dict[str, Any]:
     return create_image_generation_plan(package)
+
+
+def _first_discovered_checkpoint() -> dict[str, Any]:
+    inventory = model_registry.load_model_inventory()
+    for model in inventory.get("models", []):
+        if model.get("category") == "checkpoints" and Path(str(model.get("path") or "")).exists():
+            return model
+    raise JobQueueError("No discovered checkpoint found. Run /models/scan first.")
+
+
+def _product_art_basic_workflow() -> dict[str, Any]:
+    workflows = workflow_manager.list_workflows()
+    for workflow in workflows.get("discovered_workflows", []):
+        if workflow.get("name") == "product_art_basic" and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
+            return workflow
+    for workflow in workflows.get("workflows", {}).values():
+        if workflow.get("name") == "product_art_basic" and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
+            return workflow
+    raise JobQueueError("product_art_basic workflow not found. Put it at ~/AI/Workflows/product_art_basic.json and run /workflows/scan.")
+
+
+def create_test_image_job(
+    *,
+    positive_prompt: str = "UnityStitches inclusive pride product art, clean bold typography, print ready design",
+    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text",
+    seed: int = 1,
+    width: int = 768,
+    height: int = 768,
+    brand_id: str = "unitystitches",
+    draft_path: str = "",
+) -> dict[str, Any]:
+    checkpoint = _first_discovered_checkpoint()
+    workflow = _product_art_basic_workflow()
+    payload = {
+        "checkpoint_name": Path(str(checkpoint["path"])).name,
+        "checkpoint_path": checkpoint["path"],
+        "workflow_name": workflow["name"],
+        "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
+        "positive_prompt": positive_prompt,
+        "negative_prompt": negative_prompt,
+        "seed": seed,
+        "width": width,
+        "height": height,
+        "brand_id": brand_id,
+        "draft_path": draft_path,
+        "image_plan": {
+            "selected_workflow": {
+                "name": workflow["name"],
+                "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
+                "path": workflow.get("path") or workflow.get("workflow_path"),
+                "type": workflow.get("type", "product_art"),
+            },
+            "selected_model": {
+                "name": checkpoint["name"],
+                "path": checkpoint["path"],
+                "category": checkpoint.get("category", "checkpoints"),
+                "family": checkpoint.get("family", "unknown"),
+            },
+            "prompt": positive_prompt,
+            "negative_prompt": negative_prompt,
+            "seed": seed,
+            "width": width,
+            "height": height,
+            "brand_id": brand_id,
+        },
+        "execution_enabled": False,
+        "auto_execute": False,
+        "printify_execution_enabled": False,
+        "etsy_execution_enabled": False,
+        "publish_enabled": False,
+        "upload_enabled": False,
+        "send_enabled": False,
+    }
+    job = create_job(
+        "image_generation",
+        payload,
+        requires_approval=True,
+        steps=["validation", "workflow prepared", "ComfyUI prompt queued", "image saved", "completed"],
+    )
+    return {
+        "status": "ok",
+        "job": job,
+        "execution_enabled": False,
+        "auto_execute": False,
+        "requires_approval": True,
+    }
 
 
 def _payload_details(job: dict[str, Any]) -> dict[str, Any]:

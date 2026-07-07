@@ -52,6 +52,11 @@ class ModelRegistryPhaseATests(unittest.TestCase):
         self.assertEqual(model_registry.classify_model_file(path), "checkpoints")
         self.assertEqual(model_registry.infer_model_family(path), "sdxl")
 
+    def test_realistic_vision_with_vae_in_filename_is_checkpoint_sd15(self) -> None:
+        path = Path("/tmp/AI/ComfyUI/models/checkpoints/realisticVisionV60B1_v60B1VAE.safetensors")
+        self.assertEqual(model_registry.classify_model_file(path), "checkpoints")
+        self.assertEqual(model_registry.infer_model_family(path), "sd15")
+
     def test_classifier_recognizes_lora_by_path_name(self) -> None:
         path = Path("/tmp/AI/ComfyUI/models/loras/pride_typography_lora.safetensors")
         self.assertEqual(model_registry.classify_model_file(path), "loras")

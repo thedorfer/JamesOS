@@ -274,6 +274,9 @@ def classify_model_file(path: Path) -> str:
     parts = _path_parts_lower(path)
     name = path.name.lower()
     joined = "/".join(parts)
+    parent_parts = parts[:-1]
+    if any(part in {"checkpoints", "checkpoint", "ckpt"} for part in parent_parts):
+        return "checkpoints"
     category_aliases = [
         ("diffusion_models", ["diffusion_models", "diffusion models"]),
         ("text_encoders", ["text_encoders", "text encoders", "text_encoder", "text encoder"]),
@@ -287,6 +290,10 @@ def classify_model_file(path: Path) -> str:
         ("unet", ["unet", "unets"]),
     ]
     for category, aliases in category_aliases:
+        if category == "vae":
+            if any(alias in parent_parts for alias in aliases) or name in {"vae.safetensors", "vae.ckpt", "vae.pt", "vae.pth", "vae.bin"} or name.endswith(".vae.safetensors"):
+                return "vae"
+            continue
         if any(alias in parts or alias in joined or alias in name for alias in aliases):
             return category
     if path.suffix.lower() == ".ckpt":
@@ -295,10 +302,13 @@ def classify_model_file(path: Path) -> str:
 
 
 def infer_model_family(path_or_name: Path | str) -> str:
+    path = Path(str(path_or_name))
     text = str(path_or_name).lower().replace("_", " ").replace("-", " ")
+    parts = [part.lower() for part in path.parts]
+    parent_parts = parts[:-1]
     if any(term in text for term in ["upscaler", "ultrasharp", "realesrgan", "esrgan", "4x"]):
         return "upscaler"
-    if "vae" in text:
+    if any(part in {"vae", "vaes"} for part in parent_parts) or path.name.lower() in {"vae.safetensors", "vae.ckpt", "vae.pt", "vae.pth", "vae.bin"} or path.name.lower().endswith(".vae.safetensors"):
         return "vae"
     if "lora" in text or "loras" in text or "lycoris" in text:
         return "lora"
@@ -308,7 +318,7 @@ def infer_model_family(path_or_name: Path | str) -> str:
         return "pony"
     if any(term in text for term in ["sdxl", "xl base", "stable diffusion xl"]):
         return "sdxl"
-    if any(term in text for term in ["sd15", "sd 1.5", "stable diffusion 1.5", "v1-5", "1.5"]):
+    if any(term in text for term in ["sd15", "sd 1.5", "stable diffusion 1.5", "v1-5", "1.5", "realisticvision", "realistic vision"]):
         return "sd15"
     return "unknown"
 
