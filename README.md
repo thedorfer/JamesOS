@@ -108,6 +108,7 @@ ComfyUI readiness routes are available for local planning and health only:
 
 ```text
 GET /models
+GET /models/scan
 GET /models/{model_name}
 GET /workflows
 GET /workflows/{workflow_name}
@@ -117,6 +118,8 @@ GET /comfyui/health
 ```
 
 Image execution remains disabled and approval-gated.
+
+The Model Registry scan is read-only. It inventories local files under `~/AI/Models`, `~/AI/ComfyUI/models`, and `~/JamesOSData/JamesOS/AI/Models`, writes `~/JamesOSData/JamesOS/AI/model_inventory.json`, and keeps all discovered models `enabled: false`.
 
 UnityStitches can generate exactly two local draft product packages per run:
 

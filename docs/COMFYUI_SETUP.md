@@ -19,6 +19,7 @@ Control Center exposes ComfyUI readiness without execution:
 GET /control-center/integrations
 GET /comfyui/health
 GET /image-worker/health
+GET /models/scan
 ```
 
 Expected safety fields:
@@ -49,6 +50,15 @@ Workflow registry:
 ```text
 ~/JamesOSData/JamesOS/AI/model_registry.yaml
 ```
+
+Model inventory scan output:
+
+```text
+~/JamesOSData/JamesOS/AI/model_inventory.json
+~/JamesOSData/JamesOS/Reports/Model Registry.md
+```
+
+The scanner checks local model folders only and keeps every discovered model `enabled: false`.
 
 Future generated assets:
 

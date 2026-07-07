@@ -55,7 +55,7 @@ from jamesos.services.control_center import (
 )
 from jamesos.services.comfyui_client import health as comfyui_health
 from jamesos.services.image_worker import health as image_worker_health, plan as image_worker_plan
-from jamesos.services.model_registry import get_model, list_models
+from jamesos.services.model_registry import get_model, list_models, scan_and_report
 from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.server_config import (
     integration_health,
@@ -406,6 +406,12 @@ def worker_detail_route(worker_name: str, x_jamesos_key: str | None = Header(def
 def models_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return list_models()
+
+
+@app.get("/models/scan")
+def models_scan_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return scan_and_report()
 
 
 @app.get("/models/{model_name}")
