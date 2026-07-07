@@ -24,7 +24,7 @@ DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
         "supported_product_types": ["shirts", "shirt", "hoodies", "hoodie", "mugs", "mug", "totes", "stickers", "accessories"],
         "api_base_url": "",
         "api_key_configured": False,
-        "notes": "Configured as a future approval-first POD provider. API writes remain disabled.",
+        "notes": "Active planned POD provider for MVP automation. Read-only foundation; API writes, draft creation, and orders remain disabled.",
         "status": "readonly_foundation",
     },
     "inkedjoy": {
@@ -52,8 +52,8 @@ DEFAULT_PROVIDERS: dict[str, dict[str, Any]] = {
         ],
         "api_base_url": "",
         "api_key_configured": False,
-        "notes": "API access not confirmed; manual upload/draft-ready mode only.",
-        "status": "manual_upload_ready_foundation",
+        "notes": "Future/manual-upload provider only; API access not confirmed; not active for current automation.",
+        "status": "future_manual_provider",
     },
 }
 
@@ -89,6 +89,13 @@ def load_provider_registry(path: Path | None = None) -> dict[str, Any]:
         provider["writes_enabled"] = False
         provider["draft_creation_enabled"] = False
         provider["order_enabled"] = False
+    if "printify" in providers:
+        providers["printify"]["enabled"] = True
+        providers["printify"]["notes"] = DEFAULT_PROVIDERS["printify"]["notes"]
+        providers["printify"]["status"] = DEFAULT_PROVIDERS["printify"]["status"]
+    if "inkedjoy" in providers:
+        providers["inkedjoy"]["notes"] = DEFAULT_PROVIDERS["inkedjoy"]["notes"]
+        providers["inkedjoy"]["status"] = DEFAULT_PROVIDERS["inkedjoy"]["status"]
     return {"providers": providers}
 
 
@@ -150,7 +157,8 @@ def write_provider_report(path: Path | None = None, report_path: Path | None = N
         "",
         "- Read-only foundation only.",
         "- External writes, draft creation, uploads, orders, and publishing are disabled.",
-        "- InkedJoy is currently manual upload/draft-ready mode only.",
+        "- Printify is the active planned MVP POD provider, still read-only with writes disabled.",
+        "- InkedJoy is future/manual-upload only and not active for current automation.",
         "",
         "## Providers",
         "",

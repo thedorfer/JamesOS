@@ -20,7 +20,7 @@ REPORT_PATH = VAULT / "JamesOS" / "Reports" / "UnityStitches Product Drafts.md"
 BRAND_ID = "unitystitches"
 
 ROTATING_OPTIONS = ["shirt", "sweatshirt", "hoodie", "tote", "mug", "seasonal_accessory"]
-INKEDJOY_PRODUCT_TERMS = {"womens_underwear", "panties", "panty", "thong", "thongs"}
+INTIMATE_POD_PRODUCT_TERMS = {"womens_underwear", "panties", "panty", "thong", "thongs"}
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "enabled": True,
@@ -143,8 +143,8 @@ def _pod_provider_for_product(product_type: str, brand: dict[str, Any]) -> str:
     rule = rules.get(normalized) if isinstance(rules, dict) else None
     if isinstance(rule, dict) and rule.get("preferred_provider"):
         return str(rule["preferred_provider"])
-    if normalized in INKEDJOY_PRODUCT_TERMS:
-        return "inkedjoy"
+    if normalized in INTIMATE_POD_PRODUCT_TERMS:
+        return "printify"
     return str(brand.get("preferred_pod_provider") or brand.get("fallback_pod_provider") or "printify")
 
 
@@ -196,7 +196,7 @@ def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str
         "pricing_notes": "Draft pricing only. Review product cost, shipping, fees, and margin before approval.",
         "printify_blueprint_search_terms": [label.lower(), product_type.replace("_", " "), "print on demand"],
         "printify_notes": "No Printify API call made. Search terms are for future manual or approved draft setup only when provider is Printify.",
-        "pod_notes": f"No {pod_provider} API call made. Local draft is for manual provider review only.",
+        "pod_notes": f"No {pod_provider} API call made. Local draft is for provider review only.",
         "status": "needs_review",
         "brand_compatibility_status": compatibility.get("brand_compatibility_status", compatibility["compatibility_status"]),
         "brand_compatibility_reason": compatibility.get("brand_compatibility_reason", compatibility["compatibility_reason"]),

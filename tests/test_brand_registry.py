@@ -32,8 +32,10 @@ class BrandRegistryTests(unittest.TestCase):
             ids = {brand["brand_id"] for brand in result["brands"]}
 
             self.assertIn("unitystitches", ids)
+            self.assertIn("bagholder_supply_co", ids)
+            self.assertIn("cheeky_peach_prints", ids)
             self.assertIn("degen_market_chaos", ids)
-            self.assertEqual(result["brand_count"], 2)
+            self.assertGreaterEqual(result["brand_count"], 4)
 
         self.run_with_registry(scenario)
 
@@ -72,6 +74,39 @@ class BrandRegistryTests(unittest.TestCase):
 
         self.run_with_registry(scenario)
 
+    def test_underwear_product_rules_prefer_printify_for_now(self) -> None:
+        def scenario(root: Path) -> None:
+            for brand_id in ["unitystitches", "cheeky_peach_prints"]:
+                brand = brand_registry.get_brand(brand_id)
+
+                self.assertEqual(brand["preferred_pod_provider"], "printify")
+                self.assertEqual(brand["provider_rules"]["womens_underwear"]["preferred_provider"], "printify")
+                self.assertEqual(brand["provider_rules"]["panties"]["preferred_provider"], "printify")
+                self.assertEqual(brand["provider_rules"]["thong"]["preferred_provider"], "printify")
+
+        self.run_with_registry(scenario)
+
+    def test_new_shop_profiles_prefer_printify(self) -> None:
+        def scenario(root: Path) -> None:
+            bagholder = brand_registry.get_brand("bagholder_supply_co")
+            cheeky = brand_registry.get_brand("cheeky_peach_prints")
+
+            self.assertEqual(bagholder["display_name"], "Bagholder Supply Co")
+            self.assertEqual(bagholder["preferred_pod_provider"], "printify")
+            self.assertEqual(bagholder["niche"], "market_chaos_degen_tshirts")
+            self.assertEqual(bagholder["product_focus"], ["shirts"])
+            self.assertEqual(bagholder["daily_design_target"], {"min": 3, "max": 5})
+            self.assertEqual(bagholder["stage_default"], "print_design_basic")
+            self.assertEqual(cheeky["display_name"], "Cheeky Peach Prints")
+            self.assertEqual(cheeky["preferred_pod_provider"], "printify")
+            self.assertEqual(cheeky["fallback_pod_provider"], "inkedjoy_manual_future")
+            self.assertEqual(cheeky["niche"], "womens_underwear_playful_seasonal")
+            self.assertEqual(cheeky["product_focus"], ["womens_underwear", "panties", "thong"])
+            self.assertEqual(cheeky["daily_design_target"], {"min": 3, "max": 5})
+            self.assertEqual(cheeky["stage_default"], "print_design_basic")
+
+        self.run_with_registry(scenario)
+
     def test_degen_shop_disabled_by_default(self) -> None:
         def scenario(root: Path) -> None:
             brand = brand_registry.get_brand("degen_market_chaos")
@@ -87,6 +122,8 @@ class BrandRegistryTests(unittest.TestCase):
                 self.assertFalse(brand["approval_rules"]["writes_enabled"])
                 self.assertFalse(brand["integrations"]["etsy"]["writes_enabled"])
                 self.assertFalse(brand["integrations"]["printify"]["writes_enabled"])
+                self.assertFalse(brand["integrations"]["printify"].get("draft_creation_enabled", False))
+                self.assertFalse(brand["integrations"]["printify"].get("order_enabled", False))
                 self.assertFalse(brand["integrations"]["comfyui"]["execution_enabled"])
 
         self.run_with_registry(scenario)
@@ -110,7 +147,7 @@ class BrandRegistryTests(unittest.TestCase):
             ):
                 self.assertEqual(api.brands_health_route()["status"], "ok")
                 self.assertEqual(api.brands_default_route()["brand"]["brand_id"], "unitystitches")
-                self.assertEqual(api.brands_route()["brand_count"], 2)
+                self.assertGreaterEqual(api.brands_route()["brand_count"], 4)
                 self.assertEqual(api.brand_detail_route("unitystitches")["brand"]["brand_id"], "unitystitches")
                 request = api.BrandValidateRequest(product_type="womens_underwear", niche="teacher gift")
                 self.assertEqual(

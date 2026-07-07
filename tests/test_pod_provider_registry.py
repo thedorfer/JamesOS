@@ -26,6 +26,20 @@ class PodProviderRegistryTests(unittest.TestCase):
                 for item in reversed(patches):
                     item.stop()
 
+    def test_printify_provider_exists_and_is_readonly_active_default(self) -> None:
+        def scenario(root: Path) -> None:
+            provider = pod_provider_registry.get_provider("printify")
+
+            self.assertEqual(provider["provider_id"], "printify")
+            self.assertTrue(provider["enabled"])
+            self.assertTrue(provider["readonly"])
+            self.assertFalse(provider["writes_enabled"])
+            self.assertFalse(provider["draft_creation_enabled"])
+            self.assertFalse(provider["order_enabled"])
+            self.assertIn("Active planned POD provider", provider["notes"])
+
+        self.run_with_registry(scenario)
+
     def test_inkedjoy_provider_exists_and_is_readonly(self) -> None:
         def scenario(root: Path) -> None:
             provider = pod_provider_registry.get_provider("inkedjoy")
@@ -37,6 +51,7 @@ class PodProviderRegistryTests(unittest.TestCase):
             self.assertFalse(provider["draft_creation_enabled"])
             self.assertFalse(provider["order_enabled"])
             self.assertIn("womens_underwear", provider["supported_product_types"])
+            self.assertIn("Future/manual-upload provider only", provider["notes"])
 
         self.run_with_registry(scenario)
 

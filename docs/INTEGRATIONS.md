@@ -62,7 +62,13 @@ It does not call Etsy, Printify, ComfyUI, upload, publish, order, or send anythi
 
 Status: active local foundation.
 
-POD Provider Registry lists Printify and InkedJoy as configurable provider targets. It is read-only and does not call either provider. UnityStitches prefers InkedJoy for women's underwear, panties, and thongs, with Printify as fallback/configurable provider.
+POD Provider Registry lists Printify and InkedJoy as configurable provider targets. It is read-only and does not call either provider. Printify is the active planned POD provider for the MVP automated shop pipeline. InkedJoy remains a future/manual-upload provider foundation only.
+
+Current shop/provider defaults:
+
+- Bagholder Supply Co uses Printify for now.
+- Cheeky Peach Prints uses Printify for now.
+- UnityStitches underwear, panties, and thongs prefer Printify for now.
 
 Routes:
 
@@ -81,7 +87,7 @@ draft_creation_enabled: false
 order_enabled: false
 ```
 
-InkedJoy status: API access not confirmed; manual upload/draft-ready mode only.
+InkedJoy status: future/manual-upload provider only; API access not confirmed; not active for current automation.
 
 ### Jade Flutter App
 

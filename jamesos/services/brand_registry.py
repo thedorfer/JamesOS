@@ -52,14 +52,14 @@ DEFAULT_REGISTRY: dict[str, Any] = {
             "shop_type": "Etsy/Printify apparel and gifts",
             "etsy_shop_name": "UnityStitches",
             "printify_shop_id": "",
-            "preferred_pod_provider": "inkedjoy",
-            "fallback_pod_provider": "printify",
+            "preferred_pod_provider": "printify",
+            "fallback_pod_provider": "inkedjoy_manual_future",
             "provider_rules": {
-                "womens_underwear": {"preferred_provider": "inkedjoy"},
-                "panties": {"preferred_provider": "inkedjoy"},
-                "panty": {"preferred_provider": "inkedjoy"},
-                "thong": {"preferred_provider": "inkedjoy"},
-                "thongs": {"preferred_provider": "inkedjoy"},
+                "womens_underwear": {"preferred_provider": "printify"},
+                "panties": {"preferred_provider": "printify"},
+                "panty": {"preferred_provider": "printify"},
+                "thong": {"preferred_provider": "printify"},
+                "thongs": {"preferred_provider": "printify"},
             },
             "status": "foundation",
             "enabled": True,
@@ -138,7 +138,109 @@ DEFAULT_REGISTRY: dict[str, Any] = {
             },
             "integrations": {
                 "etsy": {"enabled": False, "readonly": True, "shop_id": "", "shop_name": "UnityStitches", "writes_enabled": False},
-                "printify": {"enabled": False, "shop_id": "", "writes_enabled": False},
+                "printify": {"enabled": True, "readonly": True, "shop_id": "", "writes_enabled": False, "draft_creation_enabled": False, "order_enabled": False},
+                "comfyui": {"enabled": False, "execution_enabled": False},
+            },
+        },
+        "bagholder_supply_co": {
+            "brand_id": "bagholder_supply_co",
+            "display_name": "Bagholder Supply Co",
+            "shop_type": "Etsy/Printify market-chaos apparel shop",
+            "etsy_shop_name": "Bagholder Supply Co",
+            "printify_shop_id": "",
+            "preferred_pod_provider": "printify",
+            "fallback_pod_provider": "",
+            "provider_rules": {},
+            "niche": "market_chaos_degen_tshirts",
+            "product_focus": ["shirts"],
+            "daily_design_target": {"min": 3, "max": 5},
+            "stage_default": "print_design_basic",
+            "status": "foundation",
+            "enabled": True,
+            "default": False,
+            "brand_voice": "sharp, funny, finance-meme native, market-chaos aware, clean enough for marketplace review",
+            "target_audiences": ["traders", "finance meme fans", "internet culture people", "market chaos humor buyers"],
+            "allowed_niches": ["market chaos", "degen humor", "finance memes", "trading jokes", "bagholder humor"],
+            "blocked_niches": [],
+            "allowed_product_types": ["shirts", "shirt"],
+            "blocked_product_types": INTIMATE_PRODUCT_TERMS,
+            "blocked_product_niche_pairs": [],
+            "preferred_product_mix": [{"type": "shirt", "count": 3, "required": True}],
+            "colors": ["black", "white", "green", "red", "neon accent"],
+            "fonts": ["bold condensed sans", "meme caption style"],
+            "design_styles": ["bold typography", "finance meme typography", "flat print design"],
+            "seo_preferences": ["trader shirt", "finance meme shirt", "degen shirt", "market chaos shirt"],
+            "pricing_rules": {"approval_required": True},
+            "mockup_preferences": {"approval_required": True, "style": "simple apparel mockups only after design approval"},
+            "trademark_safety_notes": "Avoid exchange logos, ticker misuse, financial advice claims, celebrity names, and protected memes.",
+            "approval_rules": {
+                "require_approval_for_all_external_actions": True,
+                "writes_enabled": False,
+                "publishing_enabled": False,
+                "upload_enabled": False,
+                "order_enabled": False,
+                "send_enabled": False,
+            },
+            "integrations": {
+                "etsy": {"enabled": False, "readonly": True, "shop_id": "", "shop_name": "Bagholder Supply Co", "writes_enabled": False},
+                "printify": {"enabled": True, "readonly": True, "shop_id": "", "writes_enabled": False, "draft_creation_enabled": False, "order_enabled": False},
+                "comfyui": {"enabled": False, "execution_enabled": False},
+            },
+        },
+        "cheeky_peach_prints": {
+            "brand_id": "cheeky_peach_prints",
+            "display_name": "Cheeky Peach Prints",
+            "shop_type": "Etsy/Printify playful seasonal underwear shop",
+            "etsy_shop_name": "Cheeky Peach Prints",
+            "printify_shop_id": "",
+            "preferred_pod_provider": "printify",
+            "fallback_pod_provider": "inkedjoy_manual_future",
+            "provider_rules": {
+                "womens_underwear": {"preferred_provider": "printify"},
+                "panties": {"preferred_provider": "printify"},
+                "panty": {"preferred_provider": "printify"},
+                "thong": {"preferred_provider": "printify"},
+                "thongs": {"preferred_provider": "printify"},
+            },
+            "niche": "womens_underwear_playful_seasonal",
+            "product_focus": ["womens_underwear", "panties", "thong"],
+            "daily_design_target": {"min": 3, "max": 5},
+            "stage_default": "print_design_basic",
+            "status": "foundation",
+            "enabled": True,
+            "default": False,
+            "brand_voice": "playful, cheeky, seasonal, upbeat, clean non-explicit humor",
+            "target_audiences": ["adult gift shoppers", "seasonal apparel buyers", "playful underwear customers"],
+            "allowed_niches": ["self-love", "body positivity", "holiday playful", "seasonal inclusive", "Valentines love-is-love", "clean adult spouse/partner humor"],
+            "blocked_niches": TEACHER_CHILD_TERMS,
+            "allowed_product_types": ["womens_underwear", "panties", "panty", "thong", "thongs"],
+            "blocked_product_types": [],
+            "blocked_product_niche_pairs": [
+                {
+                    "product_terms": INTIMATE_PRODUCT_TERMS,
+                    "niche_terms": TEACHER_CHILD_TERMS,
+                    "reason": "Teacher, school, classroom, education, GCU, kids, student, back-to-school, special education, speech therapy, occupational therapy, and child-related niches must not pair with women's underwear, panties, thongs, lingerie, or intimate apparel.",
+                }
+            ],
+            "preferred_product_mix": [{"type": "womens_underwear", "count": 3, "required": True}],
+            "colors": ["peach", "pink", "cream", "red", "white", "seasonal accent"],
+            "fonts": ["bold readable sans", "playful script accents"],
+            "design_styles": ["flat print design", "seasonal typography", "cute playful graphics"],
+            "seo_preferences": ["playful underwear", "seasonal underwear", "funny adult gift", "Valentines underwear"],
+            "pricing_rules": {"approval_required": True},
+            "mockup_preferences": {"approval_required": True, "style": "clean product-forward mockups only after design approval"},
+            "trademark_safety_notes": "Avoid copyrighted characters, brand names, celebrity names, and protected slogans.",
+            "approval_rules": {
+                "require_approval_for_all_external_actions": True,
+                "writes_enabled": False,
+                "publishing_enabled": False,
+                "upload_enabled": False,
+                "order_enabled": False,
+                "send_enabled": False,
+            },
+            "integrations": {
+                "etsy": {"enabled": False, "readonly": True, "shop_id": "", "shop_name": "Cheeky Peach Prints", "writes_enabled": False},
+                "printify": {"enabled": True, "readonly": True, "shop_id": "", "writes_enabled": False, "draft_creation_enabled": False, "order_enabled": False},
                 "comfyui": {"enabled": False, "execution_enabled": False},
             },
         },
@@ -187,6 +289,15 @@ DEFAULT_REGISTRY: dict[str, Any] = {
 }
 
 
+PRINTIFY_INTIMATE_PROVIDER_RULES = {
+    "womens_underwear": {"preferred_provider": "printify"},
+    "panties": {"preferred_provider": "printify"},
+    "panty": {"preferred_provider": "printify"},
+    "thong": {"preferred_provider": "printify"},
+    "thongs": {"preferred_provider": "printify"},
+}
+
+
 def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -203,6 +314,23 @@ def _contains_any(value: str, terms: list[str]) -> list[str]:
         if term_norm and term_norm in normalized:
             matches.append(str(term))
     return matches
+
+
+def _apply_current_provider_defaults(brand_id: str, brand: dict[str, Any]) -> dict[str, Any]:
+    """Keep current MVP provider decision stable even if older YAML has InkedJoy defaults."""
+    if brand_id in {"unitystitches", "cheeky_peach_prints"}:
+        brand["preferred_pod_provider"] = "printify"
+        brand["fallback_pod_provider"] = "inkedjoy_manual_future"
+        brand["provider_rules"] = {**(brand.get("provider_rules") or {}), **PRINTIFY_INTIMATE_PROVIDER_RULES}
+    if brand_id == "bagholder_supply_co":
+        brand["preferred_pod_provider"] = "printify"
+        brand["fallback_pod_provider"] = ""
+    printify = (brand.get("integrations") or {}).get("printify")
+    if isinstance(printify, dict):
+        printify["writes_enabled"] = False
+        printify["draft_creation_enabled"] = False
+        printify["order_enabled"] = False
+    return brand
 
 
 def initialize_brand_registry(path: Path | None = None) -> dict[str, Any]:
@@ -236,7 +364,7 @@ def load_brand_registry(path: Path | None = None) -> dict[str, Any]:
                     }
                 else:
                     merged[key] = {**default_brand.get(key, {}), **loaded_brand.get(key, {})}
-        brands[brand_id] = merged
+        brands[brand_id] = _apply_current_provider_defaults(brand_id, merged)
     for brand_id, loaded_brand in loaded_brands.items():
         if brand_id not in brands:
             brands[brand_id] = loaded_brand

@@ -49,12 +49,13 @@ Key safety defaults:
 
 UnityStitches reads provider preferences from Brand Registry.
 
-- `womens_underwear`, `panties`, and `thong` prefer `inkedjoy`
+- Printify is the active planned POD provider for MVP automation.
+- `womens_underwear`, `panties`, and `thong` prefer `printify` for now.
 - other products use the configured brand provider
 - `provider_status` starts as `needs_design`
 - after local image generation, the draft becomes `ready_for_pod_review` with `provider_status: manual_upload_ready`
 
-InkedJoy is foundation-only and manual-upload-ready. JamesOS does not call the InkedJoy API.
+InkedJoy remains a future/manual-upload provider foundation only. JamesOS does not call the InkedJoy or Printify APIs.
 
 ## Storage
 
