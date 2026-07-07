@@ -319,6 +319,9 @@ class JadeReasoner:
         label = result.get("confidence_label", "")
         mode = result.get("mode", "personal")
 
+        if mode == "private":
+            return
+
         if intent in {"person", "work", "conversation_recall", "file"}:
             remember(
                 f"Jade Reasoner interaction\nMode: {mode}\nQuestion: {q}\nIntent: {intent}\nConfidence: {label}",

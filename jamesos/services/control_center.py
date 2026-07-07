@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from jamesos.config import VAULT
-from jamesos.services import brand_registry, comfyui_client, creative_studio, image_worker, job_queue, model_registry, server_config, workflow_manager
+from jamesos.services import asset_library, brand_registry, comfyui_client, creative_studio, image_worker, job_queue, model_registry, prompt_library, server_config, style_registry, workflow_manager
 from jamesos.services.knowledge_graph import GRAPH_FILE, GRAPH_REPORT
 
 
@@ -227,6 +227,9 @@ def services() -> dict[str, Any]:
     server = _safe_call({"status": "degraded"}, server_config.service_health)
     creative = _safe_call({"status": "degraded"}, creative_studio.health)
     brands = _safe_call({"status": "degraded", "brand_count": 0, "enabled_brand_count": 0}, brand_registry.brand_health)
+    prompts = _safe_call({"status": "degraded", "template_count": 0}, prompt_library.load_prompt_templates)
+    assets = _safe_call({"status": "degraded", "asset_count": 0}, asset_library.scan_assets)
+    styles = _safe_call({"status": "degraded", "style_count": 0}, style_registry.list_styles)
     image = _safe_call({"status": "degraded", "execution_enabled": False}, image_worker.health)
     registry = _safe_call({"status": "degraded", "execution_enabled": False}, model_registry.health)
     workflows = _safe_call({"status": "degraded", "execution_enabled": False}, workflow_manager.list_workflows)
@@ -245,6 +248,22 @@ def services() -> dict[str, Any]:
             "knowledge_graph": kg,
             "creative_studio": creative,
             "brand_registry": brands,
+            "prompt_library": {
+                "status": prompts.get("status", "ok"),
+                "template_count": prompts.get("template_count", 0),
+                "execution_enabled": False,
+            },
+            "asset_library": {
+                "status": assets.get("status", "ok"),
+                "asset_count": assets.get("asset_count", 0),
+                "metadata_only": True,
+                "execution_enabled": False,
+            },
+            "style_registry": {
+                "status": styles.get("status", "ok"),
+                "style_count": styles.get("style_count", 0),
+                "execution_enabled": False,
+            },
             "image_worker": image,
             "model_registry": registry,
             "workflow_manager": {

@@ -52,6 +52,11 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
                 score REAL NOT NULL,
                 keywords_json TEXT NOT NULL,
                 prompts_json TEXT NOT NULL,
+                brand_id TEXT NOT NULL DEFAULT 'unitystitches',
+                brand_name TEXT NOT NULL DEFAULT 'UnityStitches',
+                brand_voice TEXT NOT NULL DEFAULT '',
+                brand_compatibility_status TEXT NOT NULL DEFAULT 'unknown',
+                brand_compatibility_reason TEXT NOT NULL DEFAULT '',
                 compatibility_status TEXT NOT NULL DEFAULT 'unknown',
                 compatibility_reason TEXT NOT NULL DEFAULT '',
                 blocked_terms_json TEXT NOT NULL DEFAULT '[]',
@@ -134,6 +139,11 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
         _ensure_column(conn, "product_plans", "compatibility_status", "TEXT NOT NULL DEFAULT 'unknown'")
         _ensure_column(conn, "product_plans", "compatibility_reason", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "product_plans", "blocked_terms_json", "TEXT NOT NULL DEFAULT '[]'")
+        _ensure_column(conn, "product_plans", "brand_id", "TEXT NOT NULL DEFAULT 'unitystitches'")
+        _ensure_column(conn, "product_plans", "brand_name", "TEXT NOT NULL DEFAULT 'UnityStitches'")
+        _ensure_column(conn, "product_plans", "brand_voice", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "product_plans", "brand_compatibility_status", "TEXT NOT NULL DEFAULT 'unknown'")
+        _ensure_column(conn, "product_plans", "brand_compatibility_reason", "TEXT NOT NULL DEFAULT ''")
     return {"status": "ok", "db_path": str(db_path)}
 
 
@@ -343,8 +353,8 @@ def save_product_plan(plan: "ProductPlan", db_path: Path = DB_PATH) -> "ProductP
         conn.execute(
             """
             INSERT OR REPLACE INTO product_plans
-            (id, title, niche, audience, product_type, score, keywords_json, prompts_json, compatibility_status, compatibility_reason, blocked_terms_json, metadata_json, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (id, title, niche, audience, product_type, score, keywords_json, prompts_json, brand_id, brand_name, brand_voice, brand_compatibility_status, brand_compatibility_reason, compatibility_status, compatibility_reason, blocked_terms_json, metadata_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 plan.id,
@@ -355,6 +365,11 @@ def save_product_plan(plan: "ProductPlan", db_path: Path = DB_PATH) -> "ProductP
                 plan.score,
                 json.dumps(plan.keywords, sort_keys=True),
                 json.dumps(plan.prompts, sort_keys=True),
+                plan.brand_id,
+                plan.brand_name,
+                plan.brand_voice,
+                plan.brand_compatibility_status,
+                plan.brand_compatibility_reason,
                 plan.compatibility_status,
                 plan.compatibility_reason,
                 json.dumps(plan.blocked_terms, sort_keys=True),

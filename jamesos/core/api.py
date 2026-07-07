@@ -38,6 +38,7 @@ from jamesos.services.typed_index import build_typed_indexes, search_typed_index
 from jamesos.services.tool_router import route_tool
 from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.attachment_processor import process_pending_attachment_jobs
+from jamesos.services.asset_library import scan_assets
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
 from jamesos.services.creative_studio import (
@@ -64,12 +65,14 @@ from jamesos.services.comfyui_client import health as comfyui_health
 from jamesos.services.image_worker import health as image_worker_health, plan as image_worker_plan
 from jamesos.services.model_registry import get_model, list_models, scan_and_report as scan_models_and_report
 from jamesos.services.planner import create_plan, health as planner_health
+from jamesos.services.prompt_library import get_prompt_template, load_prompt_templates
 from jamesos.services.server_config import (
     integration_health,
     server_config,
     service_health,
     write_server_config_report,
 )
+from jamesos.services.style_registry import get_style, list_styles
 from jamesos.services.unitystitches_product_pipeline import (
     drafts_for_date as unitystitches_drafts_for_date,
     generate_daily_product_drafts as generate_unitystitches_daily_drafts,
@@ -303,15 +306,16 @@ def ask(req: AskRequest, x_jamesos_key: str | None = Header(default=None)):
 
     result = answer_with_reasoner(req.question, use_ai=req.use_ai, mode=req.mode)
 
-    history = _load_chat_history()
-    history.append({
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "question": req.question,
-        "mode": req.mode,
-        "answer": result.get("answer", ""),
-        "action": result.get("action", ""),
-    })
-    _save_chat_history(history)
+    if req.mode != "private":
+        history = _load_chat_history()
+        history.append({
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "question": req.question,
+            "mode": req.mode,
+            "answer": result.get("answer", ""),
+            "action": result.get("action", ""),
+        })
+        _save_chat_history(history)
     return result
 
 
@@ -502,6 +506,42 @@ def image_worker_health_route(x_jamesos_key: str | None = Header(default=None)):
 def image_worker_plan_route(req: ImageWorkerPlanRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return image_worker_plan(req.package)
+
+
+@app.get("/prompts")
+def prompts_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return load_prompt_templates()
+
+
+@app.get("/prompts/{template_name}")
+def prompt_detail_route(template_name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_prompt_template(template_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/assets")
+def assets_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return scan_assets()
+
+
+@app.get("/styles")
+def styles_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_styles()
+
+
+@app.get("/styles/{style_name}")
+def style_detail_route(style_name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_style(style_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/comfyui/health")

@@ -37,7 +37,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool listening = false;
   bool speechAvailable = false;
   bool voiceAutoSubmitted = false;
-  AppMode selectedMode = AppMode.personal;
+  AppMode selectedMode = AppMode.chat;
   List<String> workingMemory = [];
   List<Map<String, dynamic>> memoryResults = [];
   String memoryStatus =
@@ -436,6 +436,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   IconData modeIcon(AppMode mode) => switch (mode) {
     AppMode.chat => Icons.casino_outlined,
+    AppMode.private => Icons.lock_outline,
     AppMode.memory => Icons.travel_explore_outlined,
     AppMode.work => Icons.work_outline,
     AppMode.gcu => Icons.school_outlined,
@@ -446,6 +447,7 @@ class _ChatScreenState extends State<ChatScreen> {
   };
 
   Widget buildModeDropdown() {
+    const visibleModes = [AppMode.chat, AppMode.work, AppMode.private];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9),
       decoration: BoxDecoration(
@@ -459,7 +461,7 @@ class _ChatScreenState extends State<ChatScreen> {
           isDense: true,
           borderRadius: BorderRadius.circular(18),
           icon: const Icon(Icons.keyboard_arrow_down),
-          items: AppMode.values
+          items: visibleModes
               .map(
                 (mode) => DropdownMenuItem(
                   value: mode,

@@ -21,6 +21,8 @@ Default brands:
 
 The registry stores brand voice, allowed niches, blocked niches, product lists, blocked product/niche pairs, product mix, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
 
+Image Worker and Creative Intelligence use brand ID, brand name, and brand voice from this registry when preparing local creative plans.
+
 ## Safety
 
 All default brands require approval for external actions.
@@ -46,4 +48,3 @@ POST /brands/{brand_id}/validate
 ```
 
 Validation checks product/niche compatibility for the selected brand. UnityStitches blocks teacher, school, classroom, education, GCU, kids, student, back-to-school, special education, speech therapy, occupational therapy, and child-related niches from pairing with women's underwear, panties, thongs, lingerie, or intimate apparel.
-

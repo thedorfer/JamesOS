@@ -17,6 +17,10 @@ Control Center reports:
 - Model Registry and Workflow Manager presence
 - discovered model count, checkpoint count, LoRA count, upscaler count, and missing recommended categories
 - workflow count, workflow types, and missing recommended workflow types
+- Brand Registry health
+- Prompt Library status
+- Asset Library metadata count
+- Style Registry status
 - Image Worker execution-disabled readiness
 - server config health
 - integration readiness for ComfyUI, Printify, Etsy, Tasker/phone ingestion, and Outlook import

@@ -93,6 +93,9 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
             for draft in result["drafts"]:
                 self.assertEqual(draft["status"], "needs_review")
                 self.assertTrue(draft["approval_required"])
+                self.assertEqual(draft["brand_id"], "unitystitches")
+                self.assertEqual(draft["brand_name"], "UnityStitches")
+                self.assertEqual(draft["brand_compatibility_status"], "allowed")
 
         self.run_with_pipeline(scenario)
 

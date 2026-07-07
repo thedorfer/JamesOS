@@ -70,6 +70,8 @@ Creative packages include:
 
 Brand-specific compatibility is read from the JamesOS Brand Registry first. Local Creative Intelligence rules remain as a fallback safety net.
 
+Phase C adds Prompt Library, Asset Library, and Style Registry support. Image plans may include selected prompt templates, selected style, brand voice, and asset suggestions, while keeping execution disabled.
+
 When `performance_history` contains data, scoring can:
 
 - boost niches and product types with real sales

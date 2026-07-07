@@ -7,6 +7,10 @@ Current responsibilities:
 - accept a Creative Package or Prompt Package
 - select a workflow from the Workflow Manager
 - select a compatible model from the Model Registry
+- select a prompt template from Prompt Library
+- select a style from Style Registry
+- include brand ID/name/voice from Brand Registry
+- suggest local asset metadata from Asset Library
 - return a reviewable image-generation plan
 - keep execution disabled
 
@@ -32,4 +36,3 @@ GET /comfyui/health
 ```
 
 The Image Worker does not call ComfyUI yet. It only plans.
-

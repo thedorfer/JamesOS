@@ -125,6 +125,10 @@ Brand Registry centralizes brand/shop rules so Creative Intelligence, UnityStitc
 
 Default brands are UnityStitches and a disabled Degen Market Chaos placeholder. External writes remain disabled for both.
 
+## Creative Foundations
+
+Prompt Library, Asset Library, and Style Registry provide brand-aware planning inputs for Image Worker. They store prompt templates, style definitions, and asset metadata under JamesOSData. They do not expose font files, execute ComfyUI, generate images, call shops, upload, publish, order, or send anything.
+
 ## Server Configuration And Health
 
 Server and integration configuration lives under:

@@ -91,6 +91,35 @@ class BrandRegistryTests(unittest.TestCase):
 
         self.run_with_registry(scenario)
 
+    def test_live_brand_route_functions_work(self) -> None:
+        def scenario(root: Path) -> None:
+            try:
+                from jamesos.core import api
+            except ModuleNotFoundError as exc:
+                if exc.name in {"fastapi", "pydantic"}:
+                    self.skipTest("fastapi/pydantic are not installed in this Python environment")
+                raise
+
+            with (
+                patch.object(api, "require_key", return_value=None),
+                patch.object(api, "list_brands", brand_registry.list_brands),
+                patch.object(api, "brand_health", brand_registry.brand_health),
+                patch.object(api, "get_default_brand", brand_registry.get_default_brand),
+                patch.object(api, "get_brand", brand_registry.get_brand),
+                patch.object(api, "validate_brand_product_niche", brand_registry.validate_brand_product_niche),
+            ):
+                self.assertEqual(api.brands_health_route()["status"], "ok")
+                self.assertEqual(api.brands_default_route()["brand"]["brand_id"], "unitystitches")
+                self.assertEqual(api.brands_route()["brand_count"], 2)
+                self.assertEqual(api.brand_detail_route("unitystitches")["brand"]["brand_id"], "unitystitches")
+                request = api.BrandValidateRequest(product_type="womens_underwear", niche="teacher gift")
+                self.assertEqual(
+                    api.brand_validate_route("unitystitches", request)["brand_compatibility_status"],
+                    "blocked",
+                )
+
+        self.run_with_registry(scenario)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,6 +129,16 @@ GET /brands/{brand_id}
 POST /brands/{brand_id}/validate
 ```
 
+Creative Foundation routes:
+
+```text
+GET /prompts
+GET /prompts/{template_name}
+GET /assets
+GET /styles
+GET /styles/{style_name}
+```
+
 Image execution remains disabled and approval-gated.
 
 The Model Registry scan is read-only. It inventories local files under `~/AI/Models`, `~/AI/ComfyUI/models`, and `~/JamesOSData/JamesOS/AI/Models`, writes `~/JamesOSData/JamesOS/AI/model_inventory.json`, and keeps all discovered models `enabled: false`.
@@ -220,6 +230,7 @@ GET /workers/{worker_name}
 - [Workflow Manager](docs/WORKFLOW_MANAGER.md)
 - [Image Worker](docs/IMAGE_WORKER.md)
 - [Brand Registry](docs/BRAND_REGISTRY.md)
+- [Creative Foundations](docs/CREATIVE_FOUNDATIONS.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Control Center](docs/CONTROL_CENTER.md)
 - [Planner](docs/PLANNER.md)
