@@ -149,3 +149,24 @@ def graph_lookup(query: str, limit: int = 25) -> dict:
     related_nodes = [n for n in graph["nodes"] if n["id"] in related_ids][:limit * 3]
 
     return {"query": query, "nodes": matched_nodes, "related_nodes": related_nodes, "edges": related_edges}
+
+
+def edit_capabilities() -> dict:
+    return {
+        "status": "roadmap",
+        "editing_enabled": False,
+        "capabilities": [
+            "edit_summary",
+            "add_fact",
+            "mark_fact_wrong",
+            "merge_entity",
+            "refresh_from_evidence",
+            "source_citations",
+            "confidence_levels",
+        ],
+        "safety": {
+            "requires_source_citations": True,
+            "preserve_evidence": True,
+            "destructive_edits_enabled": False,
+        },
+    }

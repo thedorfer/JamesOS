@@ -22,11 +22,26 @@ CONFIG_PATH = VAULT / "JamesOS" / "Config" / "creative_studio.yaml"
 REPORT_PATH = VAULT / "JamesOS" / "Reports" / "Creative Studio.md"
 
 SAFE_JOB_TYPES = {
+    "creative_pipeline",
     "creative_image_generation",
     "creative_product_draft",
     "creative_mockup",
     "creative_social_post",
 }
+
+PIPELINE_STAGES = [
+    "idea",
+    "prompt",
+    "image",
+    "mockup",
+    "listing",
+    "review",
+    "printify_draft",
+    "etsy_review",
+    "complete",
+]
+
+DISABLED_EXTERNAL_STAGES = {"image", "mockup", "printify_draft", "etsy_review", "complete"}
 
 DEFAULT_CONFIG = {
     "enabled": True,
@@ -104,6 +119,7 @@ def health() -> dict[str, Any]:
         "publishing_enabled": False,
         "ordering_enabled": False,
         "supported_job_types": sorted(SAFE_JOB_TYPES),
+        "pipeline_stages": PIPELINE_STAGES,
         "job_count": len(creative_jobs),
         "checks": checks,
         "report": str(REPORT_PATH),
@@ -130,6 +146,34 @@ def _creative_payload(job_type: str, payload: dict[str, Any] | None = None) -> d
     }
 
 
+def _stage_notes(stage: str) -> str:
+    notes = {
+        "idea": "Capture the product or creative concept.",
+        "prompt": "Prepare draft prompts without sending them to an image engine.",
+        "image": "Future ComfyUI stage. Disabled in this phase.",
+        "mockup": "Future mockup stage. Disabled in this phase.",
+        "listing": "Prepare local listing copy only.",
+        "review": "James reviews the local draft.",
+        "printify_draft": "Future Printify draft stage. Disabled in this phase.",
+        "etsy_review": "Future Etsy review stage. Disabled in this phase.",
+        "complete": "Completion requires approved prior stages; no automation completes externally.",
+    }
+    return notes.get(stage, "Pipeline stage placeholder.")
+
+
+def _pipeline_stage_records() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": stage,
+            "status": "placeholder_disabled" if stage in DISABLED_EXTERNAL_STAGES else "pending",
+            "requires_approval": stage in {"image", "mockup", "listing", "printify_draft", "etsy_review", "complete"},
+            "execution_enabled": False,
+            "notes": _stage_notes(stage),
+        }
+        for stage in PIPELINE_STAGES
+    ]
+
+
 def create_creative_job(
     job_type: str,
     payload: dict[str, Any] | None = None,
@@ -148,6 +192,39 @@ def create_creative_job(
     mark_creative_job_needs_review(job["job_id"])
     write_report()
     return get_job(job["job_id"])
+
+
+def create_pipeline(
+    payload: dict[str, Any] | None = None,
+    *,
+    priority: int = 5,
+) -> dict[str, Any]:
+    cfg = load_config()
+    ensure_directories(cfg)
+    pipeline_payload = _creative_payload("creative_pipeline", payload)
+    pipeline_payload.update({
+        "pipeline": True,
+        "pipeline_status": "needs_review",
+        "stages": _pipeline_stage_records(),
+        "disabled_external_stages": sorted(DISABLED_EXTERNAL_STAGES),
+    })
+    job = create_job(
+        "creative_pipeline",
+        pipeline_payload,
+        priority=priority,
+        requires_approval=bool(cfg.get("require_approval", True)),
+        steps=[
+            {
+                "name": stage,
+                "status": "blocked" if stage in DISABLED_EXTERNAL_STAGES else "pending",
+            }
+            for stage in PIPELINE_STAGES
+        ],
+    )
+    mark_step(job["job_id"], "review", "needs_review", "Creative pipeline requires James review.")
+    append_job_log(job["job_id"], "Creative pipeline shell created. External execution remains disabled.")
+    write_report()
+    return get_pipeline(job["job_id"])
 
 
 def create_sample_image_job() -> dict[str, Any]:
@@ -177,6 +254,11 @@ def _is_creative_job(job: dict[str, Any]) -> bool:
     return bool(payload.get("creative_studio")) or job.get("type") in SAFE_JOB_TYPES
 
 
+def _is_pipeline_job(job: dict[str, Any]) -> bool:
+    payload = job.get("payload", {})
+    return bool(payload.get("pipeline")) or job.get("type") == "creative_pipeline"
+
+
 def list_creative_jobs(status: str | None = None) -> list[dict[str, Any]]:
     return [job for job in list_jobs(status) if _is_creative_job(job)]
 
@@ -185,6 +267,17 @@ def get_creative_job(job_id: str) -> dict[str, Any]:
     job = get_job(job_id)
     if not _is_creative_job(job):
         raise JobQueueError(f"Job is not a Creative Studio job: {job_id}")
+    return job
+
+
+def list_pipelines(status: str | None = None) -> list[dict[str, Any]]:
+    return [job for job in list_creative_jobs(status) if _is_pipeline_job(job)]
+
+
+def get_pipeline(job_id: str) -> dict[str, Any]:
+    job = get_creative_job(job_id)
+    if not _is_pipeline_job(job):
+        raise JobQueueError(f"Job is not a Creative Studio pipeline: {job_id}")
     return job
 
 
@@ -231,6 +324,16 @@ def write_report() -> dict[str, Any]:
         f"Image provider: {cfg.get('image_provider', 'comfyui')}",
         f"Approval required: {bool(cfg.get('require_approval', True))}",
         "",
+        "## Pipeline Shell",
+        "",
+        "Stages:",
+        *[f"- {stage}" for stage in PIPELINE_STAGES],
+        "",
+        "Disabled placeholders:",
+        "- ComfyUI image generation stage",
+        "- Printify draft stage",
+        "- Etsy review/listing stage",
+        "",
         "## Safety",
         "",
         "- No ComfyUI execution is active.",
@@ -246,10 +349,11 @@ def write_report() -> dict[str, Any]:
         lines.append("- None")
     for job in jobs[:50]:
         payload = job.get("payload", {})
+        pipeline = " pipeline=true" if payload.get("pipeline") else ""
         lines.append(
             f"- `{job.get('job_id')}` {job.get('type')} "
             f"status={job.get('status')} creative_status={payload.get('creative_status', 'unknown')} "
-            f"approved={job.get('approved')}"
+            f"approved={job.get('approved')}{pipeline}"
         )
     lines.append("")
     REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")

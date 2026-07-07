@@ -11,7 +11,9 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Keeps machine-owned data in `~/JamesOSData`.
 - Builds local evidence into search indexes, reports, timelines, Working Memory, and Knowledge Graph pages.
 - Lets Jade answer from local context instead of guessing.
+- Uses Planner to turn intent into proposed work without executing it.
 - Provides a Job Queue for approval-first automation.
+- Registers future workers/addons through a non-executing worker registry.
 - Provides a Control Center API/report for health, integrations, jobs, storage, and automation readiness.
 - Supports Android phone ingestion through Tasker.
 - Provides a Flutter Jade app for Linux and Android.
@@ -63,6 +65,7 @@ GET /control-center/services
 GET /control-center/integrations
 GET /control-center/jobs
 GET /control-center/storage
+GET /control-center/summary
 ```
 
 The generated report is:
@@ -88,8 +91,16 @@ Jade Creative Studio and UnityStitches are roadmap areas.
 Planned future flow:
 
 ```text
-Job Queue -> Jade Creative Studio -> UnityStitches draft package -> local ComfyUI image -> Printify draft -> Etsy draft -> James approval
+Reasoner -> Planner -> Job Queue -> Jade Creative Studio pipeline -> UnityStitches draft package -> local ComfyUI image -> Printify draft -> Etsy draft -> James approval
 ```
+
+Creative Studio now has a queue-backed pipeline shell with these stages:
+
+```text
+idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy_review -> complete
+```
+
+The image, Printify, Etsy, publishing, ordering, and sending stages remain disabled placeholders.
 
 Current safety boundaries:
 
@@ -143,6 +154,15 @@ python3 scripts/job_queue.py create unitystitches.draft --payload '{"draft_only"
 python3 scripts/job_queue.py approve JOB_ID
 ```
 
+Planner and worker readiness:
+
+```text
+GET /planner/health
+POST /planner/plan
+GET /workers
+GET /workers/{worker_name}
+```
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md)
@@ -150,6 +170,9 @@ python3 scripts/job_queue.py approve JOB_ID
 - [ComfyUI setup](docs/COMFYUI_SETUP.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Control Center](docs/CONTROL_CENTER.md)
+- [Planner](docs/PLANNER.md)
+- [Workers](docs/WORKERS.md)
+- [Knowledge Graph editing roadmap](docs/KNOWLEDGE_GRAPH_EDITING.md)
 - [Phone ingestion via Tasker](docs/PHONE_INGESTION_TASKER.md)
 - [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
 - [API](docs/api.md)

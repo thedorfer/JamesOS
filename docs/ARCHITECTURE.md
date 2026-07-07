@@ -13,10 +13,10 @@ Generated reports, queues, imports, indexes, product drafts, attachment manifest
 
 ## Evidence To Knowledge Graph To Reasoner
 
-The core reasoning pipeline is:
+The core reasoning and automation pipeline is:
 
 ```text
-Evidence -> indexes/reports/timeline -> Knowledge Graph / Working Memory -> Reasoner -> Jade
+Evidence -> indexes/reports/timeline -> Knowledge Graph / Working Memory -> Reasoner -> Planner -> Job Queue -> Workers / Creative Studio
 ```
 
 Evidence sources include:
@@ -32,6 +32,8 @@ Evidence sources include:
 
 The Knowledge Graph and Working Memory layers turn raw evidence into local entities such as people, projects, tickets, topics, files, and decisions. The Reasoner chooses from those local sources before Jade answers. If Jade claims a local fact, it should be grounded in this evidence path.
 
+The Planner is separate from the Reasoner. It proposes next steps and recommended jobs, but does not create or execute jobs. The Job Queue remains the approval boundary.
+
 ## Backend
 
 The Python backend provides:
@@ -41,6 +43,8 @@ The Python backend provides:
 - search and typed indexes
 - Knowledge Graph and memory services
 - Job Queue operations
+- Planner operations
+- worker registry/readiness operations
 - reports and health/config pages
 
 The API is usually served by `scripts/api_server.py` on port `8787`.
@@ -73,6 +77,28 @@ Each job records:
 - `logs`
 
 Approval-gated jobs cannot move to `processed` unless approved. Future creative, product, publishing, email, and image tasks should flow through this queue.
+
+## Planner
+
+The Planner converts user intent into proposed, approval-first plans. It supports initial intents for daily product generation, creative image generation, Knowledge Graph rebuilds, briefing generation, and phone ingestion review.
+
+Planner output includes recommended jobs and next actions. It does not execute those recommendations or write to the Job Queue.
+
+API routes:
+
+- `GET /planner/health`
+- `POST /planner/plan`
+
+## Worker Registry
+
+The worker registry defines future workers/addons/plugins without running them. Initial workers include Knowledge Graph, Creative Studio, ComfyUI, UnityStitches, Printify, Etsy, phone ingestion, and briefing workers.
+
+API routes:
+
+- `GET /workers`
+- `GET /workers/{worker_name}`
+
+All worker execution flags are false in this phase.
 
 ## Server Configuration And Health
 
@@ -107,6 +133,7 @@ API routes:
 - `GET /control-center/integrations`
 - `GET /control-center/jobs`
 - `GET /control-center/storage`
+- `GET /control-center/summary`
 
 The generated report is:
 
@@ -120,7 +147,21 @@ Control Center is observational. It does not execute ComfyUI, call Printify, cal
 
 Jade Creative Studio is the planned creative automation workspace. It will use the Job Queue to prepare, review, approve, regenerate, and archive draft creative work.
 
-The current foundation supports approval-gated placeholder creative jobs and health reporting. It does not generate images or product drafts yet.
+The current foundation supports approval-gated placeholder creative jobs, health reporting, and a queue-backed pipeline shell.
+
+Pipeline stages:
+
+```text
+idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy_review -> complete
+```
+
+The image, mockup, Printify, Etsy, publishing, ordering, and sending stages remain disabled placeholders.
+
+API routes:
+
+- `GET /creative-studio/pipelines`
+- `GET /creative-studio/pipelines/{job_id}`
+- `POST /creative-studio/pipelines`
 
 ## UnityStitches Product Pipeline
 
@@ -151,3 +192,9 @@ Current rules:
 ## Approval-First Safety Model
 
 JamesOS should create reviewable local drafts and queued jobs first. It should act externally only after explicit approval. This applies to product automation, image generation, email, publishing, ordering, and future sales operations.
+
+## Personal Wiki And Knowledge Graph Editing
+
+Knowledge Graph editing is roadmap-only. The current API can report future edit capabilities, but editing is disabled.
+
+Planned capabilities include edit summary, add fact, mark fact wrong, merge entity, refresh from evidence, source citations, and confidence levels.

@@ -27,9 +27,21 @@ GET /control-center/services
 GET /control-center/integrations
 GET /control-center/jobs
 GET /control-center/storage
+GET /control-center/summary
 ```
 
 All routes require the normal JamesOS API key.
+
+`GET /control-center/summary` returns Jade-friendly sections:
+
+- Overall status
+- What is ready
+- What needs attention
+- Pending approvals
+- Active jobs
+- Integrations
+- Storage
+- Next suggested actions
 
 ## Report
 
@@ -40,6 +52,10 @@ The generated markdown report lives at:
 ```
 
 Calling `GET /control-center` refreshes this report.
+
+## Jade UI
+
+Jade includes a lightweight Control Center screen opened from the chat header. It keeps Chat as the primary surface and renders the human-readable summary sections from `GET /control-center/summary`.
 
 ## Safety Model
 
@@ -60,9 +76,9 @@ The Control Center can show that an integration is planned or configured, but pl
 Control Center sits across the JamesOS pipeline:
 
 ```text
-Evidence -> Knowledge Graph -> Reasoner -> Planner -> Job Queue -> Creative Studio
+Evidence -> Knowledge Graph -> Reasoner -> Planner -> Job Queue -> Workers / Creative Studio
 ```
 
-Evidence comes from notes, email/calendar imports, ChatGPT history, reports, phone ingestion, files, and future draft packages. The Knowledge Graph and Working Memory organize that evidence. The Reasoner answers through Jade, the Planner can create queued work, and the Job Queue enforces approval before consequential automation. Creative Studio builds on that queue for future draft-only creative work.
+Evidence comes from notes, email/calendar imports, ChatGPT history, reports, phone ingestion, files, and future draft packages. The Knowledge Graph and Working Memory organize that evidence. The Reasoner answers through Jade, the Planner proposes queued work, and the Job Queue enforces approval before consequential automation. Workers are registered but do not execute yet. Creative Studio builds on the queue for future draft-only creative work.
 
 Control Center does not replace those systems. It gives James a compact view of whether they are present, healthy, and still safe.

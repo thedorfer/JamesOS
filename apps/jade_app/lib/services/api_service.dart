@@ -127,6 +127,23 @@ class ApiService {
     return {'status': 'ok', 'result': decoded};
   }
 
+  Future<Map<String, dynamic>> controlCenterSummary(
+    JadeSettings settings,
+  ) async {
+    final res = await http.get(
+      Uri.parse('${settings.apiBase}/control-center/summary'),
+      headers: {'X-JamesOS-Key': settings.apiKey},
+    );
+
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Control Center failed: ${res.statusCode} ${res.body}');
+    }
+
+    final decoded = jsonDecode(res.body);
+    if (decoded is Map<String, dynamic>) return decoded;
+    return {'status': 'ok', 'sections': decoded};
+  }
+
   String uploadMessage(
     Map<String, dynamic> uploadResult,
     String fallbackFilename,

@@ -12,6 +12,7 @@ import '../services/settings_service.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/status_chip.dart';
+import 'control_center_screen.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -315,6 +316,14 @@ class _ChatScreenState extends State<ChatScreen> {
       setState(() => settings = updated);
       await refreshStatus();
     }
+  }
+
+  Future<void> openControlCenter() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ControlCenterScreen(settings: settings),
+      ),
+    );
   }
 
   Future<void> searchMemory([String? query]) async {
@@ -697,6 +706,11 @@ class _ChatScreenState extends State<ChatScreen> {
       titleSpacing: 12,
       title: buildTopBarTitle(),
       actions: [
+        IconButton(
+          tooltip: 'Control Center',
+          onPressed: openControlCenter,
+          icon: const Icon(Icons.dashboard_customize_outlined, size: 20),
+        ),
         IconButton(
           tooltip: 'Clear chat',
           onPressed: clearChat,

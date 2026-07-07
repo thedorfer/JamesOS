@@ -41,10 +41,21 @@ Status: foundation in place.
 - Creative Studio API routes
 - Job Queue-backed creative jobs
 - safe placeholder job types:
+  - `creative_pipeline`
   - `creative_image_generation`
   - `creative_product_draft`
   - `creative_mockup`
   - `creative_social_post`
+- queue-backed pipeline shell:
+  - `idea`
+  - `prompt`
+  - `image`
+  - `mockup`
+  - `listing`
+  - `review`
+  - `printify_draft`
+  - `etsy_review`
+  - `complete`
 
 Still not included:
 

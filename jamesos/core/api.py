@@ -25,7 +25,7 @@ from jamesos.services.job_queue import (
     get_job,
     list_jobs,
 )
-from jamesos.services.knowledge_graph import build_knowledge_graph, graph_lookup
+from jamesos.services.knowledge_graph import build_knowledge_graph, edit_capabilities, graph_lookup
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
 from jamesos.services.tool_router import route_tool
@@ -36,25 +36,31 @@ from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_event
 from jamesos.services.creative_studio import (
     approve_creative_job,
     create_creative_job,
+    create_pipeline,
     fail_creative_job,
     get_creative_job,
+    get_pipeline,
     health as creative_studio_health,
     list_creative_jobs,
+    list_pipelines,
 )
 from jamesos.services.control_center import (
     control_center as control_center_summary,
+    human_summary as control_center_human_summary,
     health as control_center_health,
     integrations as control_center_integrations,
     jobs as control_center_jobs,
     services as control_center_services,
     storage as control_center_storage,
 )
+from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.server_config import (
     integration_health,
     server_config,
     service_health,
     write_server_config_report,
 )
+from jamesos.services.worker_registry import get_worker, list_workers
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
@@ -112,6 +118,17 @@ class CreativeJobCreateRequest(BaseModel):
     type: str
     payload: dict[str, Any] = Field(default_factory=dict)
     priority: int = 5
+
+
+class CreativePipelineCreateRequest(BaseModel):
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 5
+
+
+class PlannerPlanRequest(BaseModel):
+    intent: str = ""
+    prompt: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class PhoneEventRequest(BaseModel):
@@ -338,6 +355,39 @@ def control_center_storage_route(x_jamesos_key: str | None = Header(default=None
     return control_center_storage()
 
 
+@app.get("/control-center/summary")
+def control_center_summary_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return control_center_human_summary()
+
+
+@app.get("/planner/health")
+def planner_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return planner_health()
+
+
+@app.post("/planner/plan")
+def planner_plan_route(req: PlannerPlanRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return create_plan(req.intent, req.prompt, req.payload)
+
+
+@app.get("/workers")
+def workers_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_workers()
+
+
+@app.get("/workers/{worker_name}")
+def worker_detail_route(worker_name: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_worker(worker_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/jobs")
 def jobs(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
@@ -390,6 +440,33 @@ def job_fail(job_id: str, req: JobFailRequest | None = None, x_jamesos_key: str 
 def creative_studio_health_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return creative_studio_health()
+
+
+@app.get("/creative-studio/pipelines")
+def creative_studio_pipelines(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return {"status": "ok", "pipelines": list_pipelines(status)}
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/creative-studio/pipelines")
+def creative_studio_pipeline_create(req: CreativePipelineCreateRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return create_pipeline(req.payload, priority=req.priority)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/creative-studio/pipelines/{job_id}")
+def creative_studio_pipeline_detail(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_pipeline(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/creative-studio/jobs")
@@ -491,6 +568,12 @@ def graph_search(q: str, x_jamesos_key: str | None = Header(default=None)):
 def graph_build(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return {"result": build_knowledge_graph()}
+
+
+@app.get("/knowledge-graph/edit-capabilities")
+def knowledge_graph_edit_capabilities(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return edit_capabilities()
 
 
 @app.get("/typed/search")

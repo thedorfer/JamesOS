@@ -33,6 +33,7 @@ GET /control-center
 GET /control-center/integrations
 GET /control-center/jobs
 GET /control-center/storage
+GET /control-center/summary
 ```
 
 Control Center also does not call external services.
@@ -74,6 +75,19 @@ The queue stores approval-gated automation jobs. Future integrations should use 
 Status: active foundation.
 
 Control Center summarizes integration readiness, queue counts, approval-needed jobs, service health, and storage checks. It is meant to make automation readiness visible while keeping execution flags false until a later phase explicitly implements them.
+
+### Planner And Workers
+
+Status: active foundation.
+
+Planner turns intent into proposed plans and recommended jobs. The worker registry lists future addon/worker capabilities. Neither layer executes work in this phase.
+
+```text
+GET /planner/health
+POST /planner/plan
+GET /workers
+GET /workers/{worker_name}
+```
 
 ## Planned Integrations
 

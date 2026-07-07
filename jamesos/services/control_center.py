@@ -239,6 +239,94 @@ def control_center() -> dict[str, Any]:
     return summary
 
 
+def human_summary() -> dict[str, Any]:
+    center = {
+        "status": "ok",
+        "updated_at": now_timestamp(),
+        "services": services()["services"],
+        "integrations": integrations(),
+        "jobs": jobs(),
+        "storage": storage(),
+    }
+    job_data = center["jobs"]
+    counts = job_data.get("queue_counts", {})
+    approval_jobs = job_data.get("approval_needed_jobs", [])
+    service_data = center["services"]
+    integration_data = center["integrations"].get("integrations", {})
+    storage_data = center["storage"].get("paths", {})
+
+    ready = [
+        "JamesOS API is responding.",
+        "Job Queue is available for approval-first automation.",
+        "Creative Studio can create local draft jobs.",
+        "Planner and worker foundations can describe work without executing it.",
+    ]
+    if service_data.get("knowledge_graph", {}).get("status") == "ok":
+        ready.append("Knowledge Graph data is present.")
+
+    needs_attention = []
+    if service_data.get("knowledge_graph", {}).get("status") != "ok":
+        needs_attention.append("Knowledge Graph data is missing or needs a rebuild.")
+    if approval_jobs:
+        needs_attention.append(f"{len(approval_jobs)} job(s) need James approval.")
+    if not needs_attention:
+        needs_attention.append("No immediate attention items found.")
+
+    pending_approvals = [
+        f"{job.get('type')} ({job.get('status')}) - {job.get('job_id')}"
+        for job in approval_jobs
+    ] or ["No jobs are waiting on approval."]
+
+    active_count = counts.get("pending", 0) + counts.get("in_progress", 0)
+    active_jobs = [
+        f"{counts.get('pending', 0)} pending, {counts.get('in_progress', 0)} in progress, "
+        f"{counts.get('processed', 0)} processed, {counts.get('failed', 0)} failed."
+    ]
+
+    integration_lines = []
+    for name, item in integration_data.items():
+        state = "ready for configuration" if item.get("configured") else "not configured"
+        if item.get("execution_enabled"):
+            state = "execution enabled"
+        integration_lines.append(f"{name}: {item.get('status', state)}; external execution is disabled.")
+
+    storage_lines = [
+        f"{name}: {'present' if item.get('exists') else 'not found yet'}"
+        for name, item in storage_data.items()
+    ]
+
+    next_actions = [
+        "Review pending approvals before moving any job forward.",
+        "Use Planner to turn requests into proposed jobs, then approve job creation explicitly.",
+        "Rebuild the Knowledge Graph if local entity answers look stale.",
+        "Keep ComfyUI, Printify, and Etsy execution disabled until their future phases are intentionally implemented.",
+    ]
+    if active_count == 0:
+        next_actions.insert(0, "Create a draft-only Creative Studio pipeline when there is work to prepare.")
+
+    return {
+        "status": "ok",
+        "sections": {
+            "Overall status": "JamesOS is online and operating in approval-first mode.",
+            "What is ready": ready,
+            "What needs attention": needs_attention,
+            "Pending approvals": pending_approvals,
+            "Active jobs": active_jobs,
+            "Integrations": integration_lines,
+            "Storage": storage_lines,
+            "Next suggested actions": next_actions,
+        },
+        "safety": {
+            "comfyui_execution_enabled": False,
+            "printify_execution_enabled": False,
+            "etsy_execution_enabled": False,
+            "publish_enabled": False,
+            "order_enabled": False,
+            "send_enabled": False,
+        },
+    }
+
+
 def write_report(summary: dict[str, Any] | None = None) -> dict[str, Any]:
     data = summary or {
         "status": "ok",
