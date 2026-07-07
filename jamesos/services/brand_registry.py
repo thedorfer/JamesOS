@@ -52,6 +52,15 @@ DEFAULT_REGISTRY: dict[str, Any] = {
             "shop_type": "Etsy/Printify apparel and gifts",
             "etsy_shop_name": "UnityStitches",
             "printify_shop_id": "",
+            "preferred_pod_provider": "inkedjoy",
+            "fallback_pod_provider": "printify",
+            "provider_rules": {
+                "womens_underwear": {"preferred_provider": "inkedjoy"},
+                "panties": {"preferred_provider": "inkedjoy"},
+                "panty": {"preferred_provider": "inkedjoy"},
+                "thong": {"preferred_provider": "inkedjoy"},
+                "thongs": {"preferred_provider": "inkedjoy"},
+            },
             "status": "foundation",
             "enabled": True,
             "default": True,
@@ -139,6 +148,9 @@ DEFAULT_REGISTRY: dict[str, Any] = {
             "shop_type": "Etsy/Printify meme apparel and gifts placeholder",
             "etsy_shop_name": "",
             "printify_shop_id": "",
+            "preferred_pod_provider": "printify",
+            "fallback_pod_provider": "",
+            "provider_rules": {},
             "status": "placeholder",
             "enabled": False,
             "default": False,
@@ -210,7 +222,24 @@ def load_brand_registry(path: Path | None = None) -> dict[str, Any]:
         loaded = yaml.safe_load(registry_path.read_text(encoding="utf-8")) or {}
     except Exception:
         loaded = {}
-    brands = {**DEFAULT_REGISTRY["brands"], **(loaded.get("brands") or {})}
+    loaded_brands = loaded.get("brands") or {}
+    brands: dict[str, Any] = {}
+    for brand_id, default_brand in DEFAULT_REGISTRY["brands"].items():
+        loaded_brand = loaded_brands.get(brand_id) or {}
+        merged = {**default_brand, **loaded_brand}
+        for key in ["approval_rules", "integrations", "provider_rules", "pricing_rules", "mockup_preferences"]:
+            if isinstance(default_brand.get(key), dict) and isinstance(loaded_brand.get(key), dict):
+                if key == "integrations":
+                    merged[key] = {
+                        provider: {**(default_brand.get(key, {}).get(provider) or {}), **(loaded_brand.get(key, {}).get(provider) or {})}
+                        for provider in set(default_brand.get(key, {})) | set(loaded_brand.get(key, {}))
+                    }
+                else:
+                    merged[key] = {**default_brand.get(key, {}), **loaded_brand.get(key, {})}
+        brands[brand_id] = merged
+    for brand_id, loaded_brand in loaded_brands.items():
+        if brand_id not in brands:
+            brands[brand_id] = loaded_brand
     return {"brands": brands}
 
 

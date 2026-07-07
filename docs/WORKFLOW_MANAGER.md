@@ -52,6 +52,7 @@ Report:
 
 Recognized workflow types:
 
+- `print_design_basic`
 - `product_art`
 - `transparent_png`
 - `typography`
@@ -62,5 +63,7 @@ Recognized workflow types:
 - `upscale`
 - `img2img`
 - `generic`
+
+`print_design_basic` is the preferred type for flat POD-ready design artwork. `product_art_basic` remains a compatibility alias for older local workflows.
 
 Each discovered workflow reports name, path, type, status, compatible models, recommended products, transparency/mockup capabilities, `enabled: false`, and `execution_enabled: false`.

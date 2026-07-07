@@ -17,10 +17,10 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Provides a Control Center API/report for health, integrations, jobs, storage, and automation readiness.
 - Supports Android phone ingestion through Tasker.
 - Provides a Flutter Jade app for Linux and Android.
-- Plans draft-only creative automation for UnityStitches, ComfyUI, Printify, and Etsy.
+- Plans draft-only creative automation for UnityStitches, ComfyUI, InkedJoy, Printify, and Etsy.
 - Provides a read-only Etsy performance-history foundation for future UnityStitches learning.
 - Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning foundations with execution disabled.
-- Provides a Brand Registry so creative/product rules can support multiple shops safely.
+- Provides a Brand Registry and POD Provider Registry so creative/product/provider rules can support multiple shops safely.
 
 ## Core Architecture
 
@@ -94,7 +94,7 @@ Jade Creative Studio and UnityStitches are approval-first creative foundations.
 Planned future flow:
 
 ```text
-Reasoner -> Planner -> Job Queue -> Jade Creative Studio pipeline -> UnityStitches draft package -> local ComfyUI image -> Printify draft -> Etsy draft -> James approval
+Reasoner -> Planner -> Job Queue -> Jade Creative Studio pipeline -> UnityStitches draft package -> local ComfyUI flat design -> POD review -> Etsy draft -> James approval
 ```
 
 Creative Studio now has a queue-backed pipeline shell with these stages:
@@ -103,7 +103,7 @@ Creative Studio now has a queue-backed pipeline shell with these stages:
 idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy_review -> complete
 ```
 
-The image, Printify, Etsy, publishing, ordering, and sending stages remain disabled placeholders.
+The image stage can execute one approved local ComfyUI job and save a local PNG. InkedJoy, Printify, Etsy, publishing, uploads, ordering, and sending remain disabled.
 
 ComfyUI readiness routes are available for local planning and health only:
 
@@ -116,6 +116,8 @@ GET /workflows/scan
 GET /workflows/{workflow_name}
 GET /image-worker/health
 POST /image-worker/plan
+POST /image-worker/create-test-job
+POST /image-worker/jobs/{job_id}/execute-approved
 GET /comfyui/health
 ```
 
@@ -127,6 +129,14 @@ GET /brands/health
 GET /brands/default
 GET /brands/{brand_id}
 POST /brands/{brand_id}/validate
+```
+
+POD Provider Registry routes:
+
+```text
+GET /pod-providers
+GET /pod-providers/health
+GET /pod-providers/{provider_id}
 ```
 
 Creative Foundation routes:

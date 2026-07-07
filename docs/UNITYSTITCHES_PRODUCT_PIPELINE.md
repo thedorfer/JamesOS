@@ -1,6 +1,6 @@
 # UnityStitches Product Pipeline
 
-UnityStitches is a draft-only daily product package generator for inclusive Etsy/Printify product ideas.
+UnityStitches is a draft-only daily product package generator for inclusive Etsy/POD product ideas.
 
 It uses:
 
@@ -8,7 +8,7 @@ It uses:
 Planner -> Job Queue -> Creative Studio pipeline -> local draft package
 ```
 
-It does not call Printify, call Etsy, publish, order, or send anything. A UnityStitches image job may generate one local ComfyUI draft image only after explicit Job Queue approval.
+It does not call InkedJoy, call Printify, call Etsy, publish, order, upload, or send anything. A UnityStitches image job may generate one local ComfyUI draft image only after explicit Job Queue approval.
 
 ## Daily Rule
 
@@ -44,6 +44,17 @@ Key safety defaults:
 - `send_to_production: false`
 - `require_james_approval: true`
 - image generation provider is ComfyUI, but execution requires an explicitly approved image job
+
+## POD Provider Selection
+
+UnityStitches reads provider preferences from Brand Registry.
+
+- `womens_underwear`, `panties`, and `thong` prefer `inkedjoy`
+- other products use the configured brand provider
+- `provider_status` starts as `needs_design`
+- after local image generation, the draft becomes `ready_for_pod_review` with `provider_status: manual_upload_ready`
+
+InkedJoy is foundation-only and manual-upload-ready. JamesOS does not call the InkedJoy API.
 
 ## Storage
 
@@ -86,13 +97,15 @@ Supported phrases:
 
 ## Draft Contents
 
-Each draft includes brand ID/name/voice, product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, brand compatibility status/reason, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.
+Each draft includes brand ID/name/voice, product type, selected POD provider, provider status, niche, product idea, flat print design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, POD notes, brand compatibility status/reason, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.
 
 When an approved image job is generated for a draft, the draft JSON is updated with:
 
 - `design_image_path`
 - `design_status: image_generated`
-- `printify_status: ready_for_printify_review`
-- `status: image_ready_needs_review`
+- `provider_status: manual_upload_ready`
+- `status: ready_for_pod_review`
 
-This is still local review only; no Printify or Etsy action occurs.
+`printify_status: ready_for_printify_review` is only used when the selected provider is Printify. InkedJoy drafts do not claim Printify readiness.
+
+This is still local review only; no InkedJoy, Printify, or Etsy action occurs.

@@ -96,6 +96,18 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
                 self.assertEqual(draft["brand_id"], "unitystitches")
                 self.assertEqual(draft["brand_name"], "UnityStitches")
                 self.assertEqual(draft["brand_compatibility_status"], "allowed")
+                self.assertIn("pod_provider", draft)
+                self.assertEqual(draft["provider_status"], "needs_design")
+
+        self.run_with_pipeline(scenario)
+
+    def test_underwear_draft_prefers_inkedjoy(self) -> None:
+        def scenario(vault: Path) -> None:
+            result = unity.generate_daily_product_drafts("2026-07-07")
+            underwear = next(draft for draft in result["drafts"] if draft["product_type"] == "womens_underwear")
+
+            self.assertEqual(underwear["pod_provider"], "inkedjoy")
+            self.assertEqual(underwear["provider_status"], "needs_design")
 
         self.run_with_pipeline(scenario)
 

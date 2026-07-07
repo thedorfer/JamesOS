@@ -16,10 +16,16 @@ Report:
 
 Default brands:
 
-- `unitystitches` — enabled default brand for inclusive Etsy/Printify apparel and gifts
+- `unitystitches` — enabled default brand for inclusive Etsy/POD apparel and gifts
 - `degen_market_chaos` — disabled placeholder for future market-chaos/meme products
 
-The registry stores brand voice, allowed niches, blocked niches, product lists, blocked product/niche pairs, product mix, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
+The registry stores brand voice, allowed niches, blocked niches, product lists, blocked product/niche pairs, product mix, preferred POD provider, provider rules, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
+
+UnityStitches defaults:
+
+- preferred POD provider: `inkedjoy`
+- fallback POD provider: `printify`
+- women's underwear, panties, and thongs prefer InkedJoy
 
 Image Worker and Creative Intelligence use brand ID, brand name, and brand voice from this registry when preparing local creative plans.
 
@@ -30,6 +36,7 @@ All default brands require approval for external actions.
 Current defaults:
 
 - Etsy writes disabled
+- InkedJoy/Printify provider writes disabled
 - Printify writes disabled
 - ComfyUI execution disabled
 - no publishing

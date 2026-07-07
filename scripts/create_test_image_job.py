@@ -15,8 +15,8 @@ from jamesos.services.image_worker import create_test_image_job
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create one approval-gated local ComfyUI test image job. Does not execute.")
-    parser.add_argument("--positive-prompt", default="UnityStitches inclusive pride product art, clean bold typography, print ready design")
-    parser.add_argument("--negative-prompt", default="copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text")
+    parser.add_argument("--positive-prompt", default="UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic")
+    parser.add_argument("--negative-prompt", default="copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text, person, human, model, wearing, product photo, lifestyle photo, room, mannequin, face, hands, body, portrait, mockup")
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--width", type=int, default=768)
     parser.add_argument("--height", type=int, default=768)

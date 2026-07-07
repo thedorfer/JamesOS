@@ -11,7 +11,7 @@ Current foundation:
 - SQLite-backed local records
 - read-only Etsy performance history foundation for UnityStitches
 
-It is not an autopublisher. Creative Intelligence does not call Printify, ComfyUI, or Etsy write APIs in this phase.
+It is not an autopublisher. Creative Intelligence does not call InkedJoy, Printify, ComfyUI, or Etsy write APIs in this phase.
 
 ## Etsy Read-Only Performance
 
@@ -72,6 +72,15 @@ Brand-specific compatibility is read from the JamesOS Brand Registry first. Loca
 
 Phase C adds Prompt Library, Asset Library, and Style Registry support. Image plans may include selected prompt templates, selected style, brand voice, and asset suggestions, while keeping execution disabled.
 
+Product artwork means flat print-ready design artwork by default:
+
+- standalone centered print graphic
+- white or transparent-background-friendly background
+- high contrast and large readable text
+- no person, model, mannequin, hands, face, body, lifestyle room, or product photo
+- no mockup unless the creative stage is explicitly `mockup`
+- POD-safe and review-only
+
 Creative Spec is the structured bridge from product idea to image plan:
 
 ```yaml
@@ -79,6 +88,7 @@ creative_spec:
   brand_id:
   brand_name:
   product_type:
+  stage:
   niche:
   audience:
   emotional_hook:
@@ -93,6 +103,8 @@ creative_spec:
 ```
 
 Prompt Library converts `creative_spec` into a prompt package with positive prompt, negative prompt, width, height, recommended workflow type, and recommended model family. Raw prompt strings still work as fallback.
+
+For `stage: design_art`, Prompt Library recommends `print_design_basic`. `product_art_basic` remains a compatibility alias for older workflows.
 
 When `performance_history` contains data, scoring can:
 

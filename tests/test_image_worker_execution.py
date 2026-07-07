@@ -141,10 +141,10 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
         self.run_with_worker(scenario)
 
-    def test_unitystitches_draft_updated_to_image_ready_needs_review(self) -> None:
+    def test_unitystitches_draft_updated_to_ready_for_pod_review(self) -> None:
         def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
             draft_path = root / "draft.json"
-            draft_path.write_text(json.dumps({"status": "needs_review"}), encoding="utf-8")
+            draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "inkedjoy"}), encoding="utf-8")
             job = job_queue.create_job(
                 "image_generation",
                 {"image_plan": self.image_plan(workflow, checkpoint), "unitystitches_draft_path": str(draft_path)},
@@ -161,8 +161,9 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
             draft = json.loads(draft_path.read_text(encoding="utf-8"))
             self.assertEqual(draft["design_status"], "image_generated")
-            self.assertEqual(draft["printify_status"], "ready_for_printify_review")
-            self.assertEqual(draft["status"], "image_ready_needs_review")
+            self.assertEqual(draft["provider_status"], "manual_upload_ready")
+            self.assertEqual(draft["printify_status"], "not_applicable")
+            self.assertEqual(draft["status"], "ready_for_pod_review")
             self.assertTrue(draft["design_image_path"])
 
         self.run_with_worker(scenario)
@@ -208,12 +209,33 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertIn("creative_spec", payload)
             self.assertIn("prompt_package", payload)
             self.assertEqual(payload["brand_id"], "unitystitches")
-            self.assertEqual(payload["workflow_name"], "product_art_basic")
+            self.assertIn(payload["workflow_name"], {"product_art_basic", "print_design_basic"})
+            self.assertEqual(payload["creative_spec"]["product_type"], "design_art")
+            self.assertEqual(payload["creative_spec"]["layout"], "flat centered print artwork")
+            self.assertIn("standalone print design", payload["positive_prompt"])
+            self.assertIn("mockup", payload["negative_prompt"])
             self.assertIn("workflow_path", payload)
             self.assertIn("checkpoint_path", payload)
             self.assertIn("positive_prompt", payload)
             self.assertFalse(payload["execution_enabled"])
             self.assertFalse(payload["auto_execute"])
+
+        self.run_with_worker(scenario)
+
+    def test_workflow_validation_returns_structured_errors(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            bad_workflow = root / "ui_workflow.json"
+            bad_workflow.write_text(json.dumps({"last_node_id": 1, "nodes": []}), encoding="utf-8")
+            plan = self.image_plan(bad_workflow, checkpoint)
+
+            with self.assertRaises(image_worker.ImageWorkerError) as raised:
+                image_worker.prepare_workflow_from_plan(plan)
+
+            error = image_worker.structured_error(raised.exception)
+            self.assertEqual(error["status"], "error")
+            self.assertEqual(error["error_code"], "ui_workflow_not_api_workflow")
+            self.assertIn("next_step", error)
+            self.assertFalse(error["printify_execution_enabled"])
 
         self.run_with_worker(scenario)
 

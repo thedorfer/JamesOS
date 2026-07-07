@@ -70,6 +70,7 @@ from jamesos.services.image_worker import (
 )
 from jamesos.services.model_registry import get_model, list_models, scan_and_report as scan_models_and_report
 from jamesos.services.planner import create_plan, health as planner_health
+from jamesos.services.pod_provider_registry import get_provider, list_providers, provider_health
 from jamesos.services.prompt_library import get_prompt_template, load_prompt_templates
 from jamesos.services.server_config import (
     integration_health,
@@ -166,8 +167,8 @@ class BrandValidateRequest(BaseModel):
 
 
 class TestImageJobRequest(BaseModel):
-    positive_prompt: str = "UnityStitches inclusive pride product art, clean bold typography, print ready design"
-    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text"
+    positive_prompt: str = "UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic"
+    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text, person, human, model, wearing, product photo, lifestyle photo, room, mannequin, face, hands, body, portrait, mockup"
     seed: int = 1
     width: int = 768
     height: int = 768
@@ -469,6 +470,27 @@ def brand_validate_route(brand_id: str, req: BrandValidateRequest, x_jamesos_key
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@app.get("/pod-providers")
+def pod_providers_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_providers()
+
+
+@app.get("/pod-providers/health")
+def pod_providers_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return provider_health()
+
+
+@app.get("/pod-providers/{provider_id}")
+def pod_provider_detail_route(provider_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return {"status": "ok", "provider": get_provider(provider_id), "writes_enabled": False}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.get("/models")
 def models_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
@@ -529,7 +551,9 @@ def image_worker_execute_approved_route(job_id: str, x_jamesos_key: str | None =
     try:
         return execute_approved_image_job(job_id)
     except JobQueueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc)
 
 
 @app.post("/image-worker/create-test-job")

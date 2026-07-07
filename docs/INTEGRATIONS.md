@@ -44,7 +44,7 @@ Control Center also does not call external services.
 
 Status: active local foundation.
 
-Brand Registry stores shop-specific creative rules, approval rules, and integration safety flags for multiple future Etsy/Printify shops. Default brands are UnityStitches and a disabled Degen Market Chaos placeholder.
+Brand Registry stores shop-specific creative rules, approval rules, preferred POD providers, and integration safety flags for multiple future Etsy/POD shops. Default brands are UnityStitches and a disabled Degen Market Chaos placeholder.
 
 Routes:
 
@@ -57,6 +57,31 @@ POST /brands/{brand_id}/validate
 ```
 
 It does not call Etsy, Printify, ComfyUI, upload, publish, order, or send anything.
+
+### POD Provider Registry
+
+Status: active local foundation.
+
+POD Provider Registry lists Printify and InkedJoy as configurable provider targets. It is read-only and does not call either provider. UnityStitches prefers InkedJoy for women's underwear, panties, and thongs, with Printify as fallback/configurable provider.
+
+Routes:
+
+```text
+GET /pod-providers
+GET /pod-providers/health
+GET /pod-providers/{provider_id}
+```
+
+All provider records force:
+
+```text
+readonly: true
+writes_enabled: false
+draft_creation_enabled: false
+order_enabled: false
+```
+
+InkedJoy status: API access not confirmed; manual upload/draft-ready mode only.
 
 ### Jade Flutter App
 
@@ -111,9 +136,15 @@ GET /workers/{worker_name}
 
 ### ComfyUI
 
-Status: configured/readiness only, not running from JamesOS.
+Status: approval-gated local image execution.
 
-No execution is implemented yet. Control Center reports the configured API URL, max concurrent image jobs, one-image-at-a-time readiness, and `execution_enabled: false`. Future use should run locally against the desktop ComfyUI API and save generated PNG assets under JamesOSData.
+JamesOS may execute exactly one approved local image job against `http://127.0.0.1:8188` and save the PNG under JamesOSData. It does not call any external provider, upload the image, create a listing, or order anything. Control Center reports the configured API URL, one-image-at-a-time readiness, and external execution flags.
+
+### InkedJoy
+
+Status: planned/manual-upload foundation.
+
+JamesOS does not call InkedJoy, upload images, create products, place orders, or publish listings. Generated design PNGs are local draft assets for James review.
 
 ### Printify
 

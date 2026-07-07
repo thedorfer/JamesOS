@@ -18,6 +18,7 @@ WORKFLOW_INVENTORY_PATH = VAULT / "JamesOS" / "AI" / "workflow_inventory.json"
 REPORT_PATH = VAULT / "JamesOS" / "Reports" / "Workflow Registry.md"
 
 WORKFLOW_TYPES = {
+    "print_design_basic",
     "product_art",
     "transparent_png",
     "typography",
@@ -30,7 +31,7 @@ WORKFLOW_TYPES = {
     "generic",
 }
 
-RECOMMENDED_WORKFLOW_TYPES = ["product_art", "transparent_png", "typography", "mockup", "upscale"]
+RECOMMENDED_WORKFLOW_TYPES = ["print_design_basic", "transparent_png", "typography", "mockup", "upscale"]
 
 
 def _inventory_path(path: Path | None = None) -> Path:
@@ -103,6 +104,8 @@ def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
     ).lower()
     if "mockup" in text:
         workflow_type = "mockup"
+    elif "print_design" in text or "design_art" in text or "product_art" in text:
+        workflow_type = "print_design_basic"
     elif "transparent" in text or "png" in text:
         workflow_type = "transparent_png"
     elif "typography" in text or "shirt" in text or "sticker" in text:
@@ -117,7 +120,7 @@ def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
             return workflow
     if workflow_type in workflows:
         return workflows[workflow_type]
-    aliases = {"typography": "typography_design"}
+    aliases = {"typography": "typography_design", "print_design_basic": "product_art_basic", "product_art": "product_art_basic"}
     alias = aliases.get(workflow_type)
     if alias and alias in workflows:
         return workflows[alias]
@@ -150,6 +153,7 @@ def _workflow_text(path: Path, data: Any | None = None) -> str:
 def infer_workflow_type(path_or_name: Path | str, data: Any | None = None) -> str:
     text = _workflow_text(path_or_name if isinstance(path_or_name, Path) else Path(str(path_or_name)), data)
     checks = [
+        ("print_design_basic", ["print_design_basic", "print_design", "design_art", "flat_print", "flat_design", "standalone_print"]),
         ("background_removal", ["background_removal", "remove_background", "rembg", "birefnet"]),
         ("transparent_png", ["transparent_png", "transparent", "alpha", "png"]),
         ("typography", ["typography", "text_design", "shirt", "sticker", "poster_text"]),
@@ -158,7 +162,7 @@ def infer_workflow_type(path_or_name: Path | str, data: Any | None = None) -> st
         ("social_post", ["social_post", "instagram", "facebook", "pinterest", "social"]),
         ("upscale", ["upscale", "upscaler", "upscaling", "esrgan", "ultrasharp"]),
         ("img2img", ["img2img", "image_to_image", "loadimage", "denoise"]),
-        ("product_art", ["product_art", "product", "print_on_demand", "pod"]),
+        ("product_art", ["product_art_basic", "product_art", "product", "print_on_demand", "pod"]),
     ]
     for workflow_type, markers in checks:
         if any(marker in text for marker in markers):
@@ -175,6 +179,7 @@ def _load_workflow_json(path: Path) -> Any:
 
 def _compatible_models(workflow_type: str) -> list[str]:
     mapping = {
+        "print_design_basic": ["sdxl_base", "flux_schnell", "sd15"],
         "product_art": ["sdxl_base", "flux_schnell"],
         "transparent_png": ["transparent_png", "sdxl_base"],
         "typography": ["sdxl_typography", "sdxl_base"],
@@ -191,6 +196,7 @@ def _compatible_models(workflow_type: str) -> list[str]:
 
 def _recommended_products(workflow_type: str) -> list[str]:
     mapping = {
+        "print_design_basic": ["design_art", "shirts", "hoodies", "mugs", "stickers", "totes"],
         "product_art": ["shirts", "hoodies", "mugs", "stickers", "posters"],
         "transparent_png": ["stickers", "shirts", "transparent product art"],
         "typography": ["shirts", "hoodies", "stickers", "posters"],

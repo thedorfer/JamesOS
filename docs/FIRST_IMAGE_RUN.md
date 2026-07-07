@@ -1,6 +1,6 @@
 # First Local Image Run
 
-This is the safe path for creating one local draft image for Printify review. It does not call Printify or Etsy.
+This is the safe path for creating one local flat print design PNG for POD review. It does not call Printify, InkedJoy, or Etsy.
 
 ## 1. Put a checkpoint in ComfyUI
 
@@ -13,8 +13,10 @@ Example:
 ## 2. Put a workflow in AI workflows
 
 ```text
-~/AI/Workflows/product_art_basic.json
+~/AI/Workflows/print_design_basic.json
 ```
+
+`product_art_basic.json` is still accepted as a compatibility alias.
 
 The workflow may use these placeholders:
 
@@ -50,7 +52,7 @@ curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/image-wo
 
 The job requires approval and does not execute automatically.
 
-The helper creates a `creative_spec` for UnityStitches pride product art and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. It also prints the next approve and execute commands.
+The helper creates a `creative_spec` for UnityStitches pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered print artwork with no person and no mockup. It also prints the next approve and execute commands.
 
 ## 5. Approve the job
 
@@ -76,7 +78,10 @@ Generated images are saved locally:
 If something fails, common causes are:
 
 - no discovered checkpoint: run `/models/scan`
-- no `product_art_basic` workflow: place `~/AI/Workflows/product_art_basic.json` and run `/workflows/scan`
+- no `print_design_basic`/`product_art_basic` workflow: place `~/AI/Workflows/print_design_basic.json` and run `/workflows/scan`
+- UI workflow instead of API workflow: export/save the ComfyUI API prompt JSON, not the visual-editor workflow JSON
+- JamesOS spec instead of ComfyUI workflow: use a numbered-node ComfyUI API prompt
+- unreplaced placeholders: confirm the workflow uses supported placeholders exactly
 - ComfyUI not running: check `curl http://127.0.0.1:8188/system_stats`
 - workflow output missing: confirm the workflow saves an image output
 - model not listed in ComfyUI: confirm the checkpoint file is in ComfyUI's models/checkpoints folder and restart/rescan ComfyUI if needed
@@ -86,6 +91,7 @@ Safety boundary:
 - one image job at a time
 - local ComfyUI only: `http://127.0.0.1:8188`
 - no Printify calls
+- no InkedJoy calls
 - no Etsy calls
 - no upload
 - no publish

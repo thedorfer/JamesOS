@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -41,6 +42,30 @@ SAFETY = {
     "upload_enabled": False,
     "send_enabled": False,
 }
+
+
+class ImageWorkerError(JobQueueError):
+    def __init__(self, error_code: str, message: str, next_step: str):
+        super().__init__(message)
+        self.error_code = error_code
+        self.message = message
+        self.next_step = next_step
+
+
+def structured_error(exc: Exception) -> dict[str, Any]:
+    return {
+        "status": "error",
+        "error_code": getattr(exc, "error_code", "image_execution_failed"),
+        "message": getattr(exc, "message", str(exc)),
+        "next_step": getattr(exc, "next_step", "Review the failed image job log and fix the job payload before retrying."),
+        "execution_enabled": False,
+        "printify_execution_enabled": False,
+        "etsy_execution_enabled": False,
+        "upload_enabled": False,
+        "publish_enabled": False,
+        "order_enabled": False,
+        "send_enabled": False,
+    }
 
 
 def health() -> dict[str, Any]:
@@ -111,9 +136,16 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         or package.get("title")
         or ""
     )
+    is_mockup_stage = "mockup" in " ".join(str(package.get(key, "")) for key in ["stage", "workflow_type", "product_type", "design_prompt"]).lower()
+    if prompt and not creative_spec and not is_mockup_stage:
+        prompt = f"Standalone print design, flat centered print artwork, no person, no mockup, no product photo. {prompt}"
     negative_prompt = str(
         package.get("negative_prompt")
-        or "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing."
+        or (
+            "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing."
+            if is_mockup_stage
+            else "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing, person, human, model, wearing, shirt on body, product photo, lifestyle photo, room, shelf, mannequin, face, hands, body, realistic person, portrait, mockup."
+        )
     )
     return {
         "status": "planned",
@@ -154,18 +186,18 @@ def _first_discovered_checkpoint() -> dict[str, Any]:
 def _product_art_basic_workflow() -> dict[str, Any]:
     workflows = workflow_manager.list_workflows()
     for workflow in workflows.get("discovered_workflows", []):
-        if workflow.get("name") == "product_art_basic" and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
+        if workflow.get("name") in {"print_design_basic", "product_art_basic"} and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
             return workflow
     for workflow in workflows.get("workflows", {}).values():
-        if workflow.get("name") == "product_art_basic" and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
+        if workflow.get("name") in {"print_design_basic", "product_art_basic"} and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
             return workflow
-    raise JobQueueError("product_art_basic workflow not found. Put it at ~/AI/Workflows/product_art_basic.json and run /workflows/scan.")
+    raise JobQueueError("print_design_basic/product_art_basic workflow not found. Put it at ~/AI/Workflows/print_design_basic.json or product_art_basic.json and run /workflows/scan.")
 
 
 def create_test_image_job(
     *,
-    positive_prompt: str = "UnityStitches inclusive pride product art, clean bold typography, print ready design",
-    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text",
+    positive_prompt: str = "UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic",
+    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text, person, human, model, wearing, product photo, lifestyle photo, room, mannequin, face, hands, body, portrait, mockup",
     seed: int = 1,
     width: int = 768,
     height: int = 768,
@@ -177,18 +209,19 @@ def create_test_image_job(
     creative_spec = {
         "brand_id": brand_id,
         "brand_name": "UnityStitches",
-        "product_type": "shirt",
+        "stage": "design_art",
+        "product_type": "design_art",
         "niche": "LGBTQ+ pride",
         "audience": "inclusive gift shoppers and pride supporters",
-        "emotional_hook": "joyful, affirming, wearable pride",
+        "emotional_hook": "joyful, affirming, printable pride",
         "style": "bold pride typography",
         "colors": ["rainbow", "white", "black accent"],
         "text": "Love Is Love",
         "typography": "bold readable sans with friendly rounded edges",
         "assets": [],
-        "layout": "centered print-on-demand product art",
-        "print_requirements": "transparent-background-friendly, high contrast, readable at thumbnail size",
-        "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content",
+        "layout": "flat centered print artwork",
+        "print_requirements": "standalone print design, white or transparent-background-friendly background, POD-safe, high contrast, large readable text, no product photo",
+        "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content, no person, no model, no mockup",
         "width": width,
         "height": height,
     }
@@ -214,7 +247,7 @@ def create_test_image_job(
                 "name": workflow["name"],
                 "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
                 "path": workflow.get("path") or workflow.get("workflow_path"),
-                "type": workflow.get("type", "product_art"),
+                "type": workflow.get("type", "print_design_basic"),
             },
             "selected_model": {
                 "name": checkpoint["name"],
@@ -288,7 +321,7 @@ def _discovered_checkpoint(plan: dict[str, Any]) -> dict[str, Any]:
     if selected.get("path") or selected.get("local_path"):
         model_path = Path(str(selected.get("path") or selected.get("local_path"))).expanduser()
         if not model_path.exists():
-            raise JobQueueError(f"Checkpoint model does not exist: {model_path}")
+            raise ImageWorkerError("missing_model", f"Checkpoint model does not exist: {model_path}", "Run /models/scan and recreate the image job with a discovered checkpoint.")
         return selected
     inventory = model_registry.load_model_inventory()
     for item in inventory.get("models", []):
@@ -297,18 +330,40 @@ def _discovered_checkpoint(plan: dict[str, Any]) -> dict[str, Any]:
             if not model_path.exists():
                 continue
             return item
-    raise JobQueueError("No discovered checkpoint is available in Model Registry inventory")
+    raise ImageWorkerError("missing_model", "No discovered checkpoint is available in Model Registry inventory", "Put a checkpoint in the model roots, run /models/scan, then recreate the image job.")
 
 
 def _workflow_path(plan: dict[str, Any]) -> Path:
     workflow = plan.get("selected_workflow") if isinstance(plan.get("selected_workflow"), dict) else {}
     value = workflow.get("workflow_path") or workflow.get("path")
     if not value:
-        raise JobQueueError("Image plan does not include a workflow path")
+        raise ImageWorkerError("missing_workflow", "Image plan does not include a workflow path", "Select a discovered workflow and recreate the image job.")
     path = Path(str(value)).expanduser()
     if not path.exists():
-        raise JobQueueError(f"Workflow JSON does not exist: {path}")
+        raise ImageWorkerError("missing_workflow", f"Workflow JSON does not exist: {path}", "Run /workflows/scan or update the job to use an existing workflow JSON.")
     return path
+
+
+def _validate_prepared_workflow(prepared: Any, text: str) -> None:
+    if re.search(r"\{\{[A-Za-z0-9_]+\}\}", text):
+        raise ImageWorkerError("unreplaced_placeholders", "Prepared workflow still contains unreplaced placeholders.", "Check the workflow template placeholders and the image job payload.")
+    if not isinstance(prepared, dict):
+        raise ImageWorkerError("invalid_workflow_format", "Prepared workflow must be a ComfyUI API prompt JSON object.", "Export or create a ComfyUI API workflow JSON object.")
+    if "creative_spec" in prepared or "image_plan" in prepared or "positive_prompt" in prepared:
+        raise ImageWorkerError("jamesos_spec_not_comfyui_workflow", "Workflow file appears to be a JamesOS spec, not a ComfyUI API prompt.", "Use a ComfyUI API workflow JSON with numbered node IDs and class_type fields.")
+    if isinstance(prepared.get("nodes"), list) or "last_node_id" in prepared or "links" in prepared:
+        raise ImageWorkerError("ui_workflow_not_api_workflow", "Workflow file appears to be a ComfyUI UI workflow export, not an API prompt.", "In ComfyUI, save/export the API prompt JSON format for JamesOS execution.")
+    nodes = [node for node in prepared.values() if isinstance(node, dict)]
+    if not nodes or not any(node.get("class_type") for node in nodes):
+        raise ImageWorkerError("missing_required_comfyui_nodes", "Workflow is missing ComfyUI API nodes with class_type.", "Use a valid ComfyUI API prompt workflow containing loader, prompt, sampler, and save-image nodes.")
+    has_checkpoint = any(
+        "checkpoint" in str(node.get("class_type", "")).lower()
+        or "ckpt_name" in (node.get("inputs") or {})
+        for node in nodes
+    )
+    has_prompt = any("cliptextencode" in str(node.get("class_type", "")).replace(" ", "").lower() for node in nodes)
+    if not has_checkpoint or not has_prompt:
+        raise ImageWorkerError("missing_required_comfyui_nodes", "Workflow is missing required checkpoint or prompt encoding nodes.", "Use a ComfyUI API prompt with CheckpointLoaderSimple and CLIPTextEncode nodes.")
 
 
 def prepare_workflow_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -328,14 +383,15 @@ def prepare_workflow_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
         text = text.replace(placeholder, value)
     try:
         prepared = json.loads(text)
+        _validate_prepared_workflow(prepared, text)
         return {"workflow": prepared, "source_path": str(workflow_path)}
     except json.JSONDecodeError as exc:
-        raise JobQueueError(f"Prepared workflow is not valid JSON: {exc}") from exc
+        raise ImageWorkerError("invalid_workflow_format", f"Prepared workflow is not valid JSON: {exc}", "Fix the workflow template JSON and retry the approved job.") from exc
 
 
 def _save_images(job_id: str, images: list[dict[str, Any]]) -> list[str]:
     if not images:
-        raise JobQueueError("ComfyUI completed without output images")
+        raise ImageWorkerError("output_missing", "ComfyUI completed without output images", "Check the workflow SaveImage node and ComfyUI history output, then retry.")
     folder = GENERATED_ROOT / date.today().isoformat() / job_id
     folder.mkdir(parents=True, exist_ok=True)
     saved: list[str] = []
@@ -358,12 +414,19 @@ def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> Non
     if not path.exists():
         return
     data = json.loads(path.read_text(encoding="utf-8"))
-    data.update({
+    provider = str(data.get("pod_provider") or payload.get("pod_provider") or "inkedjoy").lower()
+    update = {
         "design_image_path": image_path,
         "design_status": "image_generated",
-        "printify_status": "ready_for_printify_review",
-        "status": "image_ready_needs_review",
-    })
+        "pod_provider": provider,
+        "provider_status": "manual_upload_ready",
+        "status": "ready_for_pod_review",
+    }
+    if provider == "printify":
+        update["printify_status"] = "ready_for_printify_review"
+    else:
+        update["printify_status"] = "not_applicable"
+    data.update(update)
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
@@ -399,16 +462,16 @@ def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_
 def execute_approved_image_job(job_id: str) -> dict[str, Any]:
     job = get_job(job_id)
     if job.get("type") not in EXECUTABLE_JOB_TYPES:
-        raise JobQueueError("Only image_generation or creative_image_generation jobs can execute")
+        raise ImageWorkerError("invalid_job_type", "Only image_generation or creative_image_generation jobs can execute", "Create an image_generation job before requesting image execution.")
     if job.get("status") == "processed":
-        raise JobQueueError("Image job has already been processed")
+        raise ImageWorkerError("job_already_processed", "Image job has already been processed", "Create a new approved image job for another generation.")
     if not job.get("approved"):
-        raise JobQueueError("Image job must be explicitly approved before execution")
+        raise ImageWorkerError("approval_required", "Image job must be explicitly approved before execution", "Approve the job first, then call execute-approved.")
     active = [item for item in list_jobs("in_progress") if item.get("type") in EXECUTABLE_JOB_TYPES and item.get("job_id") != job_id]
     if active:
-        raise JobQueueError("Another image job is already in progress")
+        raise ImageWorkerError("image_job_in_progress", "Another image job is already in progress", "Wait for the active image job to finish before starting another.")
     if not comfyui_client.is_running(COMFYUI_URL, timeout=2.0):
-        raise JobQueueError("ComfyUI is not running at http://127.0.0.1:8188")
+        raise ImageWorkerError("comfyui_not_running", "ComfyUI is not running at http://127.0.0.1:8188", "Start local ComfyUI on 127.0.0.1:8188 and retry.")
 
     payload = _payload_details(job)
     try:
@@ -419,15 +482,18 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
         workflow_json = prepare_workflow_from_plan(plan)
         append_job_log(job_id, f"workflow prepared: {workflow_json['source_path']}")
         mark_step(job_id, "workflow prepared", "complete", workflow_json["source_path"])
-        queued = comfyui_client.queue_prompt(workflow_json["workflow"], api_url=COMFYUI_URL)
+        try:
+            queued = comfyui_client.queue_prompt(workflow_json["workflow"], api_url=COMFYUI_URL)
+        except Exception as exc:
+            raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI rejected the prepared prompt: {exc}", "Open the prepared workflow in ComfyUI/API format and fix rejected node inputs.") from exc
         prompt_id = str(queued.get("prompt_id") or "")
         if not prompt_id:
-            raise JobQueueError("ComfyUI did not return a prompt_id")
+            raise ImageWorkerError("comfyui_rejected_prompt", "ComfyUI did not return a prompt_id", "Check ComfyUI API logs for rejected prompt details.")
         append_job_log(job_id, "ComfyUI prompt queued")
         mark_step(job_id, "ComfyUI prompt queued", "complete", prompt_id)
         completed = comfyui_client.wait_for_completion(prompt_id, api_url=COMFYUI_URL)
         if completed.get("status") != "completed":
-            raise JobQueueError(f"ComfyUI prompt did not complete: {completed.get('status')}")
+            raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI prompt did not complete: {completed.get('status')}", "Review ComfyUI history and logs, then retry after fixing the workflow.")
         images = comfyui_client.get_output_images(prompt_id, api_url=COMFYUI_URL)
         saved = _save_images(job_id, images)
         image_path = saved[0]
