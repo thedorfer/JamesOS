@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from jamesos.config import VAULT
+from jamesos.services.brand_registry import get_brand
 from jamesos.services.creative_studio import create_pipeline
 from jamesos.services.planner import create_plan
 from creative_intelligence.services.compatibility_service import assess_compatibility, select_compatible_package
@@ -16,6 +17,7 @@ from creative_intelligence.services.compatibility_service import assess_compatib
 CONFIG_PATH = VAULT / "JamesOS" / "Config" / "unitystitches_products.yaml"
 DRAFTS_ROOT = VAULT / "JamesOS" / "Products" / "UnityStitches" / "Drafts"
 REPORT_PATH = VAULT / "JamesOS" / "Reports" / "UnityStitches Product Drafts.md"
+BRAND_ID = "unitystitches"
 
 ROTATING_OPTIONS = ["shirt", "sweatshirt", "hoodie", "tote", "mug", "seasonal_accessory"]
 
@@ -126,6 +128,7 @@ def _compatible_package(config: dict[str, Any], product_type: str, run_date: str
         product_type,
         _niches(config),
         start_index=_date_index(run_date) + index,
+        brand_id=BRAND_ID,
     )
 
 
@@ -135,7 +138,8 @@ def _product_label(product_type: str) -> str:
 
 def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str, Any]:
     label = _product_label(product_type)
-    compatibility = assess_compatibility(product_type, niche)
+    brand = get_brand(BRAND_ID)
+    compatibility = assess_compatibility(product_type, niche, brand_id=BRAND_ID)
     if not compatibility["compatible"]:
         raise ValueError(compatibility["compatibility_reason"])
     concept = f"{label} with an inclusive {niche} affirmation design"
@@ -152,6 +156,9 @@ def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str
     ][:13]
     return {
         "date": run_date,
+        "brand_id": brand["brand_id"],
+        "brand_name": brand["display_name"],
+        "brand_voice": brand.get("brand_voice", ""),
         "product_type": product_type,
         "niche": niche,
         "product_idea": concept,
@@ -173,6 +180,8 @@ def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str
         "printify_blueprint_search_terms": [label.lower(), product_type.replace("_", " "), "print on demand"],
         "printify_notes": "No Printify API call made. Search terms are for future manual or approved draft setup.",
         "status": "needs_review",
+        "brand_compatibility_status": compatibility.get("brand_compatibility_status", compatibility["compatibility_status"]),
+        "brand_compatibility_reason": compatibility.get("brand_compatibility_reason", compatibility["compatibility_reason"]),
         "compatibility_status": compatibility["compatibility_status"],
         "compatibility_reason": compatibility["compatibility_reason"],
         "blocked_terms": compatibility["blocked_terms"],
@@ -233,6 +242,7 @@ def generate_daily_product_drafts(run_date: str | None = None) -> dict[str, Any]
     draft_paths = _write_drafts(selected_date, drafts)
     pipeline_job = create_pipeline({
         "title": f"UnityStitches daily product drafts {selected_date}",
+        "brand_id": BRAND_ID,
         "product_line": "UnityStitches",
         "draft_count": len(drafts),
         "draft_paths": draft_paths,

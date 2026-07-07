@@ -9,6 +9,13 @@ from jamesos.core.queue import enqueue_job
 from jamesos.services.search_service import search_notes_index
 from jamesos.services.status_report import generate_status_report
 from jamesos.services.briefing import generate_daily_briefing
+from jamesos.services.brand_registry import (
+    brand_health,
+    get_brand,
+    get_default_brand,
+    list_brands,
+    validate_brand_product_niche,
+)
 from jamesos.services.context_engine import build_context_report
 from jamesos.services.ollama_service import ask_ollama, ollama_enabled
 from jamesos.services.rich_context import build_rich_context
@@ -143,6 +150,11 @@ class PlannerPlanRequest(BaseModel):
 
 class ImageWorkerPlanRequest(BaseModel):
     package: dict[str, Any] = Field(default_factory=dict)
+
+
+class BrandValidateRequest(BaseModel):
+    product_type: str
+    niche: str
 
 
 class PhoneEventRequest(BaseModel):
@@ -398,6 +410,42 @@ def worker_detail_route(worker_name: str, x_jamesos_key: str | None = Header(def
     require_key(x_jamesos_key)
     try:
         return get_worker(worker_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/brands")
+def brands_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_brands()
+
+
+@app.get("/brands/health")
+def brands_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return brand_health()
+
+
+@app.get("/brands/default")
+def brands_default_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"status": "ok", "brand": get_default_brand(), "execution_enabled": False}
+
+
+@app.get("/brands/{brand_id}")
+def brand_detail_route(brand_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return {"status": "ok", "brand": get_brand(brand_id), "execution_enabled": False}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/brands/{brand_id}/validate")
+def brand_validate_route(brand_id: str, req: BrandValidateRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return validate_brand_product_niche(brand_id, req.product_type, req.niche)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

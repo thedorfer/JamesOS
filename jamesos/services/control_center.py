@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from jamesos.config import VAULT
-from jamesos.services import comfyui_client, creative_studio, image_worker, job_queue, model_registry, server_config, workflow_manager
+from jamesos.services import brand_registry, comfyui_client, creative_studio, image_worker, job_queue, model_registry, server_config, workflow_manager
 from jamesos.services.knowledge_graph import GRAPH_FILE, GRAPH_REPORT
 
 
@@ -226,6 +226,7 @@ def jobs() -> dict[str, Any]:
 def services() -> dict[str, Any]:
     server = _safe_call({"status": "degraded"}, server_config.service_health)
     creative = _safe_call({"status": "degraded"}, creative_studio.health)
+    brands = _safe_call({"status": "degraded", "brand_count": 0, "enabled_brand_count": 0}, brand_registry.brand_health)
     image = _safe_call({"status": "degraded", "execution_enabled": False}, image_worker.health)
     registry = _safe_call({"status": "degraded", "execution_enabled": False}, model_registry.health)
     workflows = _safe_call({"status": "degraded", "execution_enabled": False}, workflow_manager.list_workflows)
@@ -243,6 +244,7 @@ def services() -> dict[str, Any]:
             },
             "knowledge_graph": kg,
             "creative_studio": creative,
+            "brand_registry": brands,
             "image_worker": image,
             "model_registry": registry,
             "workflow_manager": {

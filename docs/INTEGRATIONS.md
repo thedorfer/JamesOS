@@ -40,6 +40,24 @@ Control Center also does not call external services.
 
 ## Current Integrations
 
+### Brand Registry
+
+Status: active local foundation.
+
+Brand Registry stores shop-specific creative rules, approval rules, and integration safety flags for multiple future Etsy/Printify shops. Default brands are UnityStitches and a disabled Degen Market Chaos placeholder.
+
+Routes:
+
+```text
+GET /brands
+GET /brands/health
+GET /brands/default
+GET /brands/{brand_id}
+POST /brands/{brand_id}/validate
+```
+
+It does not call Etsy, Printify, ComfyUI, upload, publish, order, or send anything.
+
 ### Jade Flutter App
 
 Status: active local client.

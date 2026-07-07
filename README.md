@@ -20,6 +20,7 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Plans draft-only creative automation for UnityStitches, ComfyUI, Printify, and Etsy.
 - Provides a read-only Etsy performance-history foundation for future UnityStitches learning.
 - Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning foundations with execution disabled.
+- Provides a Brand Registry so creative/product rules can support multiple shops safely.
 
 ## Core Architecture
 
@@ -118,6 +119,16 @@ POST /image-worker/plan
 GET /comfyui/health
 ```
 
+Brand Registry routes:
+
+```text
+GET /brands
+GET /brands/health
+GET /brands/default
+GET /brands/{brand_id}
+POST /brands/{brand_id}/validate
+```
+
 Image execution remains disabled and approval-gated.
 
 The Model Registry scan is read-only. It inventories local files under `~/AI/Models`, `~/AI/ComfyUI/models`, and `~/JamesOSData/JamesOS/AI/Models`, writes `~/JamesOSData/JamesOS/AI/model_inventory.json`, and keeps all discovered models `enabled: false`.
@@ -208,6 +219,7 @@ GET /workers/{worker_name}
 - [Model Registry](docs/MODEL_REGISTRY.md)
 - [Workflow Manager](docs/WORKFLOW_MANAGER.md)
 - [Image Worker](docs/IMAGE_WORKER.md)
+- [Brand Registry](docs/BRAND_REGISTRY.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Control Center](docs/CONTROL_CENTER.md)
 - [Planner](docs/PLANNER.md)

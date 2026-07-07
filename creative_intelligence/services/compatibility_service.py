@@ -132,7 +132,23 @@ def is_school_safe_product(product_type: str) -> bool:
     return bool(_matched_terms(product_type, SCHOOL_SAFE_PRODUCT_TERMS)) and not is_intimate_product(product_type)
 
 
-def assess_compatibility(product_type: str, niche: str) -> dict[str, Any]:
+DEFAULT_BRAND_ID = "unitystitches"
+
+
+def _brand_validation(brand_id: str, product_type: str, niche: str) -> dict[str, Any] | None:
+    try:
+        from jamesos.services.brand_registry import validate_brand_product_niche
+
+        return validate_brand_product_niche(brand_id, product_type, niche)
+    except Exception:
+        return None
+
+
+def assess_compatibility(product_type: str, niche: str, brand_id: str = DEFAULT_BRAND_ID) -> dict[str, Any]:
+    brand_result = _brand_validation(brand_id, product_type, niche)
+    if brand_result and brand_result.get("brand_compatibility_status") == "blocked":
+        return brand_result
+
     product_matches = _matched_terms(product_type, INTIMATE_PRODUCT_TERMS)
     school_matches = _matched_terms(niche, SCHOOL_NICHE_TERMS)
     underwear_safe_matches = _matched_terms(niche, UNDERWEAR_SAFE_NICHE_TERMS)
@@ -143,6 +159,9 @@ def assess_compatibility(product_type: str, niche: str) -> dict[str, Any]:
             "compatibility_status": "blocked",
             "compatibility_reason": "School, teacher, education, child, therapy, or student niches must never be paired with underwear, lingerie, thongs, panties, or intimate apparel.",
             "blocked_terms": sorted(set(product_matches + school_matches)),
+            **({k: brand_result[k] for k in ["brand_id", "brand_name", "brand_voice"] if brand_result and k in brand_result}),
+            "brand_compatibility_status": "blocked",
+            "brand_compatibility_reason": "Blocked by Creative Intelligence fallback safety rule.",
         }
 
     if product_matches and not underwear_safe_matches:
@@ -151,6 +170,9 @@ def assess_compatibility(product_type: str, niche: str) -> dict[str, Any]:
             "compatibility_status": "blocked",
             "compatibility_reason": "Women's underwear requires an underwear-safe niche such as pride, self-love, body positivity, pronouns, Thai/English identity, or clean adult partner humor.",
             "blocked_terms": sorted(set(product_matches)),
+            **({k: brand_result[k] for k in ["brand_id", "brand_name", "brand_voice"] if brand_result and k in brand_result}),
+            "brand_compatibility_status": "blocked",
+            "brand_compatibility_reason": "Blocked by Creative Intelligence fallback underwear-safe niche rule.",
         }
 
     if school_matches and not is_school_safe_product(product_type):
@@ -159,20 +181,33 @@ def assess_compatibility(product_type: str, niche: str) -> dict[str, Any]:
             "compatibility_status": "blocked",
             "compatibility_reason": "Teacher, school, education, and child-related niches may only use non-intimate products such as shirts, hoodies, totes, mugs, stickers, classroom accessories, or seasonal gifts.",
             "blocked_terms": sorted(set(school_matches)),
+            **({k: brand_result[k] for k in ["brand_id", "brand_name", "brand_voice"] if brand_result and k in brand_result}),
+            "brand_compatibility_status": "blocked",
+            "brand_compatibility_reason": "Blocked by Creative Intelligence fallback school-safe product rule.",
         }
 
-    return {
+    allowed = {
         "compatible": True,
         "compatibility_status": "allowed",
         "compatibility_reason": "Product type and niche are compatible under Creative Intelligence shop rules.",
         "blocked_terms": [],
     }
+    if brand_result:
+        allowed.update({
+            "brand_id": brand_result.get("brand_id", brand_id),
+            "brand_name": brand_result.get("brand_name", ""),
+            "brand_voice": brand_result.get("brand_voice", ""),
+            "brand_compatibility_status": brand_result.get("brand_compatibility_status", "allowed"),
+            "brand_compatibility_reason": brand_result.get("brand_compatibility_reason", "Allowed by brand registry."),
+        })
+    return allowed
 
 
 def annotate_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     product_type = str(candidate.get("product_type") or candidate.get("type") or "")
     niche = str(candidate.get("niche") or candidate.get("name") or candidate.get("title") or "")
-    result = assess_compatibility(product_type, niche) if product_type and niche else {
+    brand_id = str(candidate.get("brand_id") or DEFAULT_BRAND_ID)
+    result = assess_compatibility(product_type, niche, brand_id=brand_id) if product_type and niche else {
         "compatible": True,
         "compatibility_status": "unknown",
         "compatibility_reason": "No complete product/niche pair was provided.",
@@ -198,13 +233,14 @@ def select_compatible_package(
     niches: list[str],
     *,
     start_index: int = 0,
+    brand_id: str = DEFAULT_BRAND_ID,
 ) -> dict[str, Any]:
     if not niches:
         raise ValueError("At least one niche is required")
     total = len(niches)
     for offset in range(total):
         niche = niches[(start_index + offset) % total]
-        compatibility = assess_compatibility(product_type, niche)
+        compatibility = assess_compatibility(product_type, niche, brand_id=brand_id)
         if compatibility["compatible"]:
             return {"product_type": product_type, "niche": niche, **compatibility}
     raise ValueError(f"No compatible niche found for product type: {product_type}")

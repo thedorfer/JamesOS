@@ -44,6 +44,7 @@ The Python backend provides:
 - Knowledge Graph and memory services
 - Job Queue operations
 - Planner operations
+- Brand Registry operations for shop-specific creative rules
 - worker registry/readiness operations
 - reports and health/config pages
 
@@ -117,6 +118,12 @@ Current implementation is readiness-only:
 - ComfyUI client checks `/system_stats` only
 
 No ComfyUI workflow execution, Printify call, Etsy call, upload, publish, order, or send operation is implemented.
+
+## Brand Registry
+
+Brand Registry centralizes brand/shop rules so Creative Intelligence, UnityStitches, Image Worker, and future Printify/Etsy workers do not hardcode shop assumptions. It stores brand voice, allowed/blocked niches, allowed/blocked products, blocked product/niche pairs, preferred product mix, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
+
+Default brands are UnityStitches and a disabled Degen Market Chaos placeholder. External writes remain disabled for both.
 
 ## Server Configuration And Health
 

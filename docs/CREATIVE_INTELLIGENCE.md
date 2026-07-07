@@ -59,9 +59,16 @@ Teacher/school niches may pair with non-intimate products such as shirts, sweats
 
 Creative packages include:
 
+- `brand_id`
+- `brand_name`
+- `brand_voice`
+- `brand_compatibility_status`
+- `brand_compatibility_reason`
 - `compatibility_status`
 - `compatibility_reason`
 - `blocked_terms`
+
+Brand-specific compatibility is read from the JamesOS Brand Registry first. Local Creative Intelligence rules remain as a fallback safety net.
 
 When `performance_history` contains data, scoring can:
 

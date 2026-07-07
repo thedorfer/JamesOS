@@ -21,7 +21,7 @@ The rotating product comes from config and is not hardcoded to shirts.
 
 ## Product / Niche Compatibility
 
-UnityStitches asks Creative Intelligence for compatible product/niche packages before writing drafts.
+UnityStitches uses Brand Registry brand ID `unitystitches` and asks Creative Intelligence for compatible product/niche packages before writing drafts.
 
 Important shop rule:
 
@@ -86,4 +86,4 @@ Supported phrases:
 
 ## Draft Contents
 
-Each draft includes product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.
+Each draft includes brand ID/name/voice, product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, brand compatibility status/reason, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.
