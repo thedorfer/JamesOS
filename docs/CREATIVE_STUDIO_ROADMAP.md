@@ -121,7 +121,7 @@ Everything remains draft-only. ComfyUI, Printify, Etsy, publishing, ordering, an
 
 ## Phase 5: Local ComfyUI Image Generation
 
-Status: readiness foundation in place; generation remains disabled.
+Status: approved single-image local generation is available for explicitly approved image jobs.
 
 Active readiness pieces:
 
@@ -129,15 +129,17 @@ Active readiness pieces:
 - Model Registry at `~/JamesOSData/JamesOS/AI/model_registry.yaml`
 - Workflow Manager for listing, selection, and path validation
 - Image Worker safe execution plans
+- approved single-image execution through local ComfyUI only
+- generated draft assets saved under `~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/<job_id>/`
 - one image job at a time
-- execution enabled false
+- global execution remains disabled unless an approved job is actively executing
 
-Planned execution:
+Implemented execution:
 
 - local ComfyUI API on the desktop
 - GTX 1080 Ti-aware workflow choices
 - workflow JSON loading
-- prompt/negative prompt/seed/size injection
+- placeholder replacement for prompt/negative prompt/checkpoint/seed/size
 - PNG download and local asset storage
 - Job Queue attachment of generated assets
 

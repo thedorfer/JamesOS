@@ -8,7 +8,7 @@ It uses:
 Planner -> Job Queue -> Creative Studio pipeline -> local draft package
 ```
 
-It does not execute ComfyUI, call Printify, call Etsy, publish, order, or send anything.
+It does not call Printify, call Etsy, publish, order, or send anything. A UnityStitches image job may generate one local ComfyUI draft image only after explicit Job Queue approval.
 
 ## Daily Rule
 
@@ -43,7 +43,7 @@ Key safety defaults:
 - `publish_to_etsy: false`
 - `send_to_production: false`
 - `require_james_approval: true`
-- image generation provider is ComfyUI, but execution is disabled
+- image generation provider is ComfyUI, but execution requires an explicitly approved image job
 
 ## Storage
 
@@ -87,3 +87,12 @@ Supported phrases:
 ## Draft Contents
 
 Each draft includes brand ID/name/voice, product type, niche, product idea, design prompt, negative prompt, Etsy title/tags/description, pricing notes, Printify search notes, brand compatibility status/reason, compatibility status/reason/blocked terms, `needs_review` status, approval requirement, and false external execution flags.
+
+When an approved image job is generated for a draft, the draft JSON is updated with:
+
+- `design_image_path`
+- `design_status: image_generated`
+- `printify_status: ready_for_printify_review`
+- `status: image_ready_needs_review`
+
+This is still local review only; no Printify or Etsy action occurs.

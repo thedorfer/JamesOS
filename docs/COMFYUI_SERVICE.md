@@ -1,6 +1,6 @@
 # ComfyUI Local Service
 
-ComfyUI is the planned local image renderer for JamesOS creative workflows. This phase is readiness-only: JamesOS can check health and prepare image-generation plans, but it must not execute ComfyUI workflows yet.
+ComfyUI is the local image renderer for approved JamesOS creative image jobs. JamesOS can check health, prepare plans, and execute one explicitly approved local image job at a time.
 
 ## Install Paths
 
@@ -86,10 +86,9 @@ curl http://127.0.0.1:8188/system_stats
 
 Current implementation:
 
-- health check only
-- system stats only
-- no workflow queue execution
-- no image generation
+- health check and system stats
+- approved single-image prompt queue execution
+- local output download only
 - no Printify calls
 - no Etsy calls
 - no publishing
@@ -97,5 +96,4 @@ Current implementation:
 - no uploads
 - no sending
 
-Future execution must be approval-gated through Planner, Creative Intelligence, Creative Studio Pipeline, Image Worker, and Job Queue.
-
+Execution must be approval-gated through Planner, Creative Intelligence, Creative Studio Pipeline, Image Worker, and Job Queue.

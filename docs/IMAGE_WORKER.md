@@ -1,6 +1,6 @@
 # Image Worker
 
-The Image Worker prepares safe image-generation plans for future ComfyUI use.
+The Image Worker prepares safe image-generation plans and can execute exactly one approved local ComfyUI image job at a time.
 
 Current responsibilities:
 
@@ -12,7 +12,8 @@ Current responsibilities:
 - include brand ID/name/voice from Brand Registry
 - suggest local asset metadata from Asset Library
 - return a reviewable image-generation plan
-- keep execution disabled
+- execute only approved `image_generation` or `creative_image_generation` jobs
+- save generated draft assets locally under JamesOSData
 
 Current safety fields:
 
@@ -32,7 +33,16 @@ API routes:
 ```text
 GET /image-worker/health
 POST /image-worker/plan
+POST /image-worker/jobs/{job_id}/execute-approved
 GET /comfyui/health
 ```
 
-The Image Worker does not call ComfyUI yet. It only plans.
+Execution rules:
+
+- job must already exist
+- job must be explicitly approved
+- only one image job may run at a time
+- ComfyUI URL must be local: `http://127.0.0.1:8188`
+- workflow JSON and checkpoint must exist
+- outputs are saved locally only
+- Printify, Etsy, upload, publish, order, listing creation, and send behavior remain disabled

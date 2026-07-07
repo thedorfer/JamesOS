@@ -62,7 +62,11 @@ from jamesos.services.control_center import (
     storage as control_center_storage,
 )
 from jamesos.services.comfyui_client import health as comfyui_health
-from jamesos.services.image_worker import health as image_worker_health, plan as image_worker_plan
+from jamesos.services.image_worker import (
+    execute_approved_image_job,
+    health as image_worker_health,
+    plan as image_worker_plan,
+)
 from jamesos.services.model_registry import get_model, list_models, scan_and_report as scan_models_and_report
 from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.prompt_library import get_prompt_template, load_prompt_templates
@@ -506,6 +510,15 @@ def image_worker_health_route(x_jamesos_key: str | None = Header(default=None)):
 def image_worker_plan_route(req: ImageWorkerPlanRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return image_worker_plan(req.package)
+
+
+@app.post("/image-worker/jobs/{job_id}/execute-approved")
+def image_worker_execute_approved_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return execute_approved_image_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/prompts")
