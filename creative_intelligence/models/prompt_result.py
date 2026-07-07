@@ -1,0 +1,18 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any
+from uuid import uuid4
+
+from pydantic import BaseModel, Field
+
+
+class PromptResult(BaseModel):
+    id: str = Field(default_factory=lambda: uuid4().hex)
+    source_idea: str
+    prompt: str
+    negative_prompt: str = ""
+    style_tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+

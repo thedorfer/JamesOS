@@ -119,11 +119,33 @@ Rules:
 
 ### Etsy
 
-Status: planned approval-only sales platform.
+Status: read-only performance foundation plus planned approval-only sales platform.
 
-Future Etsy work should prepare draft metadata and review pages. No live listings should be created without explicit approval.
+Creative Intelligence exposes a read-only Etsy performance-history foundation for UnityStitches. It is designed for OAuth-backed shop/listing/order history later, but this phase does not create, edit, renew, deactivate, delete, publish, message, fulfill, upload, scrape, call Printify, or call ComfyUI.
 
-Control Center reports Etsy as not configured and non-executable in this phase.
+Routes:
+
+```text
+GET /etsy/health
+GET /etsy/auth-status
+POST /etsy/sync-readonly
+GET /etsy/performance
+GET /etsy/top-products
+GET /etsy/underperforming-products
+```
+
+Every Etsy route reports:
+
+```text
+readonly: true
+writes_enabled: false
+publishing_enabled: false
+order_fulfillment_enabled: false
+```
+
+OAuth tokens and secrets must live outside Git. Missing credentials return `not_configured`.
+
+Future Etsy work may prepare draft metadata and review pages. No live listings should be created without explicit approval.
 
 ### UnityStitches
 

@@ -18,6 +18,7 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Supports Android phone ingestion through Tasker.
 - Provides a Flutter Jade app for Linux and Android.
 - Plans draft-only creative automation for UnityStitches, ComfyUI, Printify, and Etsy.
+- Provides a read-only Etsy performance-history foundation for future UnityStitches learning.
 
 ## Core Architecture
 
@@ -119,7 +120,7 @@ GET /unitystitches/drafts/{date}
 Current safety boundaries:
 
 - No Printify execution yet.
-- No Etsy execution yet.
+- No Etsy write execution yet. Etsy performance history is read-only and returns `not_configured` until OAuth/shop credentials are supplied outside Git.
 - No ComfyUI execution yet.
 - No publishing.
 - No ordering.
@@ -190,6 +191,8 @@ GET /workers/{worker_name}
 - [UnityStitches product pipeline](docs/UNITYSTITCHES_PRODUCT_PIPELINE.md)
 - [Phone ingestion via Tasker](docs/PHONE_INGESTION_TASKER.md)
 - [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
+- [Creative Intelligence](docs/CREATIVE_INTELLIGENCE.md)
+- [Etsy read-only performance](docs/ETSY_READONLY_PERFORMANCE.md)
 - [API](docs/api.md)
 - [CLI](docs/cli.md)
 

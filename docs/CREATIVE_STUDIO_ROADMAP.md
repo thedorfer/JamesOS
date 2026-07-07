@@ -160,7 +160,9 @@ Rules:
 
 ## Phase 8: Sales Intelligence
 
-Planned:
+Status: read-only Etsy performance-history foundation added; live sync remains placeholder until OAuth/shop credentials are configured and the connector is intentionally activated.
+
+Planned/active:
 
 - niche performance notes
 - seasonal timing
@@ -168,8 +170,20 @@ Planned:
 - listing quality checks
 - draft iteration recommendations
 - evidence-backed creative direction
+- read-only UnityStitches Etsy performance tables
+- local performance scoring influence when history exists
 
 Sales intelligence should advise first, create queued draft tasks second, and act externally only after approval.
+
+Read-only Etsy safety:
+
+- no listing creation or edits
+- no publishing, renewal, deactivation, or deletion
+- no messages
+- no order fulfillment
+- no Printify calls
+- no ComfyUI calls
+- no image uploads
 
 ## Safety Model
 
