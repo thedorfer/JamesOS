@@ -11,6 +11,7 @@ Current responsibilities:
 - select a style from Style Registry
 - include brand ID/name/voice from Brand Registry
 - suggest local asset metadata from Asset Library
+- prefer structured `creative_spec` input and convert it to a prompt package
 - return a reviewable image-generation plan
 - execute only approved `image_generation` or `creative_image_generation` jobs
 - save generated draft assets locally under JamesOSData
@@ -33,6 +34,7 @@ API routes:
 ```text
 GET /image-worker/health
 POST /image-worker/plan
+POST /image-worker/create-test-job
 POST /image-worker/jobs/{job_id}/execute-approved
 GET /comfyui/health
 ```
@@ -44,5 +46,30 @@ Execution rules:
 - only one image job may run at a time
 - ComfyUI URL must be local: `http://127.0.0.1:8188`
 - workflow JSON and checkpoint must exist
+- workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, and height
 - outputs are saved locally only
 - Printify, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
+
+## Creative Spec
+
+Image jobs may include:
+
+```yaml
+creative_spec:
+  brand_id:
+  brand_name:
+  product_type:
+  niche:
+  audience:
+  emotional_hook:
+  style:
+  colors:
+  text:
+  typography:
+  assets:
+  layout:
+  print_requirements:
+  safety_notes:
+```
+
+Prompt Library converts this into positive/negative prompts, image size, recommended workflow type, and recommended model family.

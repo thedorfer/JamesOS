@@ -72,6 +72,28 @@ Brand-specific compatibility is read from the JamesOS Brand Registry first. Loca
 
 Phase C adds Prompt Library, Asset Library, and Style Registry support. Image plans may include selected prompt templates, selected style, brand voice, and asset suggestions, while keeping execution disabled.
 
+Creative Spec is the structured bridge from product idea to image plan:
+
+```yaml
+creative_spec:
+  brand_id:
+  brand_name:
+  product_type:
+  niche:
+  audience:
+  emotional_hook:
+  style:
+  colors:
+  text:
+  typography:
+  assets:
+  layout:
+  print_requirements:
+  safety_notes:
+```
+
+Prompt Library converts `creative_spec` into a prompt package with positive prompt, negative prompt, width, height, recommended workflow type, and recommended model family. Raw prompt strings still work as fallback.
+
 When `performance_history` contains data, scoring can:
 
 - boost niches and product types with real sales

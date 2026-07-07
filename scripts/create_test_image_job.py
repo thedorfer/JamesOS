@@ -3,6 +3,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from jamesos.services.image_worker import create_test_image_job
 
@@ -27,6 +33,14 @@ def main() -> None:
         brand_id=args.brand_id,
         draft_path=args.draft_path,
     )
+    job = result.get("job", {})
+    job_id = job.get("job_id", "JOB_ID")
+    output_folder = f"~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/{job_id}/"
+    result["next_commands"] = {
+        "approve": f"python3 scripts/job_queue.py approve {job_id}",
+        "execute_approved": f"curl -X POST -H \"X-JamesOS-Key: $JAMESOS_API_KEY\" http://localhost:8787/image-worker/jobs/{job_id}/execute-approved",
+        "output_folder": output_folder,
+    }
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

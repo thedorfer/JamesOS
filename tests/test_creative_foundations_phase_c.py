@@ -95,6 +95,27 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
 
         self.run_with_foundations(scenario)
 
+    def test_creative_spec_converts_to_prompt_package(self) -> None:
+        spec = {
+            "brand_id": "unitystitches",
+            "brand_voice": "warm and inclusive",
+            "product_type": "shirt",
+            "niche": "Pride Month",
+            "audience": "gift shoppers",
+            "emotional_hook": "joyful pride",
+            "style": "bold typography",
+            "colors": ["rainbow", "white"],
+            "text": "Love Is Love",
+            "typography": "bold readable sans",
+            "layout": "centered",
+        }
+        package = prompt_library.creative_spec_to_prompt_package(spec)
+        self.assertIn("Love Is Love", package["positive_prompt"])
+        self.assertIn("Pride Month", package["positive_prompt"])
+        self.assertTrue(package["negative_prompt"])
+        self.assertEqual(package["recommended_workflow_type"], "typography")
+        self.assertFalse(package["execution_enabled"])
+
 
 if __name__ == "__main__":
     unittest.main()

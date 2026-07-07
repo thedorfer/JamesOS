@@ -133,6 +133,9 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertEqual(image_path.read_bytes(), b"png")
             processed = job_queue.get_job(job["job_id"])
             self.assertEqual(processed["status"], "processed")
+            self.assertEqual(processed["payload"]["image_status"], "generated")
+            self.assertIn("output_image_paths", processed["payload"])
+            self.assertTrue(processed["payload"]["generated_at"])
             self.assertFalse(result["printify_execution_enabled"])
             self.assertFalse(result["etsy_execution_enabled"])
 
@@ -202,6 +205,8 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertFalse(job["approved"])
             self.assertEqual(job["status"], "pending")
             payload = job["payload"]
+            self.assertIn("creative_spec", payload)
+            self.assertIn("prompt_package", payload)
             self.assertEqual(payload["brand_id"], "unitystitches")
             self.assertEqual(payload["workflow_name"], "product_art_basic")
             self.assertIn("workflow_path", payload)
@@ -211,6 +216,23 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertFalse(payload["auto_execute"])
 
         self.run_with_worker(scenario)
+
+    def test_execute_approved_route_exists(self) -> None:
+        try:
+            from jamesos.core import api
+        except ModuleNotFoundError as exc:
+            if exc.name in {"fastapi", "pydantic"}:
+                self.skipTest("fastapi/pydantic are not installed in this Python environment")
+            raise
+        paths = {route.path for route in api.app.routes}
+        self.assertIn("/image-worker/jobs/{job_id}/execute-approved", paths)
+        health = image_worker.health()
+        self.assertIn("POST /image-worker/jobs/{job_id}/execute-approved", health["routes"])
+
+    def test_create_test_image_job_script_adds_project_root_to_syspath(self) -> None:
+        source = Path("scripts/create_test_image_job.py").read_text(encoding="utf-8")
+        self.assertIn("sys.path.insert", source)
+        self.assertIn("next_commands", source)
 
 
 if __name__ == "__main__":

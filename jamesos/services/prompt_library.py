@@ -109,3 +109,59 @@ def select_prompt_template(package: dict[str, Any], root: Path | None = None) ->
         name = "product_art"
     return get_prompt_template(name, root)["template"]
 
+
+def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, Any]:
+    brand_voice = str(creative_spec.get("brand_voice") or "")
+    product_type = str(creative_spec.get("product_type") or "product")
+    niche = str(creative_spec.get("niche") or "")
+    audience = str(creative_spec.get("audience") or "")
+    emotional_hook = str(creative_spec.get("emotional_hook") or "")
+    style = str(creative_spec.get("style") or "bold")
+    colors = creative_spec.get("colors") or []
+    text = str(creative_spec.get("text") or "")
+    typography = str(creative_spec.get("typography") or "")
+    assets = creative_spec.get("assets") or []
+    layout = str(creative_spec.get("layout") or "centered product art")
+    print_requirements = str(creative_spec.get("print_requirements") or "print-ready, high readability")
+    safety_notes = str(creative_spec.get("safety_notes") or "marketplace-safe, no copyrighted logos")
+
+    color_text = ", ".join(str(item) for item in colors) if isinstance(colors, list) else str(colors)
+    asset_text = ", ".join(str(item) for item in assets) if isinstance(assets, list) else str(assets)
+    positive = (
+        f"{brand_voice}. {style} {product_type} artwork for {niche}. "
+        f"Audience: {audience}. Emotional hook: {emotional_hook}. "
+        f"Text: {text}. Typography: {typography}. Colors: {color_text}. "
+        f"Assets/reference motifs: {asset_text}. Layout: {layout}. {print_requirements}."
+    ).strip()
+    negative = (
+        "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, "
+        f"blurry, misspelled text, upload, publishing. {safety_notes}"
+    ).strip()
+
+    lower = " ".join([style, product_type, niche, layout, text]).lower()
+    if "transparent" in lower or "sticker" in lower:
+        workflow_type = "transparent_png"
+    elif "mockup" in lower:
+        workflow_type = "mockup"
+    elif "typography" in lower or text:
+        workflow_type = "typography"
+    else:
+        workflow_type = "product_art"
+
+    if "flux" in lower:
+        model_family = "flux"
+    elif "sdxl" in lower:
+        model_family = "sdxl"
+    else:
+        model_family = "sd15"
+
+    return {
+        "positive_prompt": positive,
+        "negative_prompt": negative,
+        "width": int(creative_spec.get("width") or 768),
+        "height": int(creative_spec.get("height") or 768),
+        "recommended_workflow_type": workflow_type,
+        "recommended_model_family": model_family,
+        "creative_spec": creative_spec,
+        "execution_enabled": False,
+    }

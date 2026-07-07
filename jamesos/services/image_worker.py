@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +63,12 @@ def health() -> dict[str, Any]:
         "image_execution_available_only_when_approved": True,
         "running_image_job_count": running_image_job_count(),
         "last_generated_image_path": last_generated_image_path(),
+        "routes": [
+            "GET /image-worker/health",
+            "POST /image-worker/plan",
+            "POST /image-worker/create-test-job",
+            "POST /image-worker/jobs/{job_id}/execute-approved",
+        ],
         "one_image_job_at_a_time": True,
         "safety": SAFETY,
     }
@@ -79,6 +85,17 @@ def last_generated_image_path() -> str:
 
 
 def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
+    creative_spec = package.get("creative_spec") if isinstance(package.get("creative_spec"), dict) else None
+    prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec) if creative_spec else {}
+    if prompt_package:
+        package = {
+            **package,
+            "prompt": prompt_package["positive_prompt"],
+            "negative_prompt": prompt_package["negative_prompt"],
+            "width": prompt_package["width"],
+            "height": prompt_package["height"],
+            "workflow_type": prompt_package["recommended_workflow_type"],
+        }
     workflow = workflow_manager.choose_workflow_for_package(package)
     model = model_registry.choose_model_for_workflow(workflow)
     brand_id = str(package.get("brand_id") or get_default_brand().get("brand_id", "unitystitches"))
@@ -108,6 +125,8 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         "selected_model": model,
         "selected_prompt_template": selected_prompt_template,
         "selected_style": selected_style,
+        "creative_spec": creative_spec or package.get("creative_spec") or {},
+        "prompt_package": prompt_package,
         "brand_id": brand["brand_id"],
         "brand_name": brand["display_name"],
         "brand_voice": brand.get("brand_voice", ""),
@@ -155,7 +174,30 @@ def create_test_image_job(
 ) -> dict[str, Any]:
     checkpoint = _first_discovered_checkpoint()
     workflow = _product_art_basic_workflow()
+    creative_spec = {
+        "brand_id": brand_id,
+        "brand_name": "UnityStitches",
+        "product_type": "shirt",
+        "niche": "LGBTQ+ pride",
+        "audience": "inclusive gift shoppers and pride supporters",
+        "emotional_hook": "joyful, affirming, wearable pride",
+        "style": "bold pride typography",
+        "colors": ["rainbow", "white", "black accent"],
+        "text": "Love Is Love",
+        "typography": "bold readable sans with friendly rounded edges",
+        "assets": [],
+        "layout": "centered print-on-demand product art",
+        "print_requirements": "transparent-background-friendly, high contrast, readable at thumbnail size",
+        "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content",
+        "width": width,
+        "height": height,
+    }
+    prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec)
+    positive_prompt = positive_prompt or prompt_package["positive_prompt"]
+    negative_prompt = negative_prompt or prompt_package["negative_prompt"]
     payload = {
+        "creative_spec": creative_spec,
+        "prompt_package": prompt_package,
         "checkpoint_name": Path(str(checkpoint["path"])).name,
         "checkpoint_path": checkpoint["path"],
         "workflow_name": workflow["name"],
@@ -182,6 +224,8 @@ def create_test_image_job(
             },
             "prompt": positive_prompt,
             "negative_prompt": negative_prompt,
+            "creative_spec": creative_spec,
+            "prompt_package": prompt_package,
             "seed": seed,
             "width": width,
             "height": height,
@@ -224,6 +268,17 @@ def _plan_from_job(job: dict[str, Any]) -> dict[str, Any]:
     payload = _payload_details(job)
     existing = payload.get("image_plan") or payload.get("plan")
     if isinstance(existing, dict):
+        creative_spec = existing.get("creative_spec") if isinstance(existing.get("creative_spec"), dict) else payload.get("creative_spec")
+        if isinstance(creative_spec, dict) and not existing.get("prompt"):
+            prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec)
+            existing = {
+                **existing,
+                "prompt": prompt_package["positive_prompt"],
+                "negative_prompt": prompt_package["negative_prompt"],
+                "width": prompt_package["width"],
+                "height": prompt_package["height"],
+                "prompt_package": prompt_package,
+            }
         return existing
     return create_image_generation_plan(payload)
 
@@ -272,7 +327,8 @@ def prepare_workflow_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, value)
     try:
-        return json.loads(text)
+        prepared = json.loads(text)
+        return {"workflow": prepared, "source_path": str(workflow_path)}
     except json.JSONDecodeError as exc:
         raise JobQueueError(f"Prepared workflow is not valid JSON: {exc}") from exc
 
@@ -314,7 +370,10 @@ def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> Non
 def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_paths: list[str]) -> dict[str, Any]:
     payload = dict(job_payload)
     payload["output_image_path"] = image_path
+    payload["output_image_paths"] = image_paths
     payload["generated_assets"] = image_paths
+    payload["generated_at"] = datetime.now().isoformat(timespec="seconds")
+    payload["image_status"] = "generated"
     payload["comfyui_execution"] = False
     payload["printify_execution"] = False
     payload["etsy_execution"] = False
@@ -358,9 +417,9 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
         update_job_status(job_id, "in_progress")
         plan = _plan_from_job(get_job(job_id))
         workflow_json = prepare_workflow_from_plan(plan)
-        append_job_log(job_id, "workflow prepared")
-        mark_step(job_id, "workflow prepared", "complete")
-        queued = comfyui_client.queue_prompt(workflow_json, api_url=COMFYUI_URL)
+        append_job_log(job_id, f"workflow prepared: {workflow_json['source_path']}")
+        mark_step(job_id, "workflow prepared", "complete", workflow_json["source_path"])
+        queued = comfyui_client.queue_prompt(workflow_json["workflow"], api_url=COMFYUI_URL)
         prompt_id = str(queued.get("prompt_id") or "")
         if not prompt_id:
             raise JobQueueError("ComfyUI did not return a prompt_id")

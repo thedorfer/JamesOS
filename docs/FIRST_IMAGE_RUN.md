@@ -39,7 +39,7 @@ curl -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/workflows/scan
 CLI:
 
 ```bash
-PYTHONPATH=. python3 scripts/create_test_image_job.py
+python3 scripts/create_test_image_job.py
 ```
 
 API:
@@ -49,6 +49,8 @@ curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/image-wo
 ```
 
 The job requires approval and does not execute automatically.
+
+The helper creates a `creative_spec` for UnityStitches pride product art and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. It also prints the next approve and execute commands.
 
 ## 5. Approve the job
 
@@ -71,6 +73,14 @@ Generated images are saved locally:
 ~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/JOB_ID/
 ```
 
+If something fails, common causes are:
+
+- no discovered checkpoint: run `/models/scan`
+- no `product_art_basic` workflow: place `~/AI/Workflows/product_art_basic.json` and run `/workflows/scan`
+- ComfyUI not running: check `curl http://127.0.0.1:8188/system_stats`
+- workflow output missing: confirm the workflow saves an image output
+- model not listed in ComfyUI: confirm the checkpoint file is in ComfyUI's models/checkpoints folder and restart/rescan ComfyUI if needed
+
 Safety boundary:
 
 - one image job at a time
@@ -81,4 +91,3 @@ Safety boundary:
 - no publish
 - no order
 - no send
-
