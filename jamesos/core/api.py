@@ -33,6 +33,14 @@ from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.attachment_processor import process_pending_attachment_jobs
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
+from jamesos.services.creative_studio import (
+    approve_creative_job,
+    create_creative_job,
+    fail_creative_job,
+    get_creative_job,
+    health as creative_studio_health,
+    list_creative_jobs,
+)
 from jamesos.services.server_config import (
     integration_health,
     server_config,
@@ -90,6 +98,12 @@ class JobCreateRequest(BaseModel):
 
 class JobFailRequest(BaseModel):
     reason: str = ""
+
+
+class CreativeJobCreateRequest(BaseModel):
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 5
 
 
 class PhoneEventRequest(BaseModel):
@@ -324,6 +338,57 @@ def job_fail(job_id: str, req: JobFailRequest | None = None, x_jamesos_key: str 
     require_key(x_jamesos_key)
     try:
         return fail_job(job_id, reason=req.reason if req else "")
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/creative-studio/health")
+def creative_studio_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return creative_studio_health()
+
+
+@app.get("/creative-studio/jobs")
+def creative_studio_jobs(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return {"status": "ok", "jobs": list_creative_jobs(status)}
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/creative-studio/jobs")
+def creative_studio_job_create(req: CreativeJobCreateRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return create_creative_job(req.type, req.payload, priority=req.priority)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/creative-studio/jobs/{job_id}")
+def creative_studio_job_detail(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_creative_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/creative-studio/jobs/{job_id}/approve")
+def creative_studio_job_approve(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return approve_creative_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/creative-studio/jobs/{job_id}/fail")
+def creative_studio_job_fail(job_id: str, req: JobFailRequest | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return fail_creative_job(job_id, reason=req.reason if req else "")
     except JobQueueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

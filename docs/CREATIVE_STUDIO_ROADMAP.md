@@ -29,7 +29,32 @@ Not included:
 - orders
 - send-to-production actions
 
-## Phase 2: Creative Studio Review Shell
+## Phase 2: Creative Studio Foundation
+
+Status: foundation in place.
+
+- `jamesos/services/creative_studio.py`
+- `scripts/creative_studio.py`
+- `~/JamesOSData/JamesOS/Config/creative_studio.yaml`
+- `~/JamesOSData/JamesOS/Reports/Creative Studio.md`
+- Creative Studio API routes
+- Job Queue-backed creative jobs
+- safe placeholder job types:
+  - `creative_image_generation`
+  - `creative_product_draft`
+  - `creative_mockup`
+  - `creative_social_post`
+
+Still not included:
+
+- ComfyUI execution
+- Printify calls
+- Etsy calls
+- product publishing
+- orders
+- sending
+
+## Phase 3: Creative Studio Review Shell
 
 Planned:
 
@@ -42,7 +67,7 @@ Planned:
 
 The review shell should be powered by Job Queue jobs and local draft files.
 
-## Phase 3: UnityStitches Product Pipeline
+## Phase 4: UnityStitches Product Pipeline
 
 Planned:
 
@@ -70,7 +95,7 @@ Target product direction:
 
 Everything remains draft-only.
 
-## Phase 4: Local ComfyUI Image Generation
+## Phase 5: Local ComfyUI Image Generation
 
 Planned:
 
@@ -83,7 +108,7 @@ Planned:
 
 ComfyUI is only the image engine. JamesOS remains the workflow owner.
 
-## Phase 5: Printify Draft Integration
+## Phase 6: Printify Draft Integration
 
 Planned placeholders:
 
@@ -101,7 +126,7 @@ Rules:
 - no send to production
 - require James approval
 
-## Phase 6: Etsy Draft Integration
+## Phase 7: Etsy Draft Integration
 
 Planned:
 
@@ -116,7 +141,7 @@ Rules:
 - no hidden publishing
 - no automatic renewal or sales action without explicit future approval controls
 
-## Phase 7: Sales Intelligence
+## Phase 8: Sales Intelligence
 
 Planned:
 

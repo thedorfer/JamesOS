@@ -109,6 +109,17 @@ assistant:
   include_gcu: true
   include_unitystitches: true
 """,
+    "creative_studio.yaml": """enabled: true
+image_provider: comfyui
+comfyui_api_url: http://localhost:8188
+require_approval: true
+max_concurrent_image_jobs: 1
+output_root: ~/JamesOSData/JamesOS/CreativeStudio
+generated_root: ~/JamesOSData/JamesOS/CreativeStudio/Generated
+assets_root: ~/JamesOSData/JamesOS/CreativeStudio/Assets
+jobs_root: ~/JamesOSData/JamesOS/CreativeStudio/Jobs
+templates_root: ~/JamesOSData/JamesOS/CreativeStudio/Templates
+""",
     "server.yaml": """version: 1
 
 server:
