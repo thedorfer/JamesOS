@@ -105,6 +105,8 @@ def gpu_comfyui_readiness() -> dict[str, Any]:
     comfy = _safe_call({"status": "not_running", "running": False}, lambda: comfyui_client.health(configured_api_url, timeout=0.5))
     registry = _safe_call({"present": False}, model_registry.health)
     workflows = _safe_call({"workflows": {}}, workflow_manager.list_workflows)
+    workflow_inventory = workflows.get("discovered_inventory", {})
+    workflow_summary = workflow_inventory.get("summary", {})
     return {
         "configured_api_url": configured_api_url,
         "running": bool(comfy.get("running", False)),
@@ -112,6 +114,9 @@ def gpu_comfyui_readiness() -> dict[str, Any]:
         "selected_install_path": comfy.get("install_path", {}),
         "model_registry_present": bool(registry.get("present", False)),
         "workflow_registry_present": bool(workflows.get("workflows")),
+        "workflow_count": int(workflow_summary.get("total", 0) or 0),
+        "workflow_types": workflow_summary.get("by_type", {}),
+        "missing_recommended_workflows": workflow_summary.get("missing_recommended_workflows", []),
         "discovered_model_count": int(registry.get("discovered_model_count", 0) or 0),
         "checkpoint_count": int(registry.get("checkpoint_count", 0) or 0),
         "lora_count": int(registry.get("lora_count", 0) or 0),
@@ -145,6 +150,9 @@ def integrations() -> dict[str, Any]:
             "selected_install_path": comfyui["selected_install_path"],
             "model_registry_present": comfyui["model_registry_present"],
             "workflow_registry_present": comfyui["workflow_registry_present"],
+            "workflow_count": comfyui["workflow_count"],
+            "workflow_types": comfyui["workflow_types"],
+            "missing_recommended_workflows": comfyui["missing_recommended_workflows"],
             "discovered_model_count": comfyui["discovered_model_count"],
             "checkpoint_count": comfyui["checkpoint_count"],
             "lora_count": comfyui["lora_count"],
@@ -239,7 +247,9 @@ def services() -> dict[str, Any]:
             "model_registry": registry,
             "workflow_manager": {
                 "status": workflows.get("status", "ok"),
-                "workflow_count": len(workflows.get("workflows", {})),
+                "workflow_count": int(workflows.get("discovered_inventory", {}).get("summary", {}).get("total", 0) or 0),
+                "workflow_types": workflows.get("discovered_inventory", {}).get("summary", {}).get("by_type", {}),
+                "missing_recommended_workflows": workflows.get("discovered_inventory", {}).get("summary", {}).get("missing_recommended_workflows", []),
                 "execution_enabled": False,
             },
             "comfyui_client": comfy,

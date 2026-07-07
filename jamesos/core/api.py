@@ -55,7 +55,7 @@ from jamesos.services.control_center import (
 )
 from jamesos.services.comfyui_client import health as comfyui_health
 from jamesos.services.image_worker import health as image_worker_health, plan as image_worker_plan
-from jamesos.services.model_registry import get_model, list_models, scan_and_report
+from jamesos.services.model_registry import get_model, list_models, scan_and_report as scan_models_and_report
 from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.server_config import (
     integration_health,
@@ -70,7 +70,7 @@ from jamesos.services.unitystitches_product_pipeline import (
     list_drafts as list_unitystitches_drafts,
 )
 from jamesos.services.worker_registry import get_worker, list_workers
-from jamesos.services.workflow_manager import get_workflow, list_workflows
+from jamesos.services.workflow_manager import get_workflow, list_workflows, scan_and_report as scan_workflows_and_report
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
@@ -411,7 +411,7 @@ def models_route(x_jamesos_key: str | None = Header(default=None)):
 @app.get("/models/scan")
 def models_scan_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return scan_and_report()
+    return scan_models_and_report()
 
 
 @app.get("/models/{model_name}")
@@ -427,6 +427,12 @@ def model_detail_route(model_name: str, x_jamesos_key: str | None = Header(defau
 def workflows_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return list_workflows()
+
+
+@app.get("/workflows/scan")
+def workflows_scan_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return scan_workflows_and_report()
 
 
 @app.get("/workflows/{workflow_name}")

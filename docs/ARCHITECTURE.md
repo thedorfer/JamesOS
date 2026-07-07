@@ -111,7 +111,8 @@ Planner -> Creative Intelligence -> Creative Studio Pipeline -> Image Worker -> 
 Current implementation is readiness-only:
 
 - Model Registry creates `~/JamesOSData/JamesOS/AI/model_registry.yaml`
-- Workflow Manager lists and selects configured workflow placeholders
+- Workflow Manager discovers local workflow JSON files and writes `~/JamesOSData/JamesOS/AI/workflow_inventory.json`
+- Workflow Manager lists, validates, classifies, and selects workflows without executing them
 - Image Worker creates safe plans with `execution_enabled: false`
 - ComfyUI client checks `/system_stats` only
 

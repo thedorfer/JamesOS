@@ -16,6 +16,7 @@ Control Center reports:
 - ComfyUI running/not-running status, configured URL, and detected install path
 - Model Registry and Workflow Manager presence
 - discovered model count, checkpoint count, LoRA count, upscaler count, and missing recommended categories
+- workflow count, workflow types, and missing recommended workflow types
 - Image Worker execution-disabled readiness
 - server config health
 - integration readiness for ComfyUI, Printify, Etsy, Tasker/phone ingestion, and Outlook import
