@@ -33,6 +33,12 @@ from jamesos.services.attachment_ingest import ingest_attachments
 from jamesos.services.attachment_processor import process_pending_attachment_jobs
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
+from jamesos.services.server_config import (
+    integration_health,
+    server_config,
+    service_health,
+    write_server_config_report,
+)
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
@@ -254,6 +260,24 @@ def ask_get(q: str, use_ai: bool = True, mode: str = "personal", x_jamesos_key: 
 def dashboard(mode: str = "personal", x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return dashboard_cards(mode)
+
+
+@app.get("/server/config")
+def server_config_report(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return {"status": "ok", "server": server_config(), "integrations": integration_health()}
+
+
+@app.get("/server/health")
+def server_health(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return service_health()
+
+
+@app.get("/server/page")
+def server_config_page(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return write_server_config_report()
 
 
 @app.get("/jobs")

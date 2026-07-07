@@ -1,88 +1,141 @@
 # Jade Creative Studio Roadmap
 
-This roadmap describes the intended direction without implementing later phases in Phase 1.
+Jade Creative Studio is the planned creative automation surface for JamesOS. It should create reviewable local work packages, not uncontrolled external actions.
 
-## Phase 1: Job Queue Foundation
+## North Star
 
-Status: implemented.
+```text
+Evidence -> Job Queue -> Creative Studio -> Draft package -> James approval -> optional external draft target
+```
 
-- Durable JSON jobs.
-- Pending, in-progress, processed, and failed storage.
-- API and CLI controls.
-- Approval gates.
-- Job Queue report.
+Creative Studio should support UnityStitches, local image generation, product copy, review workflows, and future sales intelligence while staying approval-first.
 
-Phase 1 does not generate products, images, Printify drafts, Etsy drafts, orders, or live listings.
+## Phase 1: Foundations
 
-## Phase 2: Creative Studio Shell
+Status: foundation in place.
+
+- Job Queue
+- approval-gated job model
+- server config and integration health foundation
+- architecture and roadmap docs
+- safe placeholders for Creative Studio, UnityStitches, and ComfyUI
+
+Not included:
+
+- image generation
+- Printify calls
+- Etsy calls
+- product publishing
+- orders
+- send-to-production actions
+
+## Phase 2: Creative Studio Review Shell
 
 Planned:
 
-- Review dashboard for creative jobs.
-- Draft package viewer.
-- Approval and rejection flows.
-- Regeneration requests.
-- Evidence and source labels attached to creative decisions.
+- dashboard for creative jobs
+- draft package viewer
+- approve/reject/regenerate actions
+- source and evidence labels
+- local asset browser
+- clear safety state for every draft
 
-## Phase 3: UnityStitches Draft Pipeline
+The review shell should be powered by Job Queue jobs and local draft files.
+
+## Phase 3: UnityStitches Product Pipeline
 
 Planned:
 
-- Daily draft product packages.
-- Configurable product mix.
-- Niche rotation.
-- Etsy title, tags, and description drafts.
-- Pricing and Printify blueprint notes.
-- Status: `needs_review`.
+- daily product draft packages
+- configurable product mix
+- niche rotation
+- Etsy title, tags, and descriptions
+- pricing notes
+- Printify blueprint search notes
+- `needs_review` status
+- `approval_required: true`
 
-Every generated product remains draft-only until James approves it.
+Target product direction:
+
+- LGBTQ+ pride
+- trans pride
+- nonbinary pride
+- ally/supporter
+- inclusive teacher
+- self-love/confidence
+- mental health positivity
+- Thai/English identity
+- seasonal and holiday pride
+- Pride Month
+
+Everything remains draft-only.
 
 ## Phase 4: Local ComfyUI Image Generation
 
 Planned:
 
-- Load approved ComfyUI workflow JSON.
-- Inject prompts, negative prompts, seeds, and dimensions.
-- Submit to local ComfyUI.
-- Save generated assets under JamesOSData.
-- Attach image paths to draft product jobs.
+- local ComfyUI API on the desktop
+- GTX 1080 Ti-aware workflow choices
+- workflow JSON loading
+- prompt/negative prompt/seed/size injection
+- PNG download and local asset storage
+- Job Queue attachment of generated assets
 
-ComfyUI is only the image engine. JamesOS owns the workflow, approval, storage, and reporting.
+ComfyUI is only the image engine. JamesOS remains the workflow owner.
 
 ## Phase 5: Printify Draft Integration
 
 Planned placeholders:
 
-- List shops.
-- List blueprints.
-- Find product blueprint.
-- Upload artwork.
-- Create product draft.
+- list shops
+- list blueprints
+- find product blueprint
+- upload artwork
+- create product draft
 
-Printify remains a publishing target only. No production order, live publish, or send action can happen without approval.
+Rules:
+
+- draft-only
+- no publishing
+- no ordering
+- no send to production
+- require James approval
 
 ## Phase 6: Etsy Draft Integration
 
 Planned:
 
-- Prepare Etsy draft listing metadata.
-- Connect approved Printify draft details.
-- Track listing readiness.
+- prepare Etsy draft metadata
+- title/tag/description review
+- connect approved product draft details
+- track listing readiness
 
-No live Etsy listing is created in Phase 1, and future listing publication must require James approval.
+Rules:
+
+- no live listings without approval
+- no hidden publishing
+- no automatic renewal or sales action without explicit future approval controls
 
 ## Phase 7: Sales Intelligence
 
 Planned:
 
-- Seasonal product timing.
-- Niche performance notes.
-- Draft quality scoring.
-- Pricing suggestions.
-- Review of what is selling, stale, or worth iterating.
+- niche performance notes
+- seasonal timing
+- pricing suggestions
+- listing quality checks
+- draft iteration recommendations
+- evidence-backed creative direction
 
-Sales intelligence should advise first, queue jobs second, and act only after approval.
+Sales intelligence should advise first, create queued draft tasks second, and act externally only after approval.
 
-## Approval-First Rule
+## Safety Model
 
-The Creative Studio is not an autopublisher. It should create reviewable work packages and route every consequential action through the Job Queue approval model.
+Creative Studio must keep these defaults:
+
+- approval-first
+- local-first
+- draft-only
+- evidence-labeled when possible
+- Job Queue-backed for consequential actions
+- no Printify/Etsy/ComfyUI execution until the corresponding phase is intentionally implemented

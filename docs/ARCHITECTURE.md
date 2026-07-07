@@ -1,19 +1,55 @@
 # JamesOS Architecture
 
-JamesOS is an approval-first personal operating system. It keeps human notes separate from machine-owned data, turns local evidence into structured context, and uses Jade as the conversational layer over that context.
+JamesOS is a local-first personal operating system. It combines evidence ingestion, Knowledge Graph and Working Memory, Jade reasoning, a Flutter client, a Job Queue, and approval-first automation.
 
-## Evidence To Reasoning
+## Storage Model
 
-Local evidence flows through these layers:
+JamesOS keeps human-authored notes and machine-owned data separate:
 
-- Evidence sources: notes, email archives, calendar imports, reports, timelines, attachments, ChatGPT imports, and phone logs.
-- Knowledge Graph and Working Memory: local entities such as people, projects, tickets, files, and decisions are normalized into searchable memory.
-- Reasoner: Jade chooses context from the Knowledge Graph, Working Memory, reports, and tools before answering.
-- UI: Jade presents concise answers, evidence labels, and clickable local knowledge items when available.
+- Human notes: `~/Notes`
+- Machine-owned data: `~/JamesOSData`
 
-The rule is simple: generated answers and automations should be grounded in local evidence whenever they claim to know something.
+Generated reports, queues, imports, indexes, product drafts, attachment manifests, and service config belong under `~/JamesOSData`.
 
-## Job Queue
+## Evidence To Knowledge Graph To Reasoner
+
+The core reasoning pipeline is:
+
+```text
+Evidence -> indexes/reports/timeline -> Knowledge Graph / Working Memory -> Reasoner -> Jade
+```
+
+Evidence sources include:
+
+- Obsidian/manual notes
+- imported ChatGPT history
+- Outlook/Gmail/email archives
+- calendar imports
+- phone events from Tasker
+- attachments and processed files
+- reports and timelines
+- future product draft packages
+
+The Knowledge Graph and Working Memory layers turn raw evidence into local entities such as people, projects, tickets, topics, files, and decisions. The Reasoner chooses from those local sources before Jade answers. If Jade claims a local fact, it should be grounded in this evidence path.
+
+## Backend
+
+The Python backend provides:
+
+- FastAPI API routes for Jade and integrations
+- ingestion and import services
+- search and typed indexes
+- Knowledge Graph and memory services
+- Job Queue operations
+- reports and health/config pages
+
+The API is usually served by `scripts/api_server.py` on port `8787`.
+
+## Jade Client
+
+`apps/jade_app/` is the Flutter Jade client. Jade is the user-facing assistant and should stay concise, useful, and evidence-aware. Current visible modes are Chat, Work, and Private. Hidden intent/context detection still routes local entity questions to the right evidence sources.
+
+## Job Queue Backbone
 
 The Job Queue is the automation backbone. It stores durable JSON jobs under:
 
@@ -22,40 +58,75 @@ The Job Queue is the automation backbone. It stores durable JSON jobs under:
 - `~/JamesOSData/JamesOS/Queue/processed`
 - `~/JamesOSData/JamesOS/Queue/failed`
 
-Each job records its id, type, status, timestamps, priority, approval state, payload, steps, and logs. Approval-gated jobs cannot complete until approved.
+Each job records:
 
-Phase 1 only creates the queue and API/script controls. It does not run autonomous publishing, ordering, sending, or creative generation.
+- `job_id`
+- `type`
+- `status`
+- `created_at`
+- `updated_at`
+- `priority`
+- `requires_approval`
+- `approved`
+- `payload`
+- `steps`
+- `logs`
+
+Approval-gated jobs cannot move to `processed` unless approved. Future creative, product, publishing, email, and image tasks should flow through this queue.
+
+## Server Configuration And Health
+
+Server and integration configuration lives under:
+
+- `~/JamesOSData/JamesOS/Config/server.yaml`
+- `~/JamesOSData/JamesOS/Config/integrations.yaml`
+
+The health/config foundation reports local paths, enabled integration settings, and safety flags. It does not call external APIs.
+
+API routes:
+
+- `GET /server/config`
+- `GET /server/health`
+- `GET /server/page`
+
+The generated page is:
+
+```text
+~/JamesOSData/JamesOS/Reports/Server Configuration.md
+```
 
 ## Jade Creative Studio
 
-Jade Creative Studio is planned as the creative automation surface for products, images, copy, and review workflows. It will sit on top of the Job Queue so every meaningful action can be inspected, approved, retried, or failed safely.
+Jade Creative Studio is the planned creative automation workspace. It will use the Job Queue to prepare, review, approve, regenerate, and archive draft creative work.
 
-## UnityStitches
+Phase 1 is roadmap-only for Creative Studio. It does not generate images or product drafts yet.
 
-UnityStitches daily product generation will become a draft-only pipeline for inclusive Etsy/Printify products. Future phases may create product draft packages with titles, descriptions, tags, prompts, artwork paths, blueprint notes, and review status.
+## UnityStitches Product Pipeline
 
-No UnityStitches product is published, ordered, sent to production, or listed live without James approval.
+UnityStitches is the planned draft-only product pipeline for inclusive Etsy/Printify products. Future draft packages may include product concepts, niches, prompts, titles, tags, descriptions, pricing notes, blueprint notes, and review status.
 
-## ComfyUI
+Every future UnityStitches step should remain draft-only and approval-gated.
 
-ComfyUI is the planned local image engine. JamesOS owns the workflow and approval model; ComfyUI only renders images from approved local prompts/workflows.
+## Local ComfyUI
 
-Phase 1 does not call ComfyUI or generate images.
+ComfyUI is the planned local image engine, running on James's desktop GPU target: GTX 1080 Ti. JamesOS owns the workflow, storage, safety model, and approvals; ComfyUI only renders images after an approved local workflow requests it.
+
+No ComfyUI execution is implemented in this documentation/config pass.
 
 ## Printify And Etsy
 
-Printify is the future publishing target for product drafts. Etsy is the future sales platform. Both integrations must remain draft-only until James explicitly approves publication.
+Printify is the planned product draft target. Etsy is the planned sales platform. Both remain future integrations.
 
-Phase 1 does not call Printify, Etsy, order products, send products to production, or create live listings.
+Current rules:
 
-## Sales Intelligence
+- Do not call Printify yet.
+- Do not call Etsy yet.
+- Do not publish.
+- Do not order.
+- Do not send to production.
+- Do not create live listings.
+- Always require James approval before publication or production.
 
-Future sales intelligence can analyze drafts, shops, seasonal timing, niches, performance, and pricing. It should remain advisory unless a specific approved job authorizes an action.
+## Approval-First Safety Model
 
-## Safety Model
-
-- Approval-first automation.
-- Draft-only creative and product workflows by default.
-- No approval-gated job can complete unless approved.
-- No publishing, ordering, sending, live Etsy listing, or Printify production action without James approval.
-- Machine-owned data stays under `~/JamesOSData`.
+JamesOS should create reviewable local drafts and queued jobs first. It should act externally only after explicit approval. This applies to product automation, image generation, email, publishing, ordering, and future sales operations.

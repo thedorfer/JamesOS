@@ -109,6 +109,64 @@ assistant:
   include_gcu: true
   include_unitystitches: true
 """,
+    "server.yaml": """version: 1
+
+server:
+  name: JamesOS API
+  host: 0.0.0.0
+  port: 8787
+  public_base_url: http://localhost:8787
+  require_api_key: true
+
+health:
+  check_paths: true
+  check_integrations: true
+  write_report: true
+""",
+    "integrations.yaml": """version: 1
+
+integrations:
+  jade_app:
+    enabled: true
+    status: local_client
+    notes: Flutter Jade client for Linux and Android.
+  tasker_phone_ingestion:
+    enabled: true
+    status: configured_by_user
+    endpoint: /phone-ingest
+    notes: Android Tasker posts phone events to JamesOS with the API key.
+  comfyui:
+    enabled: false
+    status: planned_local_only
+    api_url: http://localhost:8188
+    gpu_target: GTX 1080 Ti
+    execution_enabled: false
+    notes: Future local image engine. JamesOS does not call ComfyUI yet.
+  printify:
+    enabled: false
+    status: planned_draft_only
+    execution_enabled: false
+    publish_enabled: false
+    notes: Future draft target only. No products are created or published yet.
+  etsy:
+    enabled: false
+    status: planned_approval_required
+    execution_enabled: false
+    publish_enabled: false
+    notes: Future sales platform. No live listings are created yet.
+  unitystitches:
+    enabled: false
+    status: roadmap
+    draft_only: true
+    approval_required: true
+    notes: Future daily product draft pipeline.
+
+safety:
+  approval_first: true
+  no_publish_without_approval: true
+  no_orders_without_approval: true
+  no_send_to_production_without_approval: true
+""",
 }
 
 
