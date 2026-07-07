@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, Header, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from jamesos.config import VAULT
 from jamesos.core.queue import enqueue_job
@@ -17,6 +17,14 @@ from jamesos.services.jade_planner import answer_with_planner
 from jamesos.services.jade_brain import answer_with_brain, summarize_chat_history
 from jamesos.services.jade_reasoner import answer_with_reasoner
 from jamesos.services.jade_context_packages import dashboard_cards
+from jamesos.services.job_queue import (
+    JobQueueError,
+    approve_job,
+    create_job,
+    fail_job,
+    get_job,
+    list_jobs,
+)
 from jamesos.services.knowledge_graph import build_knowledge_graph, graph_lookup
 from jamesos.services.memory_service import remember, search_memory
 from jamesos.services.typed_index import build_typed_indexes, search_typed_indexes
@@ -64,6 +72,18 @@ class MemoryRequest(BaseModel):
 
 class ToolRequest(BaseModel):
     question: str
+
+
+class JobCreateRequest(BaseModel):
+    type: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    priority: int = 5
+    requires_approval: bool = True
+    steps: list[str | dict[str, Any]] = Field(default_factory=list)
+
+
+class JobFailRequest(BaseModel):
+    reason: str = ""
 
 
 class PhoneEventRequest(BaseModel):
@@ -234,6 +254,54 @@ def ask_get(q: str, use_ai: bool = True, mode: str = "personal", x_jamesos_key: 
 def dashboard(mode: str = "personal", x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return dashboard_cards(mode)
+
+
+@app.get("/jobs")
+def jobs(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return {"status": "ok", "jobs": list_jobs(status)}
+    except JobQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/jobs/{job_id}")
+def job_detail(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/jobs")
+def job_create(req: JobCreateRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return create_job(
+        req.type,
+        req.payload,
+        priority=req.priority,
+        requires_approval=req.requires_approval,
+        steps=req.steps,
+    )
+
+
+@app.post("/jobs/{job_id}/approve")
+def job_approve(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return approve_job(job_id)
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/jobs/{job_id}/fail")
+def job_fail(job_id: str, req: JobFailRequest | None = None, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return fail_job(job_id, reason=req.reason if req else "")
+    except JobQueueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/daily-briefing")
