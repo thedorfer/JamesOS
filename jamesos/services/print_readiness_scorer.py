@@ -75,6 +75,16 @@ def score_variation(variation: dict[str, Any]) -> dict[str, Any]:
         recipe_adherence_score = _clamp(recipe_adherence_score + min(5, sales_boost // 2))
         product_fit_score = _clamp(product_fit_score + min(4, sales_boost // 3))
 
+    critic = variation.get("pre_generation_critique") or {}
+    if critic:
+        product_fit_score = _clamp(round((product_fit_score + int(critic.get("product_fit_score", product_fit_score))) / 2))
+        composition_score = _clamp(round((composition_score + int(critic.get("composition_score", composition_score))) / 2))
+        typography_score = _clamp(round((typography_score + int(critic.get("typography_score", typography_score))) / 2))
+        transparency_score = _clamp(round((transparency_score + int(critic.get("transparency_score", transparency_score))) / 2))
+        recipe_adherence_score = _clamp(round((recipe_adherence_score + int(critic.get("recipe_adherence_score", recipe_adherence_score))) / 2))
+        if critic.get("promotion_recommendation") == "reject":
+            blocking.append("Design Critic recommends rejection before generation.")
+
     categories = {
         "resolution_score": resolution_score,
         "transparency_score": transparency_score,
@@ -101,6 +111,11 @@ def score_variation(variation: dict[str, Any]) -> dict[str, Any]:
         "blocking_issues": blocking,
         "recommended_next_steps": ["Generate local image after approval", "Review print scale and background"] if score >= 90 else ["Refine recipe/product fit", "Regenerate stronger variation"],
         "etsy_sales_signal": sales_signal,
+        "critic_signal": {
+            "overall_score": critic.get("overall_score", 0),
+            "promotion_recommendation": critic.get("promotion_recommendation", ""),
+            "blocking_issues": critic.get("blocking_issues", []),
+        },
         "execution_enabled": False,
     }
 

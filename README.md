@@ -21,6 +21,7 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Provides a read-only Etsy sales-history foundation for provider-agnostic creative learning.
 - Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning foundations with execution disabled.
 - Provides a Brand Registry and POD Provider Registry so creative/product/provider rules can support multiple shops safely.
+- Provides Design Planner and Design Critic foundations for recipe-driven design generation and approval-first local automation.
 
 ## Core Architecture
 
@@ -157,6 +158,13 @@ GET /styles/{style_name}
 GET /recipes
 GET /recipes/{recipe_id}
 GET /recipes/by-product/{product_type}
+GET /design-planner/health
+POST /design-planner/plan
+GET /design-planner/plans/{plan_id}
+GET /design-critic/health
+POST /design-critic/critique-plan
+POST /design-critic/critique-artifact
+GET /design-critic/critiques/{critic_id}
 POST /design-runs/create
 GET /design-runs
 GET /design-runs/{run_id}
@@ -164,7 +172,7 @@ POST /design-runs/{run_id}/score
 POST /design-runs/{run_id}/promote-best
 ```
 
-Design runs create four recipe-driven variations, preserve logical layer manifests and Design DNA, score print readiness, and promote a single best candidate only when it reaches the `>= 90` threshold. Underwear recipes favor pattern/motif design rather than large typography.
+Design runs create four recipe-driven variations, preserve Design DNA, Design Planner output, logical layer manifests, and pre-generation Design Critic output, score print readiness, and promote a single best candidate only when it reaches the `>= 90` threshold and critic review supports promotion. Underwear recipes favor pattern/motif design rather than large typography.
 
 Image execution remains disabled and approval-gated.
 
@@ -242,6 +250,8 @@ GET /workers/{worker_name}
 - [Model Registry](docs/MODEL_REGISTRY.md)
 - [Workflow Manager](docs/WORKFLOW_MANAGER.md)
 - [Image Worker](docs/IMAGE_WORKER.md)
+- [Design Planner](docs/DESIGN_PLANNER.md)
+- [Design Critic](docs/DESIGN_CRITIC.md)
 - [Brand Registry](docs/BRAND_REGISTRY.md)
 - [Creative Foundations](docs/CREATIVE_FOUNDATIONS.md)
 - [Asset Packs](docs/ASSET_PACKS.md)

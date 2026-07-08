@@ -156,6 +156,13 @@ class DesignRunTests(unittest.TestCase):
             "/design-runs/{run_id}",
             "/design-runs/{run_id}/score",
             "/design-runs/{run_id}/promote-best",
+            "/design-planner/health",
+            "/design-planner/plan",
+            "/design-planner/plans/{plan_id}",
+            "/design-critic/health",
+            "/design-critic/critique-plan",
+            "/design-critic/critique-artifact",
+            "/design-critic/critiques/{critic_id}",
         ]:
             self.assertIn(path, paths)
         for provider in pod_provider_registry.list_providers()["providers"]:

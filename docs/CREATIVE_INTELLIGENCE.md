@@ -135,9 +135,9 @@ For `stage: design_art`, Prompt Library recommends `print_design_basic`. `produc
 
 Brand assets may be suggested as metadata. Pride/LGBTQ/trans/intersex prompts prefer matching flag assets when present. Binary files are not embedded in prompts, and font file paths are not exposed.
 
-Recipe Library and Design Runs add reusable design assets on top of prompt generation. Recipes are the durable commercial/design layer; Design DNA keeps brand output consistent; layer manifests preserve future reuse potential even when current ComfyUI output is one raster image.
+Recipe Library, Design Planner, Design Critic, and Design Runs add reusable design assets on top of prompt generation. Recipes are the durable commercial/design layer; Design DNA keeps brand output consistent; Design Planner turns recipes into concrete product-aware plans; Design Critic evaluates plan quality before generation; layer manifests preserve future reuse potential even when current ComfyUI output is one raster image.
 
-Women’s underwear, panties, and thongs should usually use pattern, motif, color, symbol, and repeat-friendly recipes instead of large typography. Four variation runs are scored before promotion, and `ready_for_printify_review` requires `print_readiness_score >= 90`.
+Women’s underwear, panties, and thongs should usually use pattern, motif, color, symbol, and repeat-friendly recipes instead of large typography. Four variation runs are scored before promotion, and `ready_for_printify_review` requires `print_readiness_score >= 90` plus critic support.
 
 When imported Etsy sales history or `performance_history` contains data, scoring can:
 

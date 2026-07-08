@@ -10,7 +10,9 @@ import yaml
 
 from jamesos.config import VAULT
 from jamesos.services import prompt_library
+from jamesos.services.design_critic import critique_design_plan
 from jamesos.services.design_dna import design_dna_from_recipe
+from jamesos.services.design_planner import design_plan_from_recipe
 from jamesos.services.job_queue import create_job
 from jamesos.services.print_readiness_scorer import score_variation, score_variations
 from jamesos.services.recipe_library import get_recipe
@@ -166,8 +168,29 @@ def create_design_run(
         }
         prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec)
         layer_manifest = _layer_manifest(variation_id, design_recipe)
+        design_plan = design_plan_from_recipe(
+            design_recipe,
+            dna,
+            brand_id=brand_id,
+            product_type=product_type,
+            niche=niche,
+            quality_target=90,
+        )
+        pre_generation_critique = critique_design_plan(
+            design_plan,
+            artifact={
+                "design_recipe": design_recipe,
+                "prompt_package": prompt_package,
+                "layer_manifest": layer_manifest,
+                "width": 1024,
+                "height": 1024,
+                "transparent_background": True,
+            },
+        )
         _write_json(variation_folder / "layer_manifest.json", layer_manifest)
         _write_json(variation_folder / "prompt_package.json", prompt_package)
+        _write_json(variation_folder / "design_plan.json", design_plan)
+        _write_json(variation_folder / "pre_generation_critique.json", pre_generation_critique)
         variation = {
             "variation_id": variation_id,
             "variation_number": number,
@@ -178,6 +201,10 @@ def create_design_run(
             "niche": niche,
             "design_recipe": design_recipe,
             "design_dna": dna,
+            "design_plan": design_plan,
+            "design_plan_path": str(variation_folder / "design_plan.json"),
+            "pre_generation_critique": pre_generation_critique,
+            "pre_generation_critique_path": str(variation_folder / "pre_generation_critique.json"),
             "layer_manifest_path": str(variation_folder / "layer_manifest.json"),
             "prompt_package": prompt_package,
             "score": {},
@@ -252,6 +279,23 @@ def score_design_run(run_id: str, root: Path | None = None) -> dict[str, Any]:
     variations = []
     for path in sorted((folder / "variations").glob("variation_*/variation.json")):
         variation = json.loads(path.read_text(encoding="utf-8"))
+        plan = variation.get("design_plan") or {}
+        if plan:
+            critique = critique_design_plan(
+                plan,
+                artifact={
+                    "design_recipe": variation.get("design_recipe") or {},
+                    "prompt_package": variation.get("prompt_package") or {},
+                    "layer_manifest": json.loads(Path(variation["layer_manifest_path"]).read_text(encoding="utf-8")) if variation.get("layer_manifest_path") and Path(variation["layer_manifest_path"]).exists() else {},
+                    "width": 1024,
+                    "height": 1024,
+                    "transparent_background": True,
+                },
+            )
+            variation["pre_generation_critique"] = critique
+            critique_path = folder / "variations" / variation["variation_id"] / "pre_generation_critique.json"
+            variation["pre_generation_critique_path"] = str(critique_path)
+            _write_json(critique_path, critique)
         variation["score"] = score_variation(variation)
         _write_json(path, variation)
         variations.append(variation)
@@ -268,15 +312,34 @@ def promote_best(run_id: str, root: Path | None = None) -> dict[str, Any]:
     variations = scored.get("variations", [])
     if not variations:
         raise ValueError("Design run has no variations")
-    best = max(variations, key=lambda item: int((item.get("score") or {}).get("print_readiness_score", 0)))
+    best = max(
+        variations,
+        key=lambda item: (
+            1 if ((item.get("pre_generation_critique") or {}).get("promotion_recommendation") == "ready_for_printify_review") else 0,
+            int((item.get("score") or {}).get("print_readiness_score", 0)),
+            int((item.get("pre_generation_critique") or {}).get("overall_score", 0)),
+        ),
+    )
     best_score = int((best.get("score") or {}).get("print_readiness_score", 0))
     provider = str(scored.get("provider") or "printify").lower()
-    best_status = "ready_for_printify_review" if best_score >= 90 and provider == "printify" else "best_candidate_needs_review"
+    critic_recommendation = str((best.get("pre_generation_critique") or {}).get("promotion_recommendation") or "")
+    if critic_recommendation == "reject":
+        best_status = "best_candidate_needs_review"
+    elif critic_recommendation == "ready_for_printify_review" and best_score >= 90 and provider == "printify":
+        best_status = "ready_for_printify_review"
+    else:
+        best_status = "best_candidate_needs_review"
     for variation in variations:
         variation["status"] = best_status if variation["variation_id"] == best["variation_id"] else "rejected_or_lower_ranked"
         _write_json(folder / "variations" / variation["variation_id"] / "variation.json", variation)
     best = next(item for item in variations if item["variation_id"] == best["variation_id"])
-    winner = {"status": best_status, "winning_variation": best, "score_threshold": 90, "provider": provider}
+    winner = {
+        "status": best_status,
+        "winning_variation": best,
+        "score_threshold": 90,
+        "provider": provider,
+        "critic_promotion_recommendation": critic_recommendation,
+    }
     _write_json(folder / "winner" / "winning_variation.json", winner)
     scored["status"] = "promoted" if best_status == "ready_for_printify_review" else "best_candidate_needs_review"
     scored["variations"] = variations

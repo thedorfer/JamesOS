@@ -63,6 +63,18 @@ from jamesos.services.control_center import (
     storage as control_center_storage,
 )
 from jamesos.services.comfyui_client import health as comfyui_health
+from jamesos.services.design_critic import (
+    critique_design_plan,
+    critique_generated_artifact,
+    design_critic_health,
+    load_critique,
+    save_critique,
+)
+from jamesos.services.design_planner import (
+    create_design_plan,
+    design_plan_health,
+    load_design_plan,
+)
 from jamesos.services.design_variation_service import (
     create_design_run,
     get_design_run,
@@ -181,6 +193,23 @@ class DesignRunCreateRequest(BaseModel):
     quality: str = "premium"
     provider: str = "printify"
     create_image_jobs: bool = True
+
+
+class DesignPlanRequest(BaseModel):
+    brand_id: str = "unitystitches"
+    product_type: str = "womens_underwear"
+    niche: str = "trans pride"
+    recipe_id: str = "underwear/pride_pattern"
+    quality_target: int = 90
+
+
+class CritiquePlanRequest(BaseModel):
+    design_plan: dict[str, Any] = Field(default_factory=dict)
+    artifact: dict[str, Any] = Field(default_factory=dict)
+
+
+class CritiqueArtifactRequest(BaseModel):
+    artifact: dict[str, Any] = Field(default_factory=dict)
 
 
 class BrandValidateRequest(BaseModel):
@@ -584,6 +613,65 @@ def recipe_detail_route(recipe_id: str, x_jamesos_key: str | None = Header(defau
     require_key(x_jamesos_key)
     try:
         return get_recipe(recipe_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/design-planner/health")
+def design_planner_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return design_plan_health()
+
+
+@app.post("/design-planner/plan")
+def design_planner_plan_route(req: DesignPlanRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return create_design_plan(
+            brand_id=req.brand_id,
+            product_type=req.product_type,
+            niche=req.niche,
+            recipe_id=req.recipe_id,
+            quality_target=req.quality_target,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/design-planner/plans/{plan_id}")
+def design_planner_plan_detail_route(plan_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return load_design_plan(plan_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/design-critic/health")
+def design_critic_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return design_critic_health()
+
+
+@app.post("/design-critic/critique-plan")
+def design_critic_critique_plan_route(req: CritiquePlanRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    critique = critique_design_plan(req.design_plan, artifact=req.artifact)
+    return save_critique(critique)
+
+
+@app.post("/design-critic/critique-artifact")
+def design_critic_critique_artifact_route(req: CritiqueArtifactRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    critique = critique_generated_artifact(req.artifact)
+    return save_critique(critique)
+
+
+@app.get("/design-critic/critiques/{critic_id}")
+def design_critic_detail_route(critic_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return load_critique(critic_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

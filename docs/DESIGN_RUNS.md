@@ -8,7 +8,15 @@ Storage:
 ~/JamesOSData/JamesOS/CreativeStudio/DesignRuns/YYYY-MM-DD/RUN_ID/
 ```
 
-Each run contains a recipe snapshot, design DNA, four variation folders, layer manifests, prompt packages, variation JSON, score summaries, and a winner folder after promotion.
+Each run contains a recipe snapshot, design DNA, four variation folders, design plans, pre-generation critiques, layer manifests, prompt packages, variation JSON, score summaries, and a winner folder after promotion.
+
+Each variation folder includes:
+
+- `design_plan.json`
+- `pre_generation_critique.json`
+- `layer_manifest.json`
+- `prompt_package.json`
+- `variation.json`
 
 API:
 
@@ -26,4 +34,4 @@ Helper:
 python3 scripts/create_design_run.py --brand unitystitches --product womens_underwear --niche "trans pride" --recipe underwear/pride_pattern --variations 4 --quality premium --provider printify
 ```
 
-No image jobs are auto-executed. No provider APIs are called.
+Promotion uses print readiness plus the Design Critic `promotion_recommendation`. No image jobs are auto-executed. No provider APIs are called.
