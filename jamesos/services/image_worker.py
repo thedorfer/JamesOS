@@ -574,6 +574,8 @@ def _json_string_value(value: Any) -> str:
 
 
 def _coerce_prepared_workflow_values(value: Any) -> Any:
+    if isinstance(value, list) and len(value) == 2 and isinstance(value[0], (str, int)) and isinstance(value[1], int):
+        return [str(value[0]), value[1]]
     if isinstance(value, dict):
         return {key: _coerce_prepared_workflow_values(item) for key, item in value.items()}
     if isinstance(value, list):
@@ -614,6 +616,7 @@ def prepare_workflow_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
     try:
         prepared = json.loads(text)
         prepared = _coerce_prepared_workflow_values(prepared)
+        prepared = workflow_manager.normalize_comfyui_api_prompt_node_references(prepared)
         _validate_prepared_workflow(prepared, text)
         return {"workflow": prepared, "source_path": str(workflow_path), "template": workflow}
     except json.JSONDecodeError as exc:

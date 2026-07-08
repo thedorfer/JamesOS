@@ -111,6 +111,33 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
 
         self.run_with_temp_workflows(scenario)
 
+    def test_numeric_node_reference_is_detected_and_normalized(self) -> None:
+        data = workflow_manager._default_print_design_template()
+        data["7"]["inputs"]["images"] = [6, 0]
+
+        invalid = workflow_manager.validate_comfyui_api_prompt_structure(data)
+        self.assertFalse(invalid["valid"])
+        self.assertEqual(invalid["issues"][0]["node_id"], "7")
+        self.assertEqual(invalid["issues"][0]["field"], "inputs.images")
+        self.assertIn("string node ID", invalid["issues"][0]["message"])
+
+        normalized = workflow_manager.normalize_comfyui_api_prompt_node_references(data)
+        self.assertEqual(normalized["7"]["inputs"]["images"], ["6", 0])
+        valid = workflow_manager.validate_comfyui_api_prompt_structure(normalized)
+        self.assertTrue(valid["valid"])
+
+    def test_managed_template_saveimage_references_existing_string_node(self) -> None:
+        def scenario(root: Path) -> None:
+            result = workflow_manager.initialize_default_workflow_templates()
+            path = Path(result["default_transparent_print_design_workflow_path"])
+            data = json.loads(path.read_text(encoding="utf-8"))
+
+            self.assertEqual(data["7"]["inputs"]["images"], ["6", 0])
+            self.assertIn("6", data)
+            self.assertTrue(workflow_manager.validate_comfyui_api_prompt_structure(data)["valid"])
+
+        self.run_with_temp_workflows(scenario)
+
     def test_workflow_classification(self) -> None:
         self.assertEqual(
             workflow_manager.infer_workflow_type(Path("/tmp/transparent_png_workflow.json")),

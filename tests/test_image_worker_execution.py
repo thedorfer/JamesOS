@@ -394,6 +394,30 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
         self.run_with_worker(scenario)
 
+    def test_numeric_node_reference_is_normalized_before_queueing(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            template = root / "numeric_reference.api.json"
+            data = workflow_manager._default_print_design_template()
+            data["7"]["inputs"]["images"] = [6, 0]
+            template.write_text(json.dumps(data), encoding="utf-8")
+            with patch.object(image_worker.workflow_manager, "get_executable_workflow_template", return_value={
+                "name": "numeric_reference",
+                "path": str(template),
+                "workflow_path": str(template),
+                "type": "print_design_basic",
+                "workflow_format": "comfyui_api_prompt",
+                "api_prompt_valid": True,
+            }):
+                prepared = image_worker.prepare_workflow_from_plan(self.image_plan(template, checkpoint))
+
+            self.assertEqual(prepared["workflow"]["7"]["inputs"]["images"], ["6", 0])
+            self.assertEqual(prepared["workflow"]["4"]["inputs"]["width"], 512)
+            self.assertEqual(prepared["workflow"]["5"]["inputs"]["steps"], 28)
+            self.assertEqual(prepared["workflow"]["5"]["inputs"]["cfg"], 7.0)
+            self.assertTrue(workflow_manager.validate_comfyui_api_prompt_structure(prepared["workflow"])["valid"])
+
+        self.run_with_worker(scenario)
+
     def test_comfyui_non_200_response_body_is_saved_and_structured(self) -> None:
         def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
             job = job_queue.create_job(

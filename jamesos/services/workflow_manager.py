@@ -99,7 +99,7 @@ def _write_template_if_missing_or_invalid(path: Path, template: dict[str, Any]) 
     if path.exists():
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            should_write = not validate_comfyui_api_prompt(data).get("valid")
+            should_write = not validate_comfyui_api_prompt_structure(data).get("valid")
         except Exception:
             should_write = True
     if should_write:
@@ -307,6 +307,23 @@ def _is_node_reference(value: Any) -> bool:
     )
 
 
+def normalize_comfyui_api_prompt_node_references(workflow_json: Any) -> Any:
+    if not isinstance(workflow_json, dict):
+        return workflow_json
+    node_ids = {str(node_id) for node_id in workflow_json.keys()}
+
+    def normalize(value: Any) -> Any:
+        if _is_node_reference(value) and str(value[0]) in node_ids:
+            return [str(value[0]), value[1]]
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if isinstance(value, dict):
+            return {key: normalize(item) for key, item in value.items()}
+        return value
+
+    return normalize(workflow_json)
+
+
 def validate_comfyui_api_prompt_structure(workflow_json: Any) -> dict[str, Any]:
     base = validate_comfyui_api_prompt(workflow_json)
     issues: list[dict[str, Any]] = []
@@ -352,6 +369,13 @@ def validate_comfyui_api_prompt_structure(workflow_json: Any) -> dict[str, Any]:
         for field, value in inputs.items():
             if _is_node_reference(value):
                 target_id = str(value[0])
+                if isinstance(value[0], int):
+                    issues.append({
+                        "node_id": rendered_id,
+                        "field": f"inputs.{field}",
+                        "message": f"Node reference must use string node ID \"{target_id}\", not numeric {value[0]}.",
+                        "reference": value,
+                    })
                 if target_id not in node_ids:
                     issues.append({
                         "node_id": rendered_id,
