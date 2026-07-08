@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jamesos.services import comfyui_client, image_worker, job_queue, model_registry, pod_provider_registry, workflow_manager
+from jamesos.services import comfyui_client, image_worker, job_queue, model_registry, pod_provider_registry, prompt_library, workflow_manager
 
 
 class ImageWorkerExecutionTests(unittest.TestCase):
@@ -137,7 +137,14 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             processed = job_queue.get_job(job["job_id"])
             self.assertEqual(processed["status"], "processed")
             self.assertEqual(processed["payload"]["image_status"], "generated")
+            self.assertEqual(processed["payload"]["status"], "ready_for_pod_review")
+            self.assertEqual(processed["payload"]["provider_status"], "manual_upload_ready")
             self.assertIn("output_image_paths", processed["payload"])
+            artifact = processed["payload"]["design_artifact"]
+            self.assertEqual(artifact["source_image_path"], result["image_path"])
+            self.assertEqual(artifact["quality_stage"], "production_candidate")
+            self.assertTrue(artifact["manual_upload_ready"])
+            self.assertTrue(artifact["background_removal_required"])
             self.assertTrue(processed["payload"]["generated_at"])
             self.assertFalse(result["printify_execution_enabled"])
             self.assertFalse(result["etsy_execution_enabled"])
@@ -241,7 +248,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertEqual(payload["pod_provider"], "printify")
             self.assertIn("selected_assets", payload)
             self.assertEqual(payload["brand_id"], "unitystitches")
-            self.assertIn(payload["workflow_name"], {"product_art_basic", "print_design_basic"})
+            self.assertIn(payload["workflow_name"], {"product_art_basic", "print_design_basic", "transparent_print_design_basic"})
             self.assertEqual(payload["creative_spec"]["product_type"], "design_art")
             self.assertEqual(payload["creative_spec"]["layout"], "flat centered print artwork")
             self.assertIn("standalone print design", payload["positive_prompt"])
@@ -249,6 +256,22 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertIn("workflow_path", payload)
             self.assertIn("checkpoint_path", payload)
             self.assertIn("positive_prompt", payload)
+            self.assertEqual(payload["requested_workflow_type"], "transparent_print_design_basic")
+            self.assertIn("design_artifact", payload)
+            artifact = payload["design_artifact"]
+            self.assertEqual(artifact["artifact_type"], "print_ready_png")
+            self.assertEqual(artifact["background"], "transparent")
+            self.assertEqual(artifact["target_width"], 4500)
+            self.assertEqual(artifact["target_height"], 5400)
+            self.assertEqual(artifact["source_generation_width"], 1024)
+            self.assertEqual(artifact["source_generation_height"], 1024)
+            self.assertTrue(artifact["upscale_required"])
+            self.assertTrue(artifact["transparent_background_required"])
+            self.assertFalse(artifact["manual_upload_ready"])
+            self.assertEqual(artifact["provider_target"], "printify")
+            self.assertEqual(artifact["quality_stage"], "production_candidate")
+            self.assertTrue(artifact["background_removal_required"])
+            self.assertIn("asset_prompt_descriptions", payload["image_plan"])
             self.assertFalse(payload["execution_enabled"])
             self.assertFalse(payload["auto_execute"])
 
@@ -356,6 +379,46 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertFalse(provider["draft_creation_enabled"])
             self.assertFalse(provider["order_enabled"])
 
+    def test_asset_filenames_translate_to_prompt_descriptions(self) -> None:
+        assets = [
+            {"name": "Gay_Pride_Flag", "extension": ".svg"},
+            {"name": "Transgender_Pride_flag", "extension": ".svg"},
+            {"name": "Intersex-inclusive_pride_flag", "extension": ".svg"},
+            {"name": "unitystitches_logo", "extension": ".png"},
+        ]
+        package = prompt_library.creative_spec_to_prompt_package({
+            "stage": "design_art",
+            "product_type": "design_art",
+            "layout": "transparent centered print design",
+            "selected_assets": assets,
+            "design_recipe": {
+                "product_type": "design_art",
+                "niche": "LGBTQ+ pride",
+                "artwork_type": "transparent print design",
+                "assets": assets,
+                "text": "Love Is Love",
+            },
+        })
+
+        prompt = package["positive_prompt"]
+        self.assertIn("six-stripe rainbow pride flag colors", prompt)
+        self.assertIn("pastel blue, pink, and white trans pride colors", prompt)
+        self.assertIn("inclusive pride flag color palette", prompt)
+        self.assertNotIn("Gay_Pride_Flag", prompt)
+        self.assertNotIn("Transgender_Pride_flag", prompt)
+        self.assertNotIn("Intersex-inclusive_pride_flag", prompt)
+        self.assertEqual(package["recommended_workflow_type"], "transparent_print_design_basic")
+
+    def test_negative_prompt_strongly_rejects_people_products_and_mockups(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            result = image_worker.create_test_image_job()
+            negative = job_queue.get_job(result["job"]["job_id"])["payload"]["negative_prompt"]
+
+            for term in ["person", "people", "human", "model", "woman", "man", "child", "face", "hands", "body", "wearing", "shirt", "pants", "underwear", "product photo", "lifestyle photo", "room", "bed", "couch", "shelf", "mannequin", "mockup", "realistic person", "photorealistic person", "portrait", "background scene", "blurry text", "misspelled text", "watermark"]:
+                self.assertIn(term, negative)
+
+        self.run_with_worker(scenario)
+
     def test_execute_approved_route_exists(self) -> None:
         try:
             from jamesos.core import api
@@ -377,6 +440,11 @@ class ImageWorkerExecutionTests(unittest.TestCase):
         self.assertIn("open_output_folder", source)
         self.assertIn("ComfyUI open workflow is ignored.", source)
         self.assertIn("workflow_template_used", source)
+        self.assertIn("--quality", source)
+        self.assertIn("--transparent", source)
+        self.assertIn("--provider", source)
+        self.assertIn("production_candidate", source)
+        self.assertIn("background_removal_required", source)
 
 
 if __name__ == "__main__":

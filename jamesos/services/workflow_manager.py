@@ -21,6 +21,7 @@ REPORT_PATH = VAULT / "JamesOS" / "Reports" / "Workflow Registry.md"
 
 WORKFLOW_TYPES = {
     "print_design_basic",
+    "transparent_print_design_basic",
     "product_art",
     "transparent_png",
     "typography",
@@ -33,7 +34,7 @@ WORKFLOW_TYPES = {
     "generic",
 }
 
-RECOMMENDED_WORKFLOW_TYPES = ["print_design_basic", "transparent_png", "typography", "mockup", "upscale"]
+RECOMMENDED_WORKFLOW_TYPES = ["print_design_basic", "transparent_print_design_basic", "transparent_png", "typography", "mockup", "upscale"]
 
 REQUIRED_API_NODE_TYPES = {
     "CheckpointLoaderSimple",
@@ -89,10 +90,11 @@ def _default_print_design_template() -> dict[str, Any]:
     }
 
 
-def initialize_default_workflow_templates() -> dict[str, Any]:
-    MANAGED_WORKFLOW_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
-    path = MANAGED_WORKFLOW_TEMPLATE_ROOT / "print_design_basic.api.json"
-    created = False
+def _default_transparent_print_design_template() -> dict[str, Any]:
+    return _default_print_design_template()
+
+
+def _write_template_if_missing_or_invalid(path: Path, template: dict[str, Any]) -> bool:
     should_write = not path.exists()
     if path.exists():
         try:
@@ -101,13 +103,25 @@ def initialize_default_workflow_templates() -> dict[str, Any]:
         except Exception:
             should_write = True
     if should_write:
-        path.write_text(json.dumps(_default_print_design_template(), indent=2), encoding="utf-8")
-        created = True
+        path.write_text(json.dumps(template, indent=2), encoding="utf-8")
+    return should_write
+
+
+def initialize_default_workflow_templates() -> dict[str, Any]:
+    MANAGED_WORKFLOW_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = MANAGED_WORKFLOW_TEMPLATE_ROOT / "print_design_basic.api.json"
+    transparent_path = MANAGED_WORKFLOW_TEMPLATE_ROOT / "transparent_print_design_basic.api.json"
+    created = _write_template_if_missing_or_invalid(path, _default_print_design_template())
+    transparent_created = _write_template_if_missing_or_invalid(transparent_path, _default_transparent_print_design_template())
     return {
         "status": "ok",
         "template_root": str(MANAGED_WORKFLOW_TEMPLATE_ROOT),
         "default_print_design_workflow_path": str(path),
-        "created": created,
+        "default_transparent_print_design_workflow_path": str(transparent_path),
+        "transparent_background_requested": True,
+        "transparency_method": "prompt_only",
+        "background_removal_required": True,
+        "created": created or transparent_created,
     }
 
 
@@ -183,6 +197,8 @@ def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
     ).lower()
     if requested:
         workflow_type = requested
+    elif "transparent_print_design" in text or ("transparent" in text and "print" in text and "design" in text):
+        workflow_type = "transparent_print_design_basic"
     elif "mockup" in text:
         workflow_type = "mockup"
     elif "print_design" in text or "design_art" in text or "product_art" in text:
@@ -242,6 +258,7 @@ def _workflow_text(path: Path, data: Any | None = None) -> str:
 def infer_workflow_type(path_or_name: Path | str, data: Any | None = None) -> str:
     text = _workflow_text(path_or_name if isinstance(path_or_name, Path) else Path(str(path_or_name)), data)
     checks = [
+        ("transparent_print_design_basic", ["transparent_print_design_basic", "transparent_print_design", "transparent_print_art", "transparent_print"]),
         ("print_design_basic", ["print_design_basic", "print_design", "design_art", "flat_print", "flat_design", "standalone_print"]),
         ("background_removal", ["background_removal", "remove_background", "rembg", "birefnet"]),
         ("transparent_png", ["transparent_png", "transparent", "alpha", "png"]),
@@ -299,6 +316,7 @@ def classify_workflow_format(path: Path) -> str:
 
 def _compatible_models(workflow_type: str) -> list[str]:
     mapping = {
+        "transparent_print_design_basic": ["transparent_png", "sdxl_base", "flux_schnell", "sd15"],
         "print_design_basic": ["sdxl_base", "flux_schnell", "sd15"],
         "product_art": ["sdxl_base", "flux_schnell"],
         "transparent_png": ["transparent_png", "sdxl_base"],
@@ -316,6 +334,7 @@ def _compatible_models(workflow_type: str) -> list[str]:
 
 def _recommended_products(workflow_type: str) -> list[str]:
     mapping = {
+        "transparent_print_design_basic": ["manual-upload print-ready PNG candidates", "shirts", "hoodies", "mugs", "stickers", "totes"],
         "print_design_basic": ["design_art", "shirts", "hoodies", "mugs", "stickers", "totes"],
         "product_art": ["shirts", "hoodies", "mugs", "stickers", "posters"],
         "transparent_png": ["stickers", "shirts", "transparent product art"],
@@ -349,7 +368,10 @@ def classify_workflow(path: Path) -> dict[str, Any]:
         "status": "discovered",
         "compatible_models": _compatible_models(workflow_type),
         "recommended_products": _recommended_products(workflow_type),
-        "requires_transparency": workflow_type in {"transparent_png", "background_removal"},
+        "requires_transparency": workflow_type in {"transparent_print_design_basic", "transparent_png", "background_removal"},
+        "transparent_background_requested": workflow_type in {"transparent_print_design_basic", "transparent_png", "background_removal"},
+        "transparency_method": "prompt_only" if workflow_type == "transparent_print_design_basic" else "",
+        "background_removal_required": workflow_type == "transparent_print_design_basic",
         "supports_mockups": workflow_type in {"mockup", "listing_image"},
         "enabled": False,
         "execution_enabled": False,
@@ -440,6 +462,17 @@ def get_executable_workflow_template(workflow_type: str) -> dict[str, Any]:
         for item in candidates:
             if Path(str(item.get("workflow_path") or "")).name == "print_design_basic.api.json":
                 return {**item, "status": "ok", "comfyui_open_workflow_ignored": True}
+    if requested == "transparent_print_design_basic":
+        for item in candidates:
+            if Path(str(item.get("workflow_path") or "")).name == "transparent_print_design_basic.api.json":
+                return {
+                    **item,
+                    "status": "ok",
+                    "comfyui_open_workflow_ignored": True,
+                    "transparent_background_requested": True,
+                    "transparency_method": "prompt_only",
+                    "background_removal_required": True,
+                }
     if candidates:
         return {**candidates[0], "status": "ok", "comfyui_open_workflow_ignored": True}
     if requested == "print_design_basic":
@@ -451,6 +484,19 @@ def get_executable_workflow_template(workflow_type: str) -> dict[str, Any]:
         ]
         if fallback:
             return {**fallback[0], "status": "ok", "workflow_alias_used": True, "comfyui_open_workflow_ignored": True}
+    if requested == "transparent_print_design_basic":
+        try:
+            fallback = get_executable_workflow_template("print_design_basic")
+            return {
+                **fallback,
+                "requested_workflow_type": requested,
+                "workflow_alias_used": True,
+                "transparent_background_requested": True,
+                "transparency_method": "prompt_only",
+                "background_removal_required": True,
+            }
+        except KeyError:
+            pass
     raise KeyError(f"No executable ComfyUI API prompt template found for workflow type: {requested}")
 
 

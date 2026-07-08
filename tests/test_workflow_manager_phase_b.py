@@ -57,11 +57,17 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
         def scenario(root: Path) -> None:
             result = workflow_manager.initialize_default_workflow_templates()
             path = Path(result["default_print_design_workflow_path"])
+            transparent_path = Path(result["default_transparent_print_design_workflow_path"])
 
             self.assertTrue(path.exists())
+            self.assertTrue(transparent_path.exists())
             self.assertEqual(path.name, "print_design_basic.api.json")
+            self.assertEqual(transparent_path.name, "transparent_print_design_basic.api.json")
             data = json.loads(path.read_text(encoding="utf-8"))
+            transparent_data = json.loads(transparent_path.read_text(encoding="utf-8"))
             self.assertTrue(workflow_manager.validate_comfyui_api_prompt(data)["valid"])
+            self.assertTrue(workflow_manager.validate_comfyui_api_prompt(transparent_data)["valid"])
+            self.assertTrue(result["background_removal_required"])
 
         self.run_with_temp_workflows(scenario)
 
@@ -92,6 +98,16 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
 
             self.assertEqual(Path(result["workflow_path"]).name, "print_design_basic.api.json")
             self.assertTrue(result["comfyui_open_workflow_ignored"])
+
+        self.run_with_temp_workflows(scenario)
+
+    def test_get_executable_prefers_managed_transparent_print_design_template(self) -> None:
+        def scenario(root: Path) -> None:
+            result = workflow_manager.get_executable_workflow_template("transparent_print_design_basic")
+
+            self.assertEqual(Path(result["workflow_path"]).name, "transparent_print_design_basic.api.json")
+            self.assertEqual(result["transparency_method"], "prompt_only")
+            self.assertTrue(result["background_removal_required"])
 
         self.run_with_temp_workflows(scenario)
 

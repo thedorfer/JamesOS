@@ -20,6 +20,7 @@ Current responsibilities:
 - reselect an executable ComfyUI API prompt template from Workflow Manager at execution time
 - save generated draft assets locally under JamesOSData
 - target standalone, centered, POD-safe print graphics by default
+- track `design_artifact` metadata for print-ready PNG candidates
 
 Current safety fields:
 
@@ -56,6 +57,7 @@ Execution rules:
 - workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, height, and filename prefix
 - a prepared copy is saved as `prepared_workflow.json` beside the generated PNG
 - outputs are saved locally only
+- transparent print design jobs are prompt-only transparent candidates until local background removal exists
 - Printify, InkedJoy, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
 
 Provider status language:
@@ -108,6 +110,32 @@ Timeout debugging:
 - lower width, height, or sampler steps for the GTX 1080 Ti
 
 Realistic Vision may still drift toward photo/person outputs. The default prompt and negative prompt push toward standalone flat vector-style print artwork, but a vector/design checkpoint may be needed for better reliability.
+
+## Design Artifact
+
+Production image jobs include:
+
+```yaml
+design_artifact:
+  artifact_type: print_ready_png
+  background: transparent
+  target_width: 4500
+  target_height: 5400
+  source_generation_width: 1024
+  source_generation_height: 1024
+  upscale_required: true
+  transparent_background_required: true
+  transparent_background_requested: true
+  transparency_method: prompt_only
+  background_removal_required: true
+  manual_upload_ready: false
+  provider_target: printify
+  quality_stage: production_candidate
+```
+
+After execution, JamesOS adds `source_image_path`, `output_image_paths`, and `manual_upload_ready: true`, while keeping `final_print_ready: false` when background removal/upscale are still required.
+
+Asset files remain metadata-only. Prompt packages include `asset_prompt_descriptions` such as “six-stripe rainbow pride flag colors” instead of raw filenames.
 
 ## Creative Spec
 

@@ -93,6 +93,7 @@ def health() -> dict[str, Any]:
         "image_execution_available_only_when_approved": True,
         "running_image_job_count": running_image_job_count(),
         "last_generated_image_path": last_generated_image_path(),
+        "last_design_artifact": last_design_artifact(),
         "last_image_generation_error": last_image_generation_error(),
         "routes": [
             "GET /image-worker/health",
@@ -124,6 +125,56 @@ def last_image_generation_error() -> dict[str, Any]:
         return {"status": "error", "error_code": "last_error_file_unreadable", "message": "Last image error file could not be read."}
 
 
+def _last_design_artifact_from_jobs() -> dict[str, Any]:
+    for status in ["processed", "in_progress", "pending"]:
+        for job in list_jobs(status):
+            payload = job.get("payload") or {}
+            artifact = payload.get("design_artifact")
+            if isinstance(artifact, dict) and artifact:
+                return artifact
+    return {}
+
+
+def last_design_artifact() -> dict[str, Any]:
+    return _last_design_artifact_from_jobs()
+
+
+def _design_artifact(
+    *,
+    provider: str = "printify",
+    source_width: int = 1024,
+    source_height: int = 1024,
+    transparent: bool = True,
+    quality: str = "production",
+    output_image_paths: list[str] | None = None,
+    source_image_path: str = "",
+) -> dict[str, Any]:
+    prompt_only = bool(transparent)
+    quality_stage = "production_candidate" if quality == "production" else "draft"
+    return {
+        "artifact_type": "print_ready_png",
+        "background": "transparent" if transparent else "white_or_transparent_background_friendly",
+        "target_width": 4500,
+        "target_height": 5400,
+        "source_generation_width": source_width,
+        "source_generation_height": source_height,
+        "upscale_required": source_width < 4500 or source_height < 5400,
+        "transparent_background_required": transparent,
+        "transparent_background_requested": transparent,
+        "transparency_method": "prompt_only" if prompt_only else "not_requested",
+        "background_removal_required": prompt_only,
+        "manual_upload_ready": bool(output_image_paths or source_image_path),
+        "provider_target": provider,
+        "quality_stage": quality_stage,
+        "output_status": "production_candidate" if quality_stage == "production_candidate" else "draft_candidate",
+        "final_print_ready": False,
+        "source_image_path": source_image_path,
+        "final_image_path": "",
+        "output_image_paths": output_image_paths or [],
+        "print_dimensions_note": "Generated source art is smaller than 4500x5400; upscale/background-removal may be needed before final print use.",
+    }
+
+
 def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
     creative_spec = package.get("creative_spec") if isinstance(package.get("creative_spec"), dict) else None
     brand_id = str(package.get("brand_id") or (creative_spec or {}).get("brand_id") or get_default_brand().get("brand_id", "unitystitches"))
@@ -148,6 +199,13 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
             "height": prompt_package["height"],
             "workflow_type": prompt_package["recommended_workflow_type"],
         }
+    design_artifact = package.get("design_artifact") if isinstance(package.get("design_artifact"), dict) else _design_artifact(
+        provider=str(package.get("provider") or package.get("pod_provider") or "printify").lower(),
+        source_width=int(package.get("width") or 1024),
+        source_height=int(package.get("height") or 1024),
+        transparent=bool(package.get("transparent", False) or package.get("transparent_background_required", False)),
+        quality=str(package.get("quality") or "draft"),
+    )
     workflow = workflow_manager.choose_workflow_for_package(package)
     model = model_registry.choose_model_for_workflow(workflow)
     selected_prompt_template = prompt_library.select_prompt_template({**package, "workflow_type": workflow.get("type", "")})
@@ -195,6 +253,7 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
         "brand_voice": brand.get("brand_voice", ""),
         "asset_suggestions": selected_assets,
         "selected_assets": selected_assets,
+        "design_artifact": design_artifact,
         "prompt": prompt,
         "negative_prompt": negative_prompt,
         "output_folder": str(output_folder),
@@ -215,20 +274,25 @@ def _first_discovered_checkpoint() -> dict[str, Any]:
     raise JobQueueError("No discovered checkpoint found. Run /models/scan first.")
 
 
-def _product_art_basic_workflow() -> dict[str, Any]:
+def _product_art_basic_workflow(workflow_type: str = "print_design_basic") -> dict[str, Any]:
     try:
-        return workflow_manager.get_executable_workflow_template("print_design_basic")
+        return workflow_manager.get_executable_workflow_template(workflow_type)
     except KeyError as exc:
-        raise JobQueueError("print_design_basic API workflow template not found. Recreate JamesOS workflow templates and retry.") from exc
+        if workflow_type == "transparent_print_design_basic":
+            try:
+                return workflow_manager.get_executable_workflow_template("print_design_basic")
+            except KeyError:
+                pass
+        raise JobQueueError(f"{workflow_type} API workflow template not found. Recreate JamesOS workflow templates and retry.") from exc
 
 
-def _default_design_recipe(width: int, height: int, provider: str = "printify") -> dict[str, Any]:
+def _default_design_recipe(width: int, height: int, provider: str = "printify", transparent: bool = True) -> dict[str, Any]:
     return {
         "product_type": "design_art",
         "niche": "LGBTQ+ pride",
         "design_goal": "Create a joyful pride design that reads clearly on POD products.",
         "artwork_type": "flat print design",
-        "background": "white or transparent-background-friendly",
+        "background": "transparent background requested, prompt-only transparency" if transparent else "white or transparent-background-friendly",
         "layout": "centered",
         "palette": ["rainbow", "white", "black accent"],
         "text": "Love Is Love",
@@ -237,7 +301,7 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify") 
         "assets": [],
         "effects": "clean vector-like print art",
         "provider": provider,
-        "print_notes": "high contrast, readable at thumbnail size, no person, no mockup",
+        "print_notes": "high contrast, readable at thumbnail size, no person, no product, no mockup, isolated design element only",
         "width": width,
         "height": height,
     }
@@ -245,18 +309,22 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify") 
 
 def create_test_image_job(
     *,
-    positive_prompt: str = "UnityStitches inclusive pride standalone print design, standalone flat vector-style print artwork, no person, no human, no model, no clothing being worn, no room, no lifestyle photo, no product mockup, white or transparent-background-friendly background, centered layout, large readable text, clean bold typography, print-ready graphic",
-    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, person, human, model, girl, woman, man, child, face, hands, body, wearing, shirt on body, product photo, lifestyle photo, room, couch, bed, shelf, mannequin, portrait, photorealistic person, mockup, blurry text, misspelled text, watermark",
+    positive_prompt: str = "",
+    negative_prompt: str = "",
     seed: int = 1,
-    width: int = 768,
-    height: int = 768,
+    width: int = 1024,
+    height: int = 1024,
     brand_id: str = "unitystitches",
     draft_path: str = "",
+    quality: str = "production",
+    transparent: bool = True,
+    provider: str = "printify",
 ) -> dict[str, Any]:
     checkpoint = _first_discovered_checkpoint()
-    workflow = _product_art_basic_workflow()
-    provider = "printify"
-    design_recipe = _default_design_recipe(width, height, provider)
+    requested_workflow_type = "transparent_print_design_basic" if transparent else "print_design_basic"
+    workflow = _product_art_basic_workflow(requested_workflow_type)
+    provider = provider.lower()
+    design_recipe = _default_design_recipe(width, height, provider, transparent)
     selected_assets = asset_library.suggest_assets({
         "brand_id": brand_id,
         "niche": design_recipe["niche"],
@@ -280,25 +348,47 @@ def create_test_image_job(
         "typography": "bold readable sans with friendly rounded edges",
         "assets": [],
         "layout": "flat centered print artwork",
-        "print_requirements": "standalone print design, white or transparent-background-friendly background, POD-safe, high contrast, large readable text, no product photo",
-        "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content, no person, no model, no mockup",
+        "print_requirements": "standalone transparent background print design, vector-style graphic, clean sticker-like artwork, centered composition, bold readable typography, isolated design element only, no product, no person, no mockup",
+        "safety_notes": "no copyrighted logos, no trademarked characters, no explicit content, no person, no people, no model, no product photo, no mockup",
         "design_recipe": design_recipe,
         "selected_assets": selected_assets,
         "pod_provider": provider,
+        "quality": quality,
+        "transparent": transparent,
         "width": width,
         "height": height,
     }
     prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec)
-    positive_prompt = positive_prompt or prompt_package["positive_prompt"]
-    negative_prompt = negative_prompt or prompt_package["negative_prompt"]
+    asset_descriptions = prompt_package.get("asset_prompt_descriptions", [])
+    positive_prompt = positive_prompt or (
+        "UnityStitches inclusive Pride standalone print design, standalone transparent background print design, "
+        "vector-style graphic, clean sticker-like artwork, centered composition, bold readable typography, "
+        "Pride-themed hearts, sparkles, rainbow motifs, isolated design element only, "
+        "no product, no person, no mockup, no model, no product photo. "
+        f"Text: Love Is Love. Reference motifs: {', '.join(asset_descriptions) or 'rainbow pride color accents'}."
+    )
+    negative_prompt = negative_prompt or (
+        "copyrighted logos, trademarked characters, hateful symbols, explicit content, person, people, human, model, "
+        "woman, man, child, face, hands, body, wearing, shirt, pants, underwear, product photo, lifestyle photo, "
+        "room, bed, couch, shelf, mannequin, mockup, realistic person, photorealistic person, portrait, "
+        "background scene, blurry text, misspelled text, watermark"
+    )
+    design_artifact = _design_artifact(
+        provider=provider,
+        source_width=width,
+        source_height=height,
+        transparent=transparent,
+        quality=quality,
+    )
     payload = {
         "creative_spec": creative_spec,
         "prompt_package": prompt_package,
+        "design_artifact": design_artifact,
         "checkpoint_name": Path(str(checkpoint["path"])).name,
         "checkpoint_path": checkpoint["path"],
         "workflow_name": workflow["name"],
         "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
-        "requested_workflow_type": "print_design_basic",
+        "requested_workflow_type": requested_workflow_type,
         "positive_prompt": positive_prompt,
         "negative_prompt": negative_prompt,
         "seed": seed,
@@ -314,14 +404,14 @@ def create_test_image_job(
                 "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
                 "path": workflow.get("path") or workflow.get("workflow_path"),
                 "type": workflow.get("type", "print_design_basic"),
-                "requested_workflow_type": "print_design_basic",
+                "requested_workflow_type": requested_workflow_type,
                 "selected_workflow_type": workflow.get("type", "print_design_basic"),
-                "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != "print_design_basic",
+                "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != requested_workflow_type,
                 "workflow_format": workflow.get("workflow_format", "comfyui_api_prompt"),
             },
-            "requested_workflow_type": "print_design_basic",
+            "requested_workflow_type": requested_workflow_type,
             "selected_workflow_type": workflow.get("type", "print_design_basic"),
-            "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != "print_design_basic",
+            "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != requested_workflow_type,
             "selected_model": {
                 "name": checkpoint["name"],
                 "path": checkpoint["path"],
@@ -332,6 +422,8 @@ def create_test_image_job(
             "negative_prompt": negative_prompt,
             "creative_spec": creative_spec,
             "prompt_package": prompt_package,
+            "asset_prompt_descriptions": asset_descriptions,
+            "design_artifact": design_artifact,
             "design_recipe": design_recipe,
             "selected_assets": selected_assets,
             "seed": seed,
@@ -548,11 +640,39 @@ def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> Non
 
 def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_paths: list[str]) -> dict[str, Any]:
     payload = dict(job_payload)
+    artifact = payload.get("design_artifact") if isinstance(payload.get("design_artifact"), dict) else {}
+    plan = payload.get("image_plan") if isinstance(payload.get("image_plan"), dict) else {}
+    if not artifact and isinstance(plan.get("design_artifact"), dict):
+        artifact = dict(plan["design_artifact"])
+    provider = str(artifact.get("provider_target") or payload.get("pod_provider") or plan.get("pod_provider") or "printify").lower()
+    artifact = {
+        **_design_artifact(
+            provider=provider,
+            source_width=int(artifact.get("source_generation_width") or payload.get("width") or plan.get("width") or 1024),
+            source_height=int(artifact.get("source_generation_height") or payload.get("height") or plan.get("height") or 1024),
+            transparent=bool(artifact.get("transparent_background_required", True)),
+            quality="draft" if artifact.get("quality_stage") == "draft" else "production",
+            output_image_paths=image_paths,
+            source_image_path=image_path,
+        ),
+        **artifact,
+        "source_image_path": image_path,
+        "output_image_paths": image_paths,
+        "manual_upload_ready": True,
+        "provider_target": provider,
+        "quality_stage": artifact.get("quality_stage") or "production_candidate",
+        "output_status": artifact.get("output_status") or "production_candidate",
+    }
     payload["output_image_path"] = image_path
     payload["output_image_paths"] = image_paths
     payload["generated_assets"] = image_paths
     payload["generated_at"] = datetime.now().isoformat(timespec="seconds")
     payload["image_status"] = "generated"
+    payload["status"] = "ready_for_pod_review"
+    payload["provider_status"] = "manual_upload_ready"
+    payload["design_artifact"] = artifact
+    payload["pod_provider"] = provider
+    payload["printify_status"] = "ready_for_printify_review" if provider == "printify" and image_path else "not_applicable"
     payload["comfyui_execution"] = False
     payload["printify_execution"] = False
     payload["etsy_execution"] = False

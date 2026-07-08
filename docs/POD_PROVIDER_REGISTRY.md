@@ -55,6 +55,8 @@ Active planned POD provider for MVP automation. Read-only foundation; writes, dr
 
 Design recipes may include `provider: printify` so prompts and plans know the intended review target. This does not call Printify or enable provider writes.
 
+Production-candidate design artifacts may use `provider_target: printify` to mean “manual upload target.” JamesOS still does not upload to Printify, create drafts, publish, order, or send anything externally.
+
 ## InkedJoy
 
 InkedJoy remains a configurable future/manual provider target, especially for possible later underwear products:

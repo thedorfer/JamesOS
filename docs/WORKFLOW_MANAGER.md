@@ -31,9 +31,12 @@ Default template:
 
 ```text
 ~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json
+~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/transparent_print_design_basic.api.json
 ```
 
 This is a ComfyUI API prompt, not the visual UI workflow export. It uses only built-in nodes: `CheckpointLoaderSimple`, two `CLIPTextEncode` nodes, `EmptyLatentImage`, `KSampler`, `VAEDecode`, and `SaveImage`.
+
+`transparent_print_design_basic.api.json` uses the same core nodes. It requests transparency through prompt wording only and is marked `background_removal_required: true`.
 
 To reset it:
 
@@ -76,6 +79,7 @@ Report:
 Recognized workflow types:
 
 - `print_design_basic`
+- `transparent_print_design_basic`
 - `product_art`
 - `transparent_png`
 - `typography`
@@ -88,6 +92,8 @@ Recognized workflow types:
 - `generic`
 
 `print_design_basic` is the preferred type for flat POD-ready design artwork. `product_art_basic` remains a compatibility alias only when it is a valid ComfyUI API prompt.
+
+`transparent_print_design_basic` is the preferred type for production-candidate manual-upload PNGs.
 
 Each discovered workflow reports name, path, type, workflow format, API prompt validity, status, compatible models, recommended products, transparency/mockup capabilities, `enabled: false`, and `execution_enabled: false`.
 

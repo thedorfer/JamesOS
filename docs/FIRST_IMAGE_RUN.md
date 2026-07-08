@@ -14,6 +14,7 @@ Example:
 
 ```text
 ~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json
+~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/transparent_print_design_basic.api.json
 ```
 
 JamesOS creates this managed ComfyUI API prompt template automatically. It does not use the workflow currently open in the ComfyUI browser UI.
@@ -28,6 +29,8 @@ PY
 ```
 
 `product_art_basic.json` is only a compatibility fallback if it is a valid ComfyUI API prompt.
+
+For the production-candidate milestone, JamesOS uses `transparent_print_design_basic.api.json`. It requests a transparent background through the prompt only, so the artifact is marked `background_removal_required: true` until a future local background-removal workflow exists.
 
 The workflow may use these placeholders:
 
@@ -56,6 +59,12 @@ CLI:
 python3 scripts/create_test_image_job.py
 ```
 
+Default helper options are:
+
+```text
+--quality production --transparent --provider printify
+```
+
 API:
 
 ```bash
@@ -70,6 +79,7 @@ The helper output also shows:
 
 - workflow template used
 - `ComfyUI open workflow is ignored.`
+- whether the output is `final_print_ready`, `production_candidate`, or `background_removal_required`
 - selected provider
 - selected asset metadata
 - exact approve CLI/API commands
@@ -118,6 +128,8 @@ If something fails, common causes are:
 - timeout: check ComfyUI logs/history, lower image size or steps, then retry the approved job
 
 Realistic Vision is photo/person-biased. The default prompt strongly asks for flat vector-style print artwork with no people, rooms, mockups, or worn clothing, but a vector/design-focused checkpoint may still be needed later for more reliable print-design output.
+
+The target print artifact is `4500x5400`, but the first source generation is usually `1024x1024` on the GTX 1080 Ti. JamesOS marks `upscale_required: true` when the output is still a production candidate.
 
 Safety boundary:
 

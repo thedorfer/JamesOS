@@ -68,7 +68,14 @@ NEGATIVE_PRINT_DESIGN_TERMS = [
     "person",
     "human",
     "model",
+    "people",
+    "woman",
+    "man",
+    "child",
     "wearing",
+    "shirt",
+    "pants",
+    "underwear",
     "shirt on body",
     "product photo",
     "lifestyle photo",
@@ -80,6 +87,7 @@ NEGATIVE_PRINT_DESIGN_TERMS = [
     "body",
     "realistic person",
     "portrait",
+    "background scene",
     "mockup",
     "blurry text",
     "misspelled text",
@@ -93,6 +101,39 @@ def _text(value: Any) -> str:
     if isinstance(value, list):
         return ", ".join(str(item).strip() for item in value if str(item).strip())
     return str(value).strip()
+
+
+def _asset_name(asset: Any) -> str:
+    if isinstance(asset, dict):
+        return _text(asset.get("name") or Path(str(asset.get("path") or "")).stem)
+    return Path(str(asset)).stem
+
+
+def describe_asset_for_prompt(asset: Any) -> str:
+    name = _asset_name(asset)
+    normalized = name.lower().replace("-", "_").replace(" ", "_")
+    if "gay_pride_flag" in normalized or ("pride" in normalized and "flag" in normalized and "trans" not in normalized and "intersex" not in normalized):
+        return "six-stripe rainbow pride flag colors"
+    if "transgender_pride" in normalized or "trans_pride" in normalized:
+        return "pastel blue, pink, and white trans pride colors"
+    if "intersex" in normalized:
+        return "inclusive pride flag color palette"
+    if "unitystitches" in normalized and "logo" in normalized:
+        return "optional small brand mark space, do not recreate exact logo"
+    if "rainbow" in normalized:
+        return "rainbow pride color accents"
+    if "logo" in normalized:
+        return "optional small brand mark space"
+    if "flag" in normalized:
+        return "flag-inspired color palette"
+    return normalized.replace("_", " ")
+
+
+def asset_prompt_descriptions(assets: Any) -> list[str]:
+    if not isinstance(assets, list):
+        assets = [assets] if assets else []
+    descriptions = [describe_asset_for_prompt(asset) for asset in assets if describe_asset_for_prompt(asset)]
+    return list(dict.fromkeys(descriptions))
 
 
 def _clean_prompt(text: str) -> str:
@@ -186,6 +227,7 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
     provider = _text(recipe.get("provider") or creative_spec.get("pod_provider") or creative_spec.get("provider") or "printify")
     is_mockup_stage = "mockup" in _text(creative_spec.get("stage") or recipe.get("stage")).lower()
     assets = recipe.get("assets") or creative_spec.get("selected_assets") or creative_spec.get("assets") or []
+    asset_descriptions = asset_prompt_descriptions(assets)
     motifs = recipe.get("motifs") or creative_spec.get("motifs") or []
     positive_parts = [
         _sentence("Design goal", recipe.get("design_goal")),
@@ -197,7 +239,7 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
         _sentence("Text", recipe.get("text") or creative_spec.get("text")),
         _sentence("Typography", recipe.get("typography") or creative_spec.get("typography")),
         _sentence("Motifs", motifs),
-        _sentence("Assets/reference motifs", assets),
+        _sentence("Assets/reference motifs", asset_descriptions),
         _sentence("Effects", recipe.get("effects") or "clean vector-style print art"),
         _sentence("Provider", provider),
         _sentence("Print notes", recipe.get("print_notes") or "high contrast, large readable typography, print-on-demand ready, no person, no mockup"),
@@ -219,7 +261,7 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
     if is_mockup_stage:
         workflow_type = "mockup"
     elif "transparent" in lower or "sticker" in lower:
-        workflow_type = "transparent_png"
+        workflow_type = "transparent_print_design_basic"
     else:
         workflow_type = "print_design_basic"
     negative = _negative_prompt(_text(creative_spec.get("safety_notes")), include_design_terms=not is_mockup_stage)
@@ -232,6 +274,7 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
         "recommended_model_family": "flux" if "flux" in lower else ("sdxl" if "sdxl" in lower else "sd15"),
         "creative_spec": creative_spec,
         "design_recipe": recipe,
+        "asset_prompt_descriptions": asset_descriptions,
         "execution_enabled": False,
     }
 
@@ -260,7 +303,8 @@ def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, 
     safety_notes = _text(creative_spec.get("safety_notes") or "marketplace-safe, no copyrighted logos")
 
     color_text = _text(colors)
-    asset_text = _text(assets)
+    asset_descriptions = asset_prompt_descriptions(assets)
+    asset_text = _text(asset_descriptions)
     is_mockup_stage = "mockup" in stage.lower()
     if is_mockup_stage:
         positive = _join_parts([
@@ -302,7 +346,7 @@ def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, 
 
     lower = " ".join([stage, style, product_type, niche, layout, text]).lower()
     if "transparent" in lower or "sticker" in lower:
-        workflow_type = "transparent_png"
+        workflow_type = "transparent_print_design_basic"
     elif is_mockup_stage:
         workflow_type = "mockup"
     elif "design_art" in lower or "print_design" in lower or "product_art" in lower:
@@ -327,5 +371,6 @@ def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, 
         "recommended_workflow_type": workflow_type,
         "recommended_model_family": model_family,
         "creative_spec": creative_spec,
+        "asset_prompt_descriptions": asset_descriptions,
         "execution_enabled": False,
     }

@@ -129,6 +129,7 @@ Active readiness pieces:
 - Model Registry at `~/JamesOSData/JamesOS/AI/model_registry.yaml`
 - Workflow Manager for listing, selection, and path validation
 - managed API prompt template at `~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json`
+- managed transparent API prompt template at `~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/transparent_print_design_basic.api.json`
 - Image Worker safe execution plans
 - approved single-image execution through local ComfyUI only
 - generated draft assets saved under `~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/<job_id>/`
@@ -142,10 +143,11 @@ Implemented execution:
 - workflow JSON loading
 - placeholder replacement for prompt/negative prompt/checkpoint/seed/size
 - prepared workflow copy saved beside generated output
+- print-ready design artifact metadata with source size, target size, transparency, and manual-upload readiness
 - PNG download and local asset storage
 - Job Queue attachment of generated assets
 
-ComfyUI is only the image engine. JamesOS remains the workflow owner, and the ComfyUI browser's open workflow is ignored. Realistic Vision may still produce photo/person-biased outputs; a vector/design checkpoint may be needed later for stricter print artwork.
+ComfyUI is only the image engine. JamesOS remains the workflow owner, and the ComfyUI browser's open workflow is ignored. Current transparent PNG output is prompt-only and marked as a production candidate until local background removal and upscaling are added. Realistic Vision may still produce photo/person-biased outputs; a vector/design checkpoint may be needed later for stricter print artwork.
 
 ## Phase 6: Printify Draft Integration
 
