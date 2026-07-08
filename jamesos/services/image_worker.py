@@ -46,13 +46,26 @@ SAFETY = {
 
 
 class ImageWorkerError(JobQueueError):
-    def __init__(self, error_code: str, message: str, next_step: str, job_id: str = "", workflow_path: str = ""):
+    def __init__(
+        self,
+        error_code: str,
+        message: str,
+        next_step: str,
+        job_id: str = "",
+        workflow_path: str = "",
+        response_body: str = "",
+        response_json: Any | None = None,
+        validation_issues: list[dict[str, Any]] | None = None,
+    ):
         super().__init__(message)
         self.error_code = error_code
         self.message = message
         self.next_step = next_step
         self.job_id = job_id
         self.workflow_path = workflow_path
+        self.response_body = response_body
+        self.response_json = response_json
+        self.validation_issues = validation_issues or []
 
 
 def structured_error(exc: Exception, job_id: str = "", workflow_path: str = "") -> dict[str, Any]:
@@ -62,6 +75,9 @@ def structured_error(exc: Exception, job_id: str = "", workflow_path: str = "") 
         "message": getattr(exc, "message", str(exc)),
         "job_id": getattr(exc, "job_id", "") or job_id,
         "workflow_path": getattr(exc, "workflow_path", "") or workflow_path,
+        "response_body": getattr(exc, "response_body", ""),
+        "response_json": getattr(exc, "response_json", None),
+        "validation_issues": getattr(exc, "validation_issues", []),
         "next_step": getattr(exc, "next_step", "Review the failed image job log and fix the job payload before retrying."),
         "execution_enabled": False,
         "printify_execution_enabled": False,
@@ -100,6 +116,8 @@ def health() -> dict[str, Any]:
             "POST /image-worker/plan",
             "POST /image-worker/create-test-job",
             "POST /image-worker/jobs/{job_id}/execute-approved",
+            "GET /image-worker/jobs/{job_id}/prepared-workflow",
+            "GET /image-worker/jobs/{job_id}/comfy-response",
         ],
         "one_image_job_at_a_time": True,
         "safety": SAFETY,
@@ -538,6 +556,16 @@ def _validate_prepared_workflow(prepared: Any, text: str) -> None:
     validation = workflow_manager.validate_comfyui_api_prompt(prepared)
     if not validation.get("valid"):
         raise ImageWorkerError(str(validation.get("error_code") or "workflow_missing_required_nodes"), "Workflow is missing required built-in ComfyUI API nodes.", "Use the managed print_design_basic.api.json template or export a complete API prompt.")
+    structure = workflow_manager.validate_comfyui_api_prompt_structure(prepared)
+    if not structure.get("valid"):
+        issue = (structure.get("issues") or [{}])[0]
+        location = f"node {issue.get('node_id')} field {issue.get('field')}".strip()
+        raise ImageWorkerError(
+            str(structure.get("error_code") or "workflow_invalid_api_prompt_structure"),
+            f"Workflow API prompt structure is invalid at {location}: {issue.get('message')}",
+            "Fix the prepared workflow node/field reported in validation_issues, then retry.",
+            validation_issues=structure.get("issues", []),
+        )
 
 
 def _json_string_value(value: Any) -> str:
@@ -604,6 +632,35 @@ def _save_prepared_workflow(job_id: str, workflow: dict[str, Any]) -> str:
     return str(path)
 
 
+def _save_comfy_response(job_id: str, response: dict[str, Any]) -> str:
+    folder = _job_output_folder(job_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "comfy_response.json"
+    path.write_text(json.dumps(response, indent=2, sort_keys=True), encoding="utf-8")
+    return str(path)
+
+
+def _find_job_artifact(job_id: str, filename: str) -> Path | None:
+    for path in sorted(GENERATED_ROOT.glob(f"*/{job_id}/{filename}"), reverse=True):
+        if path.exists():
+            return path
+    return None
+
+
+def prepared_workflow_for_job(job_id: str) -> dict[str, Any]:
+    path = _find_job_artifact(job_id, "prepared_workflow.json")
+    if path is None:
+        raise ImageWorkerError("prepared_workflow_missing", "No prepared workflow has been saved for this job.", "Execute or retry the approved image job until workflow preparation completes.", job_id=job_id)
+    return {"status": "ok", "job_id": job_id, "path": str(path), "prepared_workflow": json.loads(path.read_text(encoding="utf-8"))}
+
+
+def comfy_response_for_job(job_id: str) -> dict[str, Any]:
+    path = _find_job_artifact(job_id, "comfy_response.json")
+    if path is None:
+        raise ImageWorkerError("comfy_response_missing", "No ComfyUI response has been saved for this job.", "A response is saved when ComfyUI returns a non-200 error while queueing/downloading.", job_id=job_id)
+    return {"status": "ok", "job_id": job_id, "path": str(path), "comfy_response": json.loads(path.read_text(encoding="utf-8"))}
+
+
 def _save_images(job_id: str, images: list[dict[str, Any]]) -> list[str]:
     if not images:
         raise ImageWorkerError("comfyui_output_missing", "ComfyUI completed without output images", "Check the workflow SaveImage node and ComfyUI history output, then retry.", job_id=job_id)
@@ -619,6 +676,23 @@ def _save_images(job_id: str, images: list[dict[str, Any]]) -> list[str]:
     LAST_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
     LAST_IMAGE_PATH.write_text(saved[0], encoding="utf-8")
     return saved
+
+
+def _extract_comfy_detail(response_json: Any) -> str:
+    if not isinstance(response_json, dict):
+        return ""
+    details: list[str] = []
+    for key in ["error", "message", "detail"]:
+        value = response_json.get(key)
+        if isinstance(value, str) and value:
+            details.append(value)
+        elif isinstance(value, dict):
+            details.append(json.dumps(value, sort_keys=True))
+    node_errors = response_json.get("node_errors")
+    if isinstance(node_errors, dict):
+        for node_id, error in node_errors.items():
+            details.append(f"node {node_id}: {json.dumps(error, sort_keys=True)}")
+    return " | ".join(details)
 
 
 def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> None:
@@ -727,6 +801,26 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
             raise ImageWorkerError("comfyui_not_running", "ComfyUI is not running at http://127.0.0.1:8188", "Start local ComfyUI on 127.0.0.1:8188 and retry.", job_id=job_id, workflow_path=workflow_json["source_path"])
         try:
             queued = comfyui_client.queue_prompt(workflow_json["workflow"], api_url=COMFYUI_URL)
+        except comfyui_client.ComfyUIHTTPError as exc:
+            saved_response_path = _save_comfy_response(job_id, {
+                "status": "error",
+                "stage": "queue_prompt",
+                "status_code": exc.status_code,
+                "response_body": exc.response_body,
+                "response_json": exc.response_json,
+                "workflow_path": workflow_json["source_path"],
+                "prepared_workflow_path": prepared_workflow_path,
+            })
+            detail = _extract_comfy_detail(exc.response_json) or exc.response_body
+            raise ImageWorkerError(
+                "comfyui_rejected_prompt",
+                f"ComfyUI rejected the prepared prompt: {detail or exc}",
+                f"Inspect {saved_response_path} and prepared_workflow.json; fix the node/field reported by ComfyUI.",
+                job_id=job_id,
+                workflow_path=workflow_json["source_path"],
+                response_body=exc.response_body,
+                response_json=exc.response_json,
+            ) from exc
         except Exception as exc:
             raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI rejected the prepared prompt: {exc}", "Open the prepared workflow in ComfyUI/API format and fix rejected node inputs.", job_id=job_id, workflow_path=workflow_json["source_path"]) from exc
         prompt_id = str(queued.get("prompt_id") or "")
@@ -734,11 +828,53 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
             raise ImageWorkerError("comfyui_rejected_prompt", "ComfyUI did not return a prompt_id", "Check ComfyUI API logs for rejected prompt details.", job_id=job_id, workflow_path=workflow_json["source_path"])
         append_job_log(job_id, "ComfyUI prompt queued")
         mark_step(job_id, "ComfyUI prompt queued", "complete", prompt_id)
-        completed = comfyui_client.wait_for_completion(prompt_id, api_url=COMFYUI_URL)
+        try:
+            completed = comfyui_client.wait_for_completion(prompt_id, api_url=COMFYUI_URL)
+        except comfyui_client.ComfyUIHTTPError as exc:
+            saved_response_path = _save_comfy_response(job_id, {
+                "status": "error",
+                "stage": "wait_for_completion",
+                "status_code": exc.status_code,
+                "response_body": exc.response_body,
+                "response_json": exc.response_json,
+                "workflow_path": workflow_json["source_path"],
+                "prepared_workflow_path": prepared_workflow_path,
+            })
+            detail = _extract_comfy_detail(exc.response_json) or exc.response_body
+            raise ImageWorkerError(
+                "comfyui_rejected_prompt",
+                f"ComfyUI history request failed: {detail or exc}",
+                f"Inspect {saved_response_path} and ComfyUI logs for the queued prompt.",
+                job_id=job_id,
+                workflow_path=workflow_json["source_path"],
+                response_body=exc.response_body,
+                response_json=exc.response_json,
+            ) from exc
         if completed.get("status") != "completed":
             code = "image_generation_timeout" if completed.get("status") == "timeout" else "comfyui_rejected_prompt"
             raise ImageWorkerError(code, f"ComfyUI prompt did not complete: {completed.get('status')}", "Review ComfyUI history and logs, then retry after fixing the workflow.", job_id=job_id, workflow_path=workflow_json["source_path"])
-        images = comfyui_client.get_output_images(prompt_id, api_url=COMFYUI_URL)
+        try:
+            images = comfyui_client.get_output_images(prompt_id, api_url=COMFYUI_URL)
+        except comfyui_client.ComfyUIHTTPError as exc:
+            saved_response_path = _save_comfy_response(job_id, {
+                "status": "error",
+                "stage": "get_output_images",
+                "status_code": exc.status_code,
+                "response_body": exc.response_body,
+                "response_json": exc.response_json,
+                "workflow_path": workflow_json["source_path"],
+                "prepared_workflow_path": prepared_workflow_path,
+            })
+            detail = _extract_comfy_detail(exc.response_json) or exc.response_body
+            raise ImageWorkerError(
+                "comfyui_output_missing",
+                f"ComfyUI output image download failed: {detail or exc}",
+                f"Inspect {saved_response_path} and ComfyUI history output metadata.",
+                job_id=job_id,
+                workflow_path=workflow_json["source_path"],
+                response_body=exc.response_body,
+                response_json=exc.response_json,
+            ) from exc
         saved = _save_images(job_id, images)
         image_path = saved[0]
         append_job_log(job_id, "image saved")

@@ -298,6 +298,75 @@ def validate_comfyui_api_prompt(workflow_json: Any) -> dict[str, Any]:
     return {"valid": True, "error_code": "", "missing_required_nodes": []}
 
 
+def _is_node_reference(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and len(value) == 2
+        and isinstance(value[0], (str, int))
+        and isinstance(value[1], int)
+    )
+
+
+def validate_comfyui_api_prompt_structure(workflow_json: Any) -> dict[str, Any]:
+    base = validate_comfyui_api_prompt(workflow_json)
+    issues: list[dict[str, Any]] = []
+    if not isinstance(workflow_json, dict):
+        return {
+            "valid": False,
+            "error_code": "workflow_file_not_json",
+            "issues": [{"node_id": "", "field": "", "message": "Workflow must be a JSON object."}],
+            "summary": "Workflow must be a JSON object.",
+        }
+    if not base.get("valid"):
+        for missing in base.get("missing_required_nodes", []):
+            issues.append({
+                "node_id": "",
+                "field": "class_type",
+                "message": f"Required node class is missing: {missing}",
+            })
+    node_ids = {str(node_id) for node_id in workflow_json.keys()}
+    for node_id, node in workflow_json.items():
+        rendered_id = str(node_id)
+        if not isinstance(node, dict):
+            issues.append({
+                "node_id": rendered_id,
+                "field": "",
+                "message": "Node must be an object with class_type and inputs.",
+            })
+            continue
+        class_type = node.get("class_type")
+        if not isinstance(class_type, str) or not class_type.strip():
+            issues.append({
+                "node_id": rendered_id,
+                "field": "class_type",
+                "message": "Node is missing non-empty class_type.",
+            })
+        inputs = node.get("inputs")
+        if not isinstance(inputs, dict):
+            issues.append({
+                "node_id": rendered_id,
+                "field": "inputs",
+                "message": "Node inputs must be an object.",
+            })
+            continue
+        for field, value in inputs.items():
+            if _is_node_reference(value):
+                target_id = str(value[0])
+                if target_id not in node_ids:
+                    issues.append({
+                        "node_id": rendered_id,
+                        "field": f"inputs.{field}",
+                        "message": f"Input references missing node {target_id}.",
+                        "reference": value,
+                    })
+    return {
+        "valid": not issues,
+        "error_code": "" if not issues else (base.get("error_code") or "workflow_invalid_api_prompt_structure"),
+        "issues": issues,
+        "summary": "ok" if not issues else issues[0]["message"],
+    }
+
+
 def classify_workflow_format(path: Path) -> str:
     data = _load_workflow_json(path)
     if data is None:

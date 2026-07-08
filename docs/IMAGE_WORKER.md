@@ -42,6 +42,8 @@ GET /image-worker/health
 POST /image-worker/plan
 POST /image-worker/create-test-job
 POST /image-worker/jobs/{job_id}/execute-approved
+GET /image-worker/jobs/{job_id}/prepared-workflow
+GET /image-worker/jobs/{job_id}/comfy-response
 GET /comfyui/health
 ```
 
@@ -56,6 +58,7 @@ Execution rules:
 - workflow JSON and checkpoint must exist
 - workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, height, and filename prefix
 - a prepared copy is saved as `prepared_workflow.json` beside the generated PNG
+- ComfyUI non-200 response bodies are saved as `comfy_response.json` beside `prepared_workflow.json`
 - outputs are saved locally only
 - transparent print design jobs are prompt-only transparent candidates until local background removal exists
 - Printify, InkedJoy, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
@@ -106,8 +109,17 @@ Timeout debugging:
 
 - confirm ComfyUI is running at `http://127.0.0.1:8188`
 - inspect the saved `prepared_workflow.json`
+- inspect saved `comfy_response.json` when ComfyUI rejects a prompt or image download
 - check ComfyUI history/logs for rejected node inputs
 - lower width, height, or sampler steps for the GTX 1080 Ti
+
+Offline workflow validation:
+
+```bash
+python3 scripts/validate_workflow.py workflow.json
+```
+
+The validator checks ComfyUI API prompt shape without contacting ComfyUI: every node must have `class_type`, `inputs`, and valid node references.
 
 Realistic Vision may still drift toward photo/person outputs. The default prompt and negative prompt push toward standalone flat vector-style print artwork, but a vector/design checkpoint may be needed for better reliability.
 

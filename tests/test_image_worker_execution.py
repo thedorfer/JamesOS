@@ -371,6 +371,66 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
         self.run_with_worker(scenario)
 
+    def test_invalid_node_reference_fails_before_queueing_with_node_field(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            template = root / "bad_reference.api.json"
+            data = workflow_manager._default_print_design_template()
+            data["2"]["inputs"]["clip"] = ["99", 0]
+            template.write_text(json.dumps(data), encoding="utf-8")
+            with patch.object(image_worker.workflow_manager, "get_executable_workflow_template", return_value={
+                "name": "bad_reference",
+                "path": str(template),
+                "workflow_path": str(template),
+                "type": "print_design_basic",
+                "workflow_format": "comfyui_api_prompt",
+                "api_prompt_valid": True,
+            }):
+                with self.assertRaises(image_worker.ImageWorkerError) as raised:
+                    image_worker.prepare_workflow_from_plan(self.image_plan(template, checkpoint))
+
+            self.assertEqual(raised.exception.error_code, "workflow_invalid_api_prompt_structure")
+            self.assertEqual(raised.exception.validation_issues[0]["node_id"], "2")
+            self.assertEqual(raised.exception.validation_issues[0]["field"], "inputs.clip")
+
+        self.run_with_worker(scenario)
+
+    def test_comfyui_non_200_response_body_is_saved_and_structured(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job(
+                "image_generation",
+                {"image_plan": self.image_plan(workflow, checkpoint)},
+                steps=["validation", "workflow prepared", "ComfyUI prompt queued", "image saved", "completed"],
+            )
+            job_queue.approve_job(job["job_id"])
+            response_json = {
+                "error": {"type": "invalid_prompt", "message": "Bad input"},
+                "node_errors": {"5": {"inputs": {"sampler_name": "unknown sampler"}}},
+            }
+            exc = image_worker.comfyui_client.ComfyUIHTTPError(
+                "ComfyUI prompt queue failed with HTTP 400",
+                400,
+                json.dumps(response_json),
+                response_json,
+            )
+            with (
+                patch.object(image_worker.comfyui_client, "is_running", return_value=True),
+                patch.object(image_worker.comfyui_client, "queue_prompt", side_effect=exc),
+            ):
+                with self.assertRaises(image_worker.ImageWorkerError) as raised:
+                    image_worker.execute_approved_image_job(job["job_id"])
+
+            error = image_worker.structured_error(raised.exception, job_id=job["job_id"])
+            self.assertIn("node 5", error["message"])
+            self.assertIn("sampler_name", error["message"])
+            self.assertIn("invalid_prompt", error["response_body"])
+            saved = image_worker.comfy_response_for_job(job["job_id"])
+            self.assertEqual(saved["comfy_response"]["status_code"], 400)
+            self.assertEqual(saved["comfy_response"]["response_json"]["node_errors"]["5"]["inputs"]["sampler_name"], "unknown sampler")
+            prepared = image_worker.prepared_workflow_for_job(job["job_id"])
+            self.assertIn("prepared_workflow", prepared)
+
+        self.run_with_worker(scenario)
+
     def test_provider_writes_remain_false_for_all_providers(self) -> None:
         providers = pod_provider_registry.list_providers()["providers"]
         self.assertTrue(providers)
@@ -428,8 +488,12 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             raise
         paths = {route.path for route in api.app.routes}
         self.assertIn("/image-worker/jobs/{job_id}/execute-approved", paths)
+        self.assertIn("/image-worker/jobs/{job_id}/prepared-workflow", paths)
+        self.assertIn("/image-worker/jobs/{job_id}/comfy-response", paths)
         health = image_worker.health()
         self.assertIn("POST /image-worker/jobs/{job_id}/execute-approved", health["routes"])
+        self.assertIn("GET /image-worker/jobs/{job_id}/prepared-workflow", health["routes"])
+        self.assertIn("GET /image-worker/jobs/{job_id}/comfy-response", health["routes"])
 
     def test_create_test_image_job_script_adds_project_root_to_syspath(self) -> None:
         source = Path("scripts/create_test_image_job.py").read_text(encoding="utf-8")
@@ -445,6 +509,11 @@ class ImageWorkerExecutionTests(unittest.TestCase):
         self.assertIn("--provider", source)
         self.assertIn("production_candidate", source)
         self.assertIn("background_removal_required", source)
+
+    def test_validate_workflow_script_exists(self) -> None:
+        source = Path("scripts/validate_workflow.py").read_text(encoding="utf-8")
+        self.assertIn("validate_comfyui_api_prompt_structure", source)
+        self.assertIn("without contacting ComfyUI", source)
 
 
 if __name__ == "__main__":

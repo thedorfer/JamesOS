@@ -63,10 +63,12 @@ from jamesos.services.control_center import (
 )
 from jamesos.services.comfyui_client import health as comfyui_health
 from jamesos.services.image_worker import (
+    comfy_response_for_job,
     create_test_image_job,
     execute_approved_image_job,
     health as image_worker_health,
     plan as image_worker_plan,
+    prepared_workflow_for_job,
 )
 from jamesos.services.model_registry import get_model, list_models, scan_and_report as scan_models_and_report
 from jamesos.services.planner import create_plan, health as planner_health
@@ -554,6 +556,28 @@ def image_worker_execute_approved_route(job_id: str, x_jamesos_key: str | None =
         from jamesos.services.image_worker import structured_error
 
         return structured_error(exc)
+
+
+@app.get("/image-worker/jobs/{job_id}/prepared-workflow")
+def image_worker_prepared_workflow_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return prepared_workflow_for_job(job_id)
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
+
+
+@app.get("/image-worker/jobs/{job_id}/comfy-response")
+def image_worker_comfy_response_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return comfy_response_for_job(job_id)
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
 
 
 @app.post("/image-worker/create-test-job")

@@ -89,7 +89,14 @@ If an image job times out, inspect:
 - ComfyUI terminal or systemd logs
 - ComfyUI history for the queued prompt
 - the saved `prepared_workflow.json` under the generated job folder
+- the saved `comfy_response.json` if ComfyUI returned a non-200 response
 - image size and sampler steps, especially on GTX 1080 Ti
+
+Validate a workflow without contacting ComfyUI:
+
+```bash
+python3 scripts/validate_workflow.py ~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/transparent_print_design_basic.api.json
+```
 
 ## JamesOS Safety Boundary
 

@@ -4,11 +4,41 @@ import json
 import time
 from typing import Any
 from urllib.parse import urlencode, urlparse
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
 DEFAULT_API_URL = "http://127.0.0.1:8188"
+
+
+class ComfyUIHTTPError(RuntimeError):
+    def __init__(self, message: str, status_code: int, response_body: str, response_json: Any | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.response_body = response_body
+        self.response_json = response_json
+
+
+def _decode_body(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace")
+
+
+def _parse_json(text: str) -> Any:
+    try:
+        return json.loads(text or "{}")
+    except json.JSONDecodeError:
+        return None
+
+
+def _http_error(exc: HTTPError, context: str) -> ComfyUIHTTPError:
+    body = _decode_body(exc.read() or b"")
+    response_json = _parse_json(body)
+    return ComfyUIHTTPError(
+        f"{context} failed with HTTP {exc.code}",
+        int(exc.code),
+        body,
+        response_json,
+    )
 
 
 def _safe_url(api_url: str = DEFAULT_API_URL) -> str:
@@ -77,8 +107,12 @@ def queue_prompt(workflow_json: dict[str, Any], api_url: str = DEFAULT_API_URL, 
     url = f"{_safe_url(api_url)}/prompt"
     body = json.dumps({"prompt": workflow_json}).encode("utf-8")
     request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
-    with urlopen(request, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            data = json.loads(_decode_body(raw) or "{}")
+    except HTTPError as exc:
+        raise _http_error(exc, "ComfyUI prompt queue") from exc
     return {
         "status": "queued",
         "prompt_id": data.get("prompt_id"),
@@ -90,8 +124,11 @@ def queue_prompt(workflow_json: dict[str, Any], api_url: str = DEFAULT_API_URL, 
 
 def get_history(prompt_id: str, api_url: str = DEFAULT_API_URL, timeout: float = 10.0) -> dict[str, Any]:
     url = f"{_safe_url(api_url)}/history/{prompt_id}"
-    with urlopen(url, timeout=timeout) as response:
-        data = json.loads(response.read().decode("utf-8", errors="replace") or "{}")
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            data = json.loads(_decode_body(response.read()) or "{}")
+    except HTTPError as exc:
+        raise _http_error(exc, "ComfyUI history request") from exc
     return {"status": "ok", "prompt_id": prompt_id, "history": data, "api_url": _safe_url(api_url)}
 
 
@@ -124,8 +161,11 @@ def get_output_images(prompt_id: str, api_url: str = DEFAULT_API_URL, timeout: f
                 "type": str(image.get("type") or "output"),
             })
             view_url = f"{_safe_url(api_url)}/view?{query}"
-            with urlopen(view_url, timeout=timeout) as response:
-                content = response.read()
+            try:
+                with urlopen(view_url, timeout=timeout) as response:
+                    content = response.read()
+            except HTTPError as exc:
+                raise _http_error(exc, "ComfyUI image download") from exc
             images.append({
                 "filename": filename,
                 "content": content,
