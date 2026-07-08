@@ -105,7 +105,7 @@ Android Tasker can POST phone events to:
 POST /phone-ingest
 ```
 
-See [Phone Ingestion Tasker](PHONE_INGESTION_TASKER.md).
+See [Phone Ingestion](PHONE_INGESTION.md) for Linux/MTP, Syncthing, KDE Connect, ADB, and optional Tasker approaches.
 
 ### Email And Calendar Imports
 

@@ -29,6 +29,8 @@ Important shop rule:
 
 If the required product is `womens_underwear`, UnityStitches selects only underwear-safe niches such as LGBTQ+ pride, trans pride, nonbinary pride, ally/supporter, self-love, body positivity, mental health positivity, be yourself affirmation, mom/family pride, Thai/English identity, custom pronoun/name, holiday pride, seasonal inclusive, Valentines love-is-love, Pride Month, or clean adult spouse/partner humor.
 
+For underwear designs, recipe-driven runs should prefer pattern, motif, color, symbol, and repeat-style design. Large typography is penalized for underwear and should be reserved for shirts, mugs, totes, stickers, and hoodies.
+
 If the niche is teacher/school/education related, UnityStitches selects only non-intimate products such as shirts, sweatshirts, hoodies, totes, mugs, stickers, classroom accessories, or seasonal gifts.
 
 ## Config

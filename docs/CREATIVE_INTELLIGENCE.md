@@ -9,20 +9,21 @@ Current foundation:
 - prompt draft generation
 - product-plan draft generation
 - SQLite-backed local records
-- read-only Etsy performance history foundation for UnityStitches
+- read-only Etsy sales intelligence for provider-agnostic performance learning
 
 It is not an autopublisher. Creative Intelligence does not call InkedJoy, Printify, ComfyUI, or Etsy write APIs in this phase.
 
-Current POD planning decision:
+Current POD planning direction:
 
-- Printify is the active planned POD provider for MVP shop automation.
-- InkedJoy is future/manual-upload only and not active for current automation.
-- Bagholder Supply Co and Cheeky Peach Prints both prefer Printify for now.
-- Women's underwear, panties, and thongs prefer Printify for now.
+- multi-brand POD and creative automation
+- brand registry
+- recipe-driven design generation
+- approval-first local automation
+- POD provider fields are fulfillment context, not proof that a design is successful
 
 ## Etsy Read-Only Performance
 
-The Etsy connector foundation is read-only and exists so future scoring can learn from real UnityStitches performance history.
+The Etsy connector/import foundation is read-only and exists so scoring can learn from real sales history across Printify, InkedJoy, manual fulfillment, or future POD providers.
 
 Safety defaults:
 
@@ -30,6 +31,8 @@ Safety defaults:
 - `writes_enabled: false`
 - `publishing_enabled: false`
 - `order_fulfillment_enabled: false`
+
+Normalized sales rows include `pod_provider`, `fulfillment_source`, `production_partner`, `product_type`, `inferred_product_type`, `design_family`, `recipe_id`, `revenue`, `quantity_sold`, `conversion_rate`, `favorite_rate`, `repeat_buyer_signal`, and `seasonality_signal`.
 
 See [Etsy Read-Only Performance History](ETSY_READONLY_PERFORMANCE.md).
 
@@ -132,10 +135,14 @@ For `stage: design_art`, Prompt Library recommends `print_design_basic`. `produc
 
 Brand assets may be suggested as metadata. Pride/LGBTQ/trans/intersex prompts prefer matching flag assets when present. Binary files are not embedded in prompts, and font file paths are not exposed.
 
-When `performance_history` contains data, scoring can:
+Recipe Library and Design Runs add reusable design assets on top of prompt generation. Recipes are the durable commercial/design layer; Design DNA keeps brand output consistent; layer manifests preserve future reuse potential even when current ComfyUI output is one raster image.
 
-- boost niches and product types with real sales
-- reward higher conversion patterns
+Women’s underwear, panties, and thongs should usually use pattern, motif, color, symbol, and repeat-friendly recipes instead of large typography. Four variation runs are scored before promotion, and `ready_for_printify_review` requires `print_readiness_score >= 90`.
+
+When imported Etsy sales history or `performance_history` contains data, scoring can:
+
+- boost design families, product types, niches, motifs, color palettes, and seasonality with real sales
+- reward higher conversion/favorite/repeat-buyer patterns
 - reduce scores for crowded low-conversion patterns
 
-The scoring layer reads local performance history only. It does not call Etsy directly.
+The scoring layer reads local performance history only. It does not call Etsy, Printify, or InkedJoy directly.

@@ -12,7 +12,7 @@ from creative_intelligence.storage.sqlite import (
 )
 
 
-SAFE_MESSAGE = "Etsy connector is read-only. No listing, message, fulfillment, Printify, ComfyUI, or image-upload writes are implemented."
+SAFE_MESSAGE = "Etsy connector is read-only. Sales intelligence may learn from imported orders across POD providers, but no listing, message, fulfillment, Printify, InkedJoy, ComfyUI, or image-upload writes are implemented."
 
 
 def _safe_response(payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -141,4 +141,3 @@ def get_underperforming_products(limit: int = 10) -> dict[str, Any]:
     products = [product for product in products if int(product.get("views") or 0) >= 25]
     status = "ok" if products else "not_configured"
     return _safe_response({"status": status, "products": products[:limit]})
-

@@ -15,10 +15,10 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Provides a Job Queue for approval-first automation.
 - Registers future workers/addons through a non-executing worker registry.
 - Provides a Control Center API/report for health, integrations, jobs, storage, and automation readiness.
-- Supports Android phone ingestion through Tasker.
+- Supports Android phone ingestion through Tasker or desktop/laptop pull alternatives.
 - Provides a Flutter Jade app for Linux and Android.
-- Plans draft-only creative automation for UnityStitches, ComfyUI, InkedJoy, Printify, and Etsy.
-- Provides a read-only Etsy performance-history foundation for future UnityStitches learning.
+- Plans draft-only multi-brand POD and creative automation across local image generation, provider review, and Etsy sales intelligence.
+- Provides a read-only Etsy sales-history foundation for provider-agnostic creative learning.
 - Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning foundations with execution disabled.
 - Provides a Brand Registry and POD Provider Registry so creative/product/provider rules can support multiple shops safely.
 
@@ -89,12 +89,12 @@ Hidden intent detection still routes local entity, system, memory, family/privat
 
 ## Creative Roadmap
 
-Jade Creative Studio and UnityStitches are approval-first creative foundations.
+Jade Creative Studio is an approval-first foundation for multi-brand POD and creative automation.
 
 Planned future flow:
 
 ```text
-Reasoner -> Planner -> Job Queue -> Jade Creative Studio pipeline -> UnityStitches draft package -> local ComfyUI flat design -> POD review -> Etsy draft -> James approval
+Reasoner -> Planner -> Job Queue -> Jade Creative Studio pipeline -> brand draft package -> local ComfyUI flat design -> POD review -> Etsy review -> James approval
 ```
 
 Creative Studio now has a queue-backed pipeline shell with these stages:
@@ -104,6 +104,13 @@ idea -> prompt -> image -> mockup -> listing -> review -> printify_draft -> etsy
 ```
 
 The image stage can execute one approved local ComfyUI job and save a local PNG. InkedJoy, Printify, Etsy, publishing, uploads, ordering, and sending remain disabled.
+
+The Creative Studio direction is:
+
+- multi-brand POD and creative automation
+- brand registry
+- recipe-driven design generation
+- approval-first local automation
 
 ComfyUI readiness routes are available for local planning and health only:
 
@@ -147,27 +154,23 @@ GET /prompts/{template_name}
 GET /assets
 GET /styles
 GET /styles/{style_name}
+GET /recipes
+GET /recipes/{recipe_id}
+GET /recipes/by-product/{product_type}
+POST /design-runs/create
+GET /design-runs
+GET /design-runs/{run_id}
+POST /design-runs/{run_id}/score
+POST /design-runs/{run_id}/promote-best
 ```
+
+Design runs create four recipe-driven variations, preserve logical layer manifests and Design DNA, score print readiness, and promote a single best candidate only when it reaches the `>= 90` threshold. Underwear recipes favor pattern/motif design rather than large typography.
 
 Image execution remains disabled and approval-gated.
 
 The Model Registry scan is read-only. It inventories local files under `~/AI/Models`, `~/AI/ComfyUI/models`, and `~/JamesOSData/JamesOS/AI/Models`, writes `~/JamesOSData/JamesOS/AI/model_inventory.json`, and keeps all discovered models `enabled: false`.
 
 The Workflow Manager scan is also read-only. It inventories workflow JSON files under `~/AI/Workflows`, `~/AI/ComfyUI/user/default/workflows`, and `~/JamesOSData/JamesOS/AI/Workflows`, writes `~/JamesOSData/JamesOS/AI/workflow_inventory.json`, and keeps all discovered workflows `execution_enabled: false`.
-
-UnityStitches can generate exactly two local draft product packages per run:
-
-- one women's underwear product
-- one rotating configured product
-
-UnityStitches routes:
-
-```text
-GET /unitystitches/health
-POST /unitystitches/generate-daily-drafts
-GET /unitystitches/drafts
-GET /unitystitches/drafts/{date}
-```
 
 Current safety boundaries:
 
@@ -217,7 +220,7 @@ Job Queue:
 
 ```bash
 python3 scripts/job_queue.py list
-python3 scripts/job_queue.py create unitystitches.draft --payload '{"draft_only": true}'
+python3 scripts/job_queue.py create creative.draft --payload '{"draft_only": true}'
 python3 scripts/job_queue.py approve JOB_ID
 ```
 
@@ -241,12 +244,13 @@ GET /workers/{worker_name}
 - [Image Worker](docs/IMAGE_WORKER.md)
 - [Brand Registry](docs/BRAND_REGISTRY.md)
 - [Creative Foundations](docs/CREATIVE_FOUNDATIONS.md)
+- [Asset Packs](docs/ASSET_PACKS.md)
 - [Integrations](docs/INTEGRATIONS.md)
 - [Control Center](docs/CONTROL_CENTER.md)
 - [Planner](docs/PLANNER.md)
 - [Workers](docs/WORKERS.md)
 - [Knowledge Graph editing roadmap](docs/KNOWLEDGE_GRAPH_EDITING.md)
-- [UnityStitches product pipeline](docs/UNITYSTITCHES_PRODUCT_PIPELINE.md)
+- [Phone ingestion](docs/PHONE_INGESTION.md)
 - [Phone ingestion via Tasker](docs/PHONE_INGESTION_TASKER.md)
 - [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
 - [Creative Intelligence](docs/CREATIVE_INTELLIGENCE.md)

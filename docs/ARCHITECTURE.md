@@ -92,7 +92,7 @@ API routes:
 
 ## Worker Registry
 
-The worker registry defines future workers/addons/plugins without running them. Initial workers include Knowledge Graph, Creative Studio, Image Worker, Workflow Manager, Model Registry, ComfyUI health client, UnityStitches, Printify, Etsy, phone ingestion, and briefing workers.
+The worker registry defines future workers/addons/plugins without running them. Initial workers include Knowledge Graph, Creative Studio, Image Worker, Workflow Manager, Model Registry, ComfyUI health client, brand product pipelines, POD provider review, Etsy, phone ingestion, and briefing workers.
 
 API routes:
 
@@ -121,9 +121,9 @@ No ComfyUI workflow execution, Printify call, Etsy call, upload, publish, order,
 
 ## Brand Registry
 
-Brand Registry centralizes brand/shop rules so Creative Intelligence, UnityStitches, Image Worker, and future Printify/Etsy workers do not hardcode shop assumptions. It stores brand voice, allowed/blocked niches, allowed/blocked products, blocked product/niche pairs, preferred product mix, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
+Brand Registry centralizes brand/shop rules so Creative Intelligence, Image Worker, and future POD/Etsy workers do not hardcode shop assumptions. It stores brand voice, allowed/blocked niches, allowed/blocked products, blocked product/niche pairs, preferred product mix, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
 
-Default brands are UnityStitches and a disabled Degen Market Chaos placeholder. External writes remain disabled for both.
+Brands are configured through the local brand registry. External writes remain disabled by default.
 
 ## Creative Foundations
 
@@ -192,20 +192,13 @@ API routes:
 - `GET /creative-studio/pipelines/{job_id}`
 - `POST /creative-studio/pipelines`
 
-## UnityStitches Product Pipeline
+## Brand Product Pipelines
 
-UnityStitches is the draft-only product pipeline for inclusive Etsy/Printify product ideas. It generates local product draft packages and creates a Creative Studio pipeline job for the daily run.
+JamesOS can host brand-specific draft-only product pipelines for Etsy/POD product ideas. These pipelines generate local product draft packages and create Creative Studio pipeline jobs for review.
 
-Each run generates exactly two local drafts: one women's underwear product and one rotating configured product. Drafts include product concepts, niches, prompts, titles, tags, descriptions, pricing notes, blueprint search notes, and `needs_review` status.
+Drafts include product concepts, niches, prompts, titles, tags, descriptions, pricing notes, provider review notes, and `needs_review` status.
 
-API routes:
-
-- `GET /unitystitches/health`
-- `POST /unitystitches/generate-daily-drafts`
-- `GET /unitystitches/drafts`
-- `GET /unitystitches/drafts/{date}`
-
-Every UnityStitches step remains draft-only and approval-gated.
+Every brand pipeline step remains draft-only and approval-gated.
 
 ## Local ComfyUI
 
@@ -215,12 +208,12 @@ ComfyUI readiness is implemented for health and planning only. No workflow execu
 
 ## Printify And Etsy
 
-Printify is the planned product draft target. Etsy is the planned sales platform. Both remain future integrations.
+POD providers are planned product review targets. Etsy is the planned read-only sales-learning source and future review target. All write operations remain future integrations.
 
 Current rules:
 
 - Do not call Printify yet.
-- Do not call Etsy yet.
+- Do not call Etsy write APIs.
 - Do not publish.
 - Do not order.
 - Do not send to production.

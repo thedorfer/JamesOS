@@ -41,6 +41,7 @@ from jamesos.services.attachment_processor import process_pending_attachment_job
 from jamesos.services.asset_library import scan_assets
 from jamesos.services.file_intelligence import build_file_knowledge
 from jamesos.services.phone_ingest import ingest_phone_event, ingest_phone_events, phone_daily_summary
+from jamesos.services.phone_ingestion import health as phone_ingestion_health, methods as phone_ingestion_methods
 from jamesos.services.creative_studio import (
     approve_creative_job,
     create_creative_job,
@@ -62,6 +63,13 @@ from jamesos.services.control_center import (
     storage as control_center_storage,
 )
 from jamesos.services.comfyui_client import health as comfyui_health
+from jamesos.services.design_variation_service import (
+    create_design_run,
+    get_design_run,
+    list_design_runs,
+    promote_best,
+    score_design_run,
+)
 from jamesos.services.image_worker import (
     comfy_response_for_job,
     create_test_image_job,
@@ -74,6 +82,7 @@ from jamesos.services.model_registry import get_model, list_models, scan_and_rep
 from jamesos.services.planner import create_plan, health as planner_health
 from jamesos.services.pod_provider_registry import get_provider, list_providers, provider_health
 from jamesos.services.prompt_library import get_prompt_template, load_prompt_templates
+from jamesos.services.recipe_library import get_recipe, list_recipes, recipes_by_product
 from jamesos.services.server_config import (
     integration_health,
     server_config,
@@ -161,6 +170,17 @@ class PlannerPlanRequest(BaseModel):
 
 class ImageWorkerPlanRequest(BaseModel):
     package: dict[str, Any] = Field(default_factory=dict)
+
+
+class DesignRunCreateRequest(BaseModel):
+    brand_id: str = "unitystitches"
+    product_type: str = "womens_underwear"
+    niche: str = "trans pride"
+    recipe_id: str = "underwear/pride_pattern"
+    variations: int = 4
+    quality: str = "premium"
+    provider: str = "printify"
+    create_image_jobs: bool = True
 
 
 class BrandValidateRequest(BaseModel):
@@ -284,6 +304,18 @@ def phone_ingest(req: PhoneEventRequest | PhoneBatchRequest, x_jamesos_key: str 
 def phone_summary(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     return {"status": "ok", "report": phone_daily_summary()}
+
+
+@app.get("/phone-ingestion/health")
+def phone_ingestion_health_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return phone_ingestion_health()
+
+
+@app.get("/phone-ingestion/methods")
+def phone_ingestion_methods_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return phone_ingestion_methods()
 
 
 @app.post("/quick-note")
@@ -532,6 +564,75 @@ def workflow_detail_route(workflow_name: str, x_jamesos_key: str | None = Header
     try:
         return get_workflow(workflow_name)
     except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/recipes")
+def recipes_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_recipes()
+
+
+@app.get("/recipes/by-product/{product_type}")
+def recipes_by_product_route(product_type: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return recipes_by_product(product_type)
+
+
+@app.get("/recipes/{recipe_id:path}")
+def recipe_detail_route(recipe_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_recipe(recipe_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/design-runs/create")
+def design_runs_create_route(req: DesignRunCreateRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return create_design_run(
+        brand_id=req.brand_id,
+        product_type=req.product_type,
+        niche=req.niche,
+        recipe_id=req.recipe_id,
+        variations=req.variations,
+        quality=req.quality,
+        provider=req.provider,
+        create_image_jobs=req.create_image_jobs,
+    )
+
+
+@app.get("/design-runs")
+def design_runs_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    return list_design_runs()
+
+
+@app.get("/design-runs/{run_id}")
+def design_run_detail_route(run_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return get_design_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/design-runs/{run_id}/score")
+def design_run_score_route(run_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return score_design_run(run_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/design-runs/{run_id}/promote-best")
+def design_run_promote_best_route(run_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return promote_best(run_id)
+    except (KeyError, ValueError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 

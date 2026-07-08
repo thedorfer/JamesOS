@@ -54,3 +54,5 @@ Production candidates are driven by `design_recipe`, then transformed into struc
 Recipe templates include typography, sticker, minimal, vintage, retro, badge, emblem, line art, cartoon, grunge, watercolor, and seasonal. `premium` quality adds vector-like edges, crisp typography, balanced spacing, isolated artwork, transparent background, high contrast, and thumbnail optimization.
 
 Assets remain metadata-only. Filenames are translated into semantic descriptions such as “six-stripe rainbow pride flag colors” before prompt building.
+
+Design runs preserve `recipe_snapshot.yaml`, `design_dna.json`, per-variation `layer_manifest.json`, and `prompt_package.json` so winning designs can be reused and iterated later.

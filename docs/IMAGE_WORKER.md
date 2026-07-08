@@ -206,3 +206,5 @@ Asset metadata is selected into `selected_assets`. JamesOS scans general Creativ
 ```
 
 Pride/LGBTQ/trans/intersex queries prefer matching flag assets when present. Font files remain metadata-only and do not expose file paths or binary content.
+
+Design runs may create approval-gated `image_generation` jobs for each variation, but they do not auto-execute. Each job still requires explicit approval before local ComfyUI execution.

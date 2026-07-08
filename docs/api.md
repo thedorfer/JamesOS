@@ -73,7 +73,7 @@ POST /share-link
 GET  /mobile/home
 ```
 
-See [Phone Ingestion Tasker](PHONE_INGESTION_TASKER.md).
+See [Phone Ingestion](PHONE_INGESTION.md) for Linux/MTP, Syncthing, KDE Connect, ADB, and optional Tasker approaches.
 
 ## Reports And Processing
 

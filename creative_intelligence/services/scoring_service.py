@@ -3,9 +3,17 @@ from __future__ import annotations
 from typing import Any
 
 from creative_intelligence.services.compatibility_service import annotate_candidate
+from creative_intelligence.services.etsy_sales_intelligence_service import sales_signal_for_candidate
 
 
 def _etsy_adjustment(candidate: dict[str, Any]) -> float:
+    try:
+        signal = sales_signal_for_candidate(candidate)
+        if signal.get("matched_rows"):
+            return float(signal.get("boost") or 0.0)
+    except Exception:
+        pass
+
     try:
         from creative_intelligence.storage.sqlite import list_performance_history, performance_history_exists
 
