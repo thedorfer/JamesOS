@@ -26,6 +26,7 @@ COMFYUI_URL = "http://127.0.0.1:8188"
 OUTPUT_FOLDER = VAULT / "JamesOS" / "AI" / "ComfyUI" / "Outputs"
 GENERATED_ROOT = VAULT / "JamesOS" / "CreativeStudio" / "Generated"
 LAST_IMAGE_PATH = VAULT / "JamesOS" / "CreativeStudio" / "Generated" / "last_image.txt"
+LAST_ERROR_PATH = VAULT / "JamesOS" / "CreativeStudio" / "Generated" / "last_image_error.json"
 EXECUTABLE_JOB_TYPES = {"image_generation", "creative_image_generation"}
 
 SAFETY = {
@@ -45,18 +46,22 @@ SAFETY = {
 
 
 class ImageWorkerError(JobQueueError):
-    def __init__(self, error_code: str, message: str, next_step: str):
+    def __init__(self, error_code: str, message: str, next_step: str, job_id: str = "", workflow_path: str = ""):
         super().__init__(message)
         self.error_code = error_code
         self.message = message
         self.next_step = next_step
+        self.job_id = job_id
+        self.workflow_path = workflow_path
 
 
-def structured_error(exc: Exception) -> dict[str, Any]:
+def structured_error(exc: Exception, job_id: str = "", workflow_path: str = "") -> dict[str, Any]:
     return {
         "status": "error",
         "error_code": getattr(exc, "error_code", "image_execution_failed"),
         "message": getattr(exc, "message", str(exc)),
+        "job_id": getattr(exc, "job_id", "") or job_id,
+        "workflow_path": getattr(exc, "workflow_path", "") or workflow_path,
         "next_step": getattr(exc, "next_step", "Review the failed image job log and fix the job payload before retrying."),
         "execution_enabled": False,
         "printify_execution_enabled": False,
@@ -88,6 +93,7 @@ def health() -> dict[str, Any]:
         "image_execution_available_only_when_approved": True,
         "running_image_job_count": running_image_job_count(),
         "last_generated_image_path": last_generated_image_path(),
+        "last_image_generation_error": last_image_generation_error(),
         "routes": [
             "GET /image-worker/health",
             "POST /image-worker/plan",
@@ -107,6 +113,15 @@ def last_generated_image_path() -> str:
     if LAST_IMAGE_PATH.exists():
         return LAST_IMAGE_PATH.read_text(encoding="utf-8").strip()
     return ""
+
+
+def last_image_generation_error() -> dict[str, Any]:
+    if not LAST_ERROR_PATH.exists():
+        return {}
+    try:
+        return json.loads(LAST_ERROR_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"status": "error", "error_code": "last_error_file_unreadable", "message": "Last image error file could not be read."}
 
 
 def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
@@ -146,13 +161,18 @@ def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
     )
     is_mockup_stage = "mockup" in " ".join(str(package.get(key, "")) for key in ["stage", "workflow_type", "product_type", "design_prompt"]).lower()
     if prompt and not creative_spec and not is_mockup_stage:
-        prompt = f"Standalone print design, flat centered print artwork, no person, no mockup, no product photo. {prompt}"
+        prompt = (
+            "Standalone flat vector-style print artwork, no person, no human, no model, "
+            "no clothing being worn, no room, no lifestyle photo, no product mockup, "
+            "white or transparent-background-friendly background, centered layout, large readable text. "
+            f"{prompt}"
+        )
     negative_prompt = str(
         package.get("negative_prompt")
         or (
             "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing."
             if is_mockup_stage
-            else "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing, person, human, model, wearing, shirt on body, product photo, lifestyle photo, room, shelf, mannequin, face, hands, body, realistic person, portrait, mockup."
+            else "No copyrighted characters, no hateful symbols, no explicit content, no upload, no publishing, person, human, model, girl, woman, man, child, face, hands, body, wearing, shirt on body, product photo, lifestyle photo, room, couch, bed, shelf, mannequin, portrait, photorealistic person, mockup, blurry text, misspelled text, watermark."
         )
     )
     return {
@@ -196,14 +216,10 @@ def _first_discovered_checkpoint() -> dict[str, Any]:
 
 
 def _product_art_basic_workflow() -> dict[str, Any]:
-    workflows = workflow_manager.list_workflows()
-    for workflow in workflows.get("discovered_workflows", []):
-        if workflow.get("name") in {"print_design_basic", "product_art_basic"} and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
-            return workflow
-    for workflow in workflows.get("workflows", {}).values():
-        if workflow.get("name") in {"print_design_basic", "product_art_basic"} and Path(str(workflow.get("path") or workflow.get("workflow_path") or "")).exists():
-            return workflow
-    raise JobQueueError("print_design_basic/product_art_basic workflow not found. Put it at ~/AI/Workflows/print_design_basic.json or product_art_basic.json and run /workflows/scan.")
+    try:
+        return workflow_manager.get_executable_workflow_template("print_design_basic")
+    except KeyError as exc:
+        raise JobQueueError("print_design_basic API workflow template not found. Recreate JamesOS workflow templates and retry.") from exc
 
 
 def _default_design_recipe(width: int, height: int, provider: str = "printify") -> dict[str, Any]:
@@ -229,8 +245,8 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify") 
 
 def create_test_image_job(
     *,
-    positive_prompt: str = "UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic",
-    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text, person, human, model, wearing, product photo, lifestyle photo, room, mannequin, face, hands, body, portrait, mockup",
+    positive_prompt: str = "UnityStitches inclusive pride standalone print design, standalone flat vector-style print artwork, no person, no human, no model, no clothing being worn, no room, no lifestyle photo, no product mockup, white or transparent-background-friendly background, centered layout, large readable text, clean bold typography, print-ready graphic",
+    negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, person, human, model, girl, woman, man, child, face, hands, body, wearing, shirt on body, product photo, lifestyle photo, room, couch, bed, shelf, mannequin, portrait, photorealistic person, mockup, blurry text, misspelled text, watermark",
     seed: int = 1,
     width: int = 768,
     height: int = 768,
@@ -282,6 +298,7 @@ def create_test_image_job(
         "checkpoint_path": checkpoint["path"],
         "workflow_name": workflow["name"],
         "workflow_path": workflow.get("workflow_path") or workflow.get("path"),
+        "requested_workflow_type": "print_design_basic",
         "positive_prompt": positive_prompt,
         "negative_prompt": negative_prompt,
         "seed": seed,
@@ -300,6 +317,7 @@ def create_test_image_job(
                 "requested_workflow_type": "print_design_basic",
                 "selected_workflow_type": workflow.get("type", "print_design_basic"),
                 "workflow_alias_used": workflow.get("name") == "product_art_basic" or workflow.get("type") != "print_design_basic",
+                "workflow_format": workflow.get("workflow_format", "comfyui_api_prompt"),
             },
             "requested_workflow_type": "print_design_basic",
             "selected_workflow_type": workflow.get("type", "print_design_basic"),
@@ -380,7 +398,7 @@ def _discovered_checkpoint(plan: dict[str, Any]) -> dict[str, Any]:
     if selected.get("path") or selected.get("local_path"):
         model_path = Path(str(selected.get("path") or selected.get("local_path"))).expanduser()
         if not model_path.exists():
-            raise ImageWorkerError("missing_model", f"Checkpoint model does not exist: {model_path}", "Run /models/scan and recreate the image job with a discovered checkpoint.")
+            raise ImageWorkerError("workflow_model_checkpoint_missing", f"Checkpoint model does not exist: {model_path}", "Run /models/scan and recreate the image job with a discovered checkpoint.")
         return selected
     inventory = model_registry.load_model_inventory()
     for item in inventory.get("models", []):
@@ -389,69 +407,108 @@ def _discovered_checkpoint(plan: dict[str, Any]) -> dict[str, Any]:
             if not model_path.exists():
                 continue
             return item
-    raise ImageWorkerError("missing_model", "No discovered checkpoint is available in Model Registry inventory", "Put a checkpoint in the model roots, run /models/scan, then recreate the image job.")
+    raise ImageWorkerError("workflow_model_checkpoint_missing", "No discovered checkpoint is available in Model Registry inventory", "Put a checkpoint in the model roots, run /models/scan, then recreate the image job.")
 
 
-def _workflow_path(plan: dict[str, Any]) -> Path:
+def _requested_workflow_type(plan: dict[str, Any]) -> str:
     workflow = plan.get("selected_workflow") if isinstance(plan.get("selected_workflow"), dict) else {}
-    value = workflow.get("workflow_path") or workflow.get("path")
-    if not value:
-        raise ImageWorkerError("missing_workflow", "Image plan does not include a workflow path", "Select a discovered workflow and recreate the image job.")
-    path = Path(str(value)).expanduser()
-    if not path.exists():
-        raise ImageWorkerError("missing_workflow", f"Workflow JSON does not exist: {path}", "Run /workflows/scan or update the job to use an existing workflow JSON.")
-    return path
+    requested = str(
+        plan.get("requested_workflow_type")
+        or plan.get("workflow_type")
+        or workflow.get("requested_workflow_type")
+        or workflow.get("type")
+        or "print_design_basic"
+    )
+    if requested == "product_art":
+        return "print_design_basic"
+    return requested
 
 
 def _validate_prepared_workflow(prepared: Any, text: str) -> None:
     if re.search(r"\{\{[A-Za-z0-9_]+\}\}", text):
-        raise ImageWorkerError("unreplaced_placeholders", "Prepared workflow still contains unreplaced placeholders.", "Check the workflow template placeholders and the image job payload.")
+        raise ImageWorkerError("workflow_placeholder_not_replaced", "Prepared workflow still contains unreplaced placeholders.", "Check the workflow template placeholders and the image job payload.")
     if not isinstance(prepared, dict):
-        raise ImageWorkerError("invalid_workflow_format", "Prepared workflow must be a ComfyUI API prompt JSON object.", "Export or create a ComfyUI API workflow JSON object.")
+        raise ImageWorkerError("workflow_file_not_json", "Prepared workflow must be a ComfyUI API prompt JSON object.", "Export or create a ComfyUI API workflow JSON object.")
     if "creative_spec" in prepared or "image_plan" in prepared or "positive_prompt" in prepared:
-        raise ImageWorkerError("jamesos_spec_not_comfyui_workflow", "Workflow file appears to be a JamesOS spec, not a ComfyUI API prompt.", "Use a ComfyUI API workflow JSON with numbered node IDs and class_type fields.")
+        raise ImageWorkerError("workflow_is_jamesos_spec_not_comfyui_api_prompt", "Workflow file appears to be a JamesOS spec, not a ComfyUI API prompt.", "Use a ComfyUI API workflow JSON with numbered node IDs and class_type fields.")
     if isinstance(prepared.get("nodes"), list) or "last_node_id" in prepared or "links" in prepared:
-        raise ImageWorkerError("ui_workflow_not_api_workflow", "Workflow file appears to be a ComfyUI UI workflow export, not an API prompt.", "In ComfyUI, save/export the API prompt JSON format for JamesOS execution.")
+        raise ImageWorkerError("workflow_is_comfyui_ui_format_export_api_needed", "Workflow file appears to be a ComfyUI UI workflow export, not an API prompt.", "In ComfyUI, save/export the API prompt JSON format for JamesOS execution.")
     nodes = [node for node in prepared.values() if isinstance(node, dict)]
     if not nodes or not any(node.get("class_type") for node in nodes):
-        raise ImageWorkerError("missing_required_comfyui_nodes", "Workflow is missing ComfyUI API nodes with class_type.", "Use a valid ComfyUI API prompt workflow containing loader, prompt, sampler, and save-image nodes.")
-    has_checkpoint = any(
-        "checkpoint" in str(node.get("class_type", "")).lower()
-        or "ckpt_name" in (node.get("inputs") or {})
-        for node in nodes
-    )
-    has_prompt = any("cliptextencode" in str(node.get("class_type", "")).replace(" ", "").lower() for node in nodes)
-    if not has_checkpoint or not has_prompt:
-        raise ImageWorkerError("missing_required_comfyui_nodes", "Workflow is missing required checkpoint or prompt encoding nodes.", "Use a ComfyUI API prompt with CheckpointLoaderSimple and CLIPTextEncode nodes.")
+        raise ImageWorkerError("workflow_missing_required_nodes", "Workflow is missing ComfyUI API nodes with class_type.", "Use a valid ComfyUI API prompt workflow containing loader, prompt, sampler, and save-image nodes.")
+    validation = workflow_manager.validate_comfyui_api_prompt(prepared)
+    if not validation.get("valid"):
+        raise ImageWorkerError(str(validation.get("error_code") or "workflow_missing_required_nodes"), "Workflow is missing required built-in ComfyUI API nodes.", "Use the managed print_design_basic.api.json template or export a complete API prompt.")
+
+
+def _json_string_value(value: Any) -> str:
+    encoded = json.dumps(str(value))
+    return encoded[1:-1]
+
+
+def _coerce_prepared_workflow_values(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _coerce_prepared_workflow_values(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_coerce_prepared_workflow_values(item) for item in value]
+    if isinstance(value, str) and re.fullmatch(r"-?\d+", value):
+        return int(value)
+    return value
 
 
 def prepare_workflow_from_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    workflow_path = _workflow_path(plan)
+    requested_workflow_type = _requested_workflow_type(plan)
+    try:
+        workflow = workflow_manager.get_executable_workflow_template(requested_workflow_type)
+    except KeyError as exc:
+        raise ImageWorkerError("no_executable_workflow_template", str(exc), "Create or restore a valid ComfyUI API prompt template for the requested workflow type.") from exc
+    workflow_path = Path(str(workflow.get("workflow_path") or workflow.get("path"))).expanduser()
+    workflow_format = workflow_manager.classify_workflow_format(workflow_path)
+    if workflow_format == "comfyui_ui_workflow":
+        raise ImageWorkerError("workflow_is_comfyui_ui_format_export_api_needed", "Selected workflow is a ComfyUI UI workflow export, not an API prompt.", "Export API prompt JSON and retry.", workflow_path=str(workflow_path))
+    if workflow_format == "jamesos_spec":
+        raise ImageWorkerError("workflow_is_jamesos_spec_not_comfyui_api_prompt", "Selected workflow is a JamesOS spec, not a ComfyUI API prompt.", "Use a ComfyUI API prompt template from disk.", workflow_path=str(workflow_path))
+    if workflow_format != "comfyui_api_prompt":
+        raise ImageWorkerError("no_executable_workflow_template", "Selected workflow is not an executable ComfyUI API prompt.", "Use the managed print_design_basic.api.json template.", workflow_path=str(workflow_path))
     checkpoint = _discovered_checkpoint(plan)
     checkpoint_name = Path(str(checkpoint.get("path") or checkpoint.get("local_path") or checkpoint.get("name"))).name
     replacements = {
-        "{{positive_prompt}}": str(plan.get("prompt") or ""),
-        "{{negative_prompt}}": str(plan.get("negative_prompt") or ""),
-        "{{checkpoint_name}}": checkpoint_name,
+        "{{positive_prompt}}": _json_string_value(plan.get("prompt") or ""),
+        "{{negative_prompt}}": _json_string_value(plan.get("negative_prompt") or ""),
+        "{{checkpoint_name}}": _json_string_value(checkpoint_name),
         "{{seed}}": str(plan.get("seed") or 1),
         "{{width}}": str(plan.get("width") or 1024),
         "{{height}}": str(plan.get("height") or 1024),
+        "{{filename_prefix}}": _json_string_value(str(plan.get("filename_prefix") or "JamesOS")),
     }
     text = workflow_path.read_text(encoding="utf-8")
     for placeholder, value in replacements.items():
         text = text.replace(placeholder, value)
     try:
         prepared = json.loads(text)
+        prepared = _coerce_prepared_workflow_values(prepared)
         _validate_prepared_workflow(prepared, text)
-        return {"workflow": prepared, "source_path": str(workflow_path)}
+        return {"workflow": prepared, "source_path": str(workflow_path), "template": workflow}
     except json.JSONDecodeError as exc:
-        raise ImageWorkerError("invalid_workflow_format", f"Prepared workflow is not valid JSON: {exc}", "Fix the workflow template JSON and retry the approved job.") from exc
+        raise ImageWorkerError("workflow_file_not_json", f"Prepared workflow is not valid JSON: {exc}", "Fix the workflow template JSON and retry the approved job.", workflow_path=str(workflow_path)) from exc
+
+
+def _job_output_folder(job_id: str) -> Path:
+    return GENERATED_ROOT / date.today().isoformat() / job_id
+
+
+def _save_prepared_workflow(job_id: str, workflow: dict[str, Any]) -> str:
+    folder = _job_output_folder(job_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / "prepared_workflow.json"
+    path.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
+    return str(path)
 
 
 def _save_images(job_id: str, images: list[dict[str, Any]]) -> list[str]:
     if not images:
-        raise ImageWorkerError("output_missing", "ComfyUI completed without output images", "Check the workflow SaveImage node and ComfyUI history output, then retry.")
-    folder = GENERATED_ROOT / date.today().isoformat() / job_id
+        raise ImageWorkerError("comfyui_output_missing", "ComfyUI completed without output images", "Check the workflow SaveImage node and ComfyUI history output, then retry.", job_id=job_id)
+    folder = _job_output_folder(job_id)
     folder.mkdir(parents=True, exist_ok=True)
     saved: list[str] = []
     for index, image in enumerate(images, start=1):
@@ -529,9 +586,6 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
     active = [item for item in list_jobs("in_progress") if item.get("type") in EXECUTABLE_JOB_TYPES and item.get("job_id") != job_id]
     if active:
         raise ImageWorkerError("image_job_in_progress", "Another image job is already in progress", "Wait for the active image job to finish before starting another.")
-    if not comfyui_client.is_running(COMFYUI_URL, timeout=2.0):
-        raise ImageWorkerError("comfyui_not_running", "ComfyUI is not running at http://127.0.0.1:8188", "Start local ComfyUI on 127.0.0.1:8188 and retry.")
-
     payload = _payload_details(job)
     try:
         append_job_log(job_id, "validation passed")
@@ -539,20 +593,24 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
         update_job_status(job_id, "in_progress")
         plan = _plan_from_job(get_job(job_id))
         workflow_json = prepare_workflow_from_plan(plan)
+        prepared_workflow_path = _save_prepared_workflow(job_id, workflow_json["workflow"])
         append_job_log(job_id, f"workflow prepared: {workflow_json['source_path']}")
-        mark_step(job_id, "workflow prepared", "complete", workflow_json["source_path"])
+        mark_step(job_id, "workflow prepared", "complete", prepared_workflow_path)
+        if not comfyui_client.is_running(COMFYUI_URL, timeout=2.0):
+            raise ImageWorkerError("comfyui_not_running", "ComfyUI is not running at http://127.0.0.1:8188", "Start local ComfyUI on 127.0.0.1:8188 and retry.", job_id=job_id, workflow_path=workflow_json["source_path"])
         try:
             queued = comfyui_client.queue_prompt(workflow_json["workflow"], api_url=COMFYUI_URL)
         except Exception as exc:
-            raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI rejected the prepared prompt: {exc}", "Open the prepared workflow in ComfyUI/API format and fix rejected node inputs.") from exc
+            raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI rejected the prepared prompt: {exc}", "Open the prepared workflow in ComfyUI/API format and fix rejected node inputs.", job_id=job_id, workflow_path=workflow_json["source_path"]) from exc
         prompt_id = str(queued.get("prompt_id") or "")
         if not prompt_id:
-            raise ImageWorkerError("comfyui_rejected_prompt", "ComfyUI did not return a prompt_id", "Check ComfyUI API logs for rejected prompt details.")
+            raise ImageWorkerError("comfyui_rejected_prompt", "ComfyUI did not return a prompt_id", "Check ComfyUI API logs for rejected prompt details.", job_id=job_id, workflow_path=workflow_json["source_path"])
         append_job_log(job_id, "ComfyUI prompt queued")
         mark_step(job_id, "ComfyUI prompt queued", "complete", prompt_id)
         completed = comfyui_client.wait_for_completion(prompt_id, api_url=COMFYUI_URL)
         if completed.get("status") != "completed":
-            raise ImageWorkerError("comfyui_rejected_prompt", f"ComfyUI prompt did not complete: {completed.get('status')}", "Review ComfyUI history and logs, then retry after fixing the workflow.")
+            code = "image_generation_timeout" if completed.get("status") == "timeout" else "comfyui_rejected_prompt"
+            raise ImageWorkerError(code, f"ComfyUI prompt did not complete: {completed.get('status')}", "Review ComfyUI history and logs, then retry after fixing the workflow.", job_id=job_id, workflow_path=workflow_json["source_path"])
         images = comfyui_client.get_output_images(prompt_id, api_url=COMFYUI_URL)
         saved = _save_images(job_id, images)
         image_path = saved[0]
@@ -570,6 +628,8 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
             "image_path": image_path,
             "image_paths": saved,
             "prompt_id": prompt_id,
+            "prepared_workflow_path": prepared_workflow_path,
+            "workflow_path": workflow_json["source_path"],
             "job": processed,
             "execution_enabled": False,
             "printify_execution_enabled": False,
@@ -579,6 +639,9 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
             "send_enabled": False,
         }
     except Exception as exc:
+        error = structured_error(exc, job_id=job_id)
+        LAST_ERROR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        LAST_ERROR_PATH.write_text(json.dumps(error, indent=2, sort_keys=True), encoding="utf-8")
         try:
             fail_job(job_id, str(exc))
         except Exception:

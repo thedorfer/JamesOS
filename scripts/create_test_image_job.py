@@ -10,7 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from jamesos.services.image_worker import create_test_image_job
+from jamesos.services import workflow_manager
+from jamesos.services.image_worker import GENERATED_ROOT, create_test_image_job
+from jamesos.services.job_queue import JobQueueError
 
 
 def main() -> None:
@@ -24,23 +26,42 @@ def main() -> None:
     parser.add_argument("--draft-path", default="")
     args = parser.parse_args()
 
-    result = create_test_image_job(
-        positive_prompt=args.positive_prompt,
-        negative_prompt=args.negative_prompt,
-        seed=args.seed,
-        width=args.width,
-        height=args.height,
-        brand_id=args.brand_id,
-        draft_path=args.draft_path,
-    )
+    workflow = workflow_manager.get_executable_workflow_template("print_design_basic")
+    try:
+        result = create_test_image_job(
+            positive_prompt=args.positive_prompt,
+            negative_prompt=args.negative_prompt,
+            seed=args.seed,
+            width=args.width,
+            height=args.height,
+            brand_id=args.brand_id,
+            draft_path=args.draft_path,
+        )
+    except JobQueueError as exc:
+        print(json.dumps({
+            "status": "error",
+            "error_code": "workflow_model_checkpoint_missing",
+            "message": str(exc),
+            "requested_workflow_type": "print_design_basic",
+            "workflow_template_used": workflow.get("workflow_path") or workflow.get("path"),
+            "comfyui_open_workflow_ignored": True,
+            "note": "ComfyUI open workflow is ignored.",
+            "next_step": "Put a checkpoint in ComfyUI models/checkpoints, run the model scan, then rerun this helper.",
+            "create_command": "python3 scripts/create_test_image_job.py",
+        }, indent=2, sort_keys=True))
+        return
     job = result.get("job", {})
     payload = job.get("payload", {})
     job_id = job.get("job_id", "JOB_ID")
-    output_folder = f"~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/{job_id}/"
+    output_folder = f"{GENERATED_ROOT}/YYYY-MM-DD/{job_id}/"
     selected_provider = payload.get("pod_provider") or payload.get("image_plan", {}).get("pod_provider") or "printify"
     selected_assets = payload.get("selected_assets") or payload.get("image_plan", {}).get("selected_assets") or []
     result["selected_provider"] = selected_provider
     result["selected_assets"] = selected_assets
+    result["requested_workflow_type"] = "print_design_basic"
+    result["workflow_template_used"] = workflow.get("workflow_path") or workflow.get("path")
+    result["comfyui_open_workflow_ignored"] = True
+    result["note"] = "ComfyUI open workflow is ignored."
     result["next_commands"] = {
         "approve_cli": f"python3 scripts/job_queue.py approve {job_id}",
         "approve_api": f"curl -X POST -H \"X-JamesOS-Key: $JAMESOS_API_KEY\" http://localhost:8787/jobs/{job_id}/approve",

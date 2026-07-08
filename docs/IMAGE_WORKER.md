@@ -17,6 +17,7 @@ Current responsibilities:
 - prefer `design_recipe` inside `creative_spec` when present
 - return a reviewable image-generation plan
 - execute only approved `image_generation` or `creative_image_generation` jobs
+- reselect an executable ComfyUI API prompt template from Workflow Manager at execution time
 - save generated draft assets locally under JamesOSData
 - target standalone, centered, POD-safe print graphics by default
 
@@ -49,8 +50,11 @@ Execution rules:
 - job must be explicitly approved
 - only one image job may run at a time
 - ComfyUI URL must be local: `http://127.0.0.1:8188`
+- the ComfyUI browser's currently open workflow is ignored
+- workflow execution uses API prompt templates from disk
 - workflow JSON and checkpoint must exist
-- workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, and height
+- workflows may use placeholders for positive prompt, negative prompt, checkpoint name, seed, width, height, and filename prefix
+- a prepared copy is saved as `prepared_workflow.json` beside the generated PNG
 - outputs are saved locally only
 - Printify, InkedJoy, Etsy, upload, publish, order, listing creation, and send behavior remain disabled
 
@@ -86,13 +90,24 @@ Structured execution errors are returned as:
 ```json
 {
   "status": "error",
-  "error_code": "ui_workflow_not_api_workflow",
+  "error_code": "workflow_is_comfyui_ui_format_export_api_needed",
   "message": "Workflow file appears to be a ComfyUI UI workflow export, not an API prompt.",
+  "job_id": "JOB_ID",
+  "workflow_path": "/path/to/workflow.json",
   "next_step": "In ComfyUI, save/export the API prompt JSON format for JamesOS execution."
 }
 ```
 
-Recognized error codes include `invalid_workflow_format`, `ui_workflow_not_api_workflow`, `jamesos_spec_not_comfyui_workflow`, `missing_required_comfyui_nodes`, `unreplaced_placeholders`, `comfyui_rejected_prompt`, and `output_missing`.
+Recognized error codes include `no_executable_workflow_template`, `workflow_file_not_json`, `workflow_is_comfyui_ui_format_export_api_needed`, `workflow_is_jamesos_spec_not_comfyui_api_prompt`, `workflow_missing_required_nodes`, `workflow_placeholder_not_replaced`, `workflow_model_checkpoint_missing`, `comfyui_not_running`, `comfyui_rejected_prompt`, `comfyui_output_missing`, and `image_generation_timeout`.
+
+Timeout debugging:
+
+- confirm ComfyUI is running at `http://127.0.0.1:8188`
+- inspect the saved `prepared_workflow.json`
+- check ComfyUI history/logs for rejected node inputs
+- lower width, height, or sampler steps for the GTX 1080 Ti
+
+Realistic Vision may still drift toward photo/person outputs. The default prompt and negative prompt push toward standalone flat vector-style print artwork, but a vector/design checkpoint may be needed for better reliability.
 
 ## Creative Spec
 

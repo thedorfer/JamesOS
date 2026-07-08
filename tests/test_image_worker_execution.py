@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from jamesos.services import comfyui_client, image_worker, job_queue, model_registry
+from jamesos.services import comfyui_client, image_worker, job_queue, model_registry, pod_provider_registry, workflow_manager
 
 
 class ImageWorkerExecutionTests(unittest.TestCase):
@@ -66,6 +66,8 @@ class ImageWorkerExecutionTests(unittest.TestCase):
                 patch.object(image_worker, "LAST_IMAGE_PATH", generated_root / "last_image.txt"),
                 patch.object(model_registry, "INVENTORY_PATH", inventory_path),
                 patch.object(image_worker.model_registry, "INVENTORY_PATH", inventory_path),
+                patch.object(workflow_manager, "MANAGED_WORKFLOW_TEMPLATE_ROOT", root / "WorkflowTemplates"),
+                patch.object(workflow_manager, "WORKFLOW_ROOTS", [root / "WorkflowTemplates", root / "AI" / "Workflows"]),
             ]
             for item in patches:
                 item.start()
@@ -131,6 +133,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             image_path = Path(result["image_path"])
             self.assertTrue(image_path.exists())
             self.assertEqual(image_path.read_bytes(), b"png")
+            self.assertTrue((image_path.parent / "prepared_workflow.json").exists())
             processed = job_queue.get_job(job["job_id"])
             self.assertEqual(processed["status"], "processed")
             self.assertEqual(processed["payload"]["image_status"], "generated")
@@ -138,6 +141,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertTrue(processed["payload"]["generated_at"])
             self.assertFalse(result["printify_execution_enabled"])
             self.assertFalse(result["etsy_execution_enabled"])
+            self.assertEqual(result["workflow_path"], str(root / "WorkflowTemplates" / "print_design_basic.api.json"))
 
         self.run_with_worker(scenario)
 
@@ -257,15 +261,100 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             plan = self.image_plan(bad_workflow, checkpoint)
 
             with self.assertRaises(image_worker.ImageWorkerError) as raised:
-                image_worker.prepare_workflow_from_plan(plan)
+                with patch.object(image_worker.workflow_manager, "get_executable_workflow_template", return_value={
+                    "name": "ui_workflow",
+                    "path": str(bad_workflow),
+                    "workflow_path": str(bad_workflow),
+                    "type": "print_design_basic",
+                    "workflow_format": "comfyui_ui_workflow",
+                    "api_prompt_valid": False,
+                }):
+                    image_worker.prepare_workflow_from_plan(plan)
 
             error = image_worker.structured_error(raised.exception)
             self.assertEqual(error["status"], "error")
-            self.assertEqual(error["error_code"], "ui_workflow_not_api_workflow")
+            self.assertEqual(error["error_code"], "workflow_is_comfyui_ui_format_export_api_needed")
             self.assertIn("next_step", error)
+            self.assertEqual(error["workflow_path"], str(bad_workflow))
             self.assertFalse(error["printify_execution_enabled"])
 
         self.run_with_worker(scenario)
+
+    def test_image_worker_selects_managed_api_template_over_job_workflow_path(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            stale_ui = root / "old_open_ui_workflow.json"
+            stale_ui.write_text(json.dumps({"last_node_id": 1, "nodes": []}), encoding="utf-8")
+            plan = self.image_plan(stale_ui, checkpoint)
+
+            prepared = image_worker.prepare_workflow_from_plan(plan)
+
+            self.assertEqual(prepared["source_path"], str(root / "WorkflowTemplates" / "print_design_basic.api.json"))
+            self.assertEqual(prepared["workflow"]["1"]["inputs"]["ckpt_name"], "sdxl.safetensors")
+
+        self.run_with_worker(scenario)
+
+    def test_unreplaced_placeholder_fails_before_queueing(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            template = root / "broken.api.json"
+            template.write_text(
+                json.dumps({
+                    "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "{{checkpoint_name}}"}},
+                    "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{unknown_placeholder}}"}},
+                    "3": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{negative_prompt}}"}},
+                    "4": {"class_type": "EmptyLatentImage", "inputs": {"width": "{{width}}", "height": "{{height}}", "batch_size": 1}},
+                    "5": {"class_type": "KSampler", "inputs": {"seed": "{{seed}}"}},
+                    "6": {"class_type": "VAEDecode", "inputs": {}},
+                    "7": {"class_type": "SaveImage", "inputs": {"filename_prefix": "{{filename_prefix}}"}},
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(image_worker.workflow_manager, "get_executable_workflow_template", return_value={
+                "name": "broken",
+                "path": str(template),
+                "workflow_path": str(template),
+                "type": "print_design_basic",
+                "workflow_format": "comfyui_api_prompt",
+                "api_prompt_valid": True,
+            }):
+                with self.assertRaises(image_worker.ImageWorkerError) as raised:
+                    image_worker.prepare_workflow_from_plan(self.image_plan(template, checkpoint))
+
+            self.assertEqual(raised.exception.error_code, "workflow_placeholder_not_replaced")
+
+        self.run_with_worker(scenario)
+
+    def test_missing_required_node_fails_before_queueing(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            template = root / "missing_node.api.json"
+            template.write_text(
+                json.dumps({
+                    "1": {"class_type": "CheckpointLoaderSimple", "inputs": {"ckpt_name": "{{checkpoint_name}}"}},
+                    "2": {"class_type": "CLIPTextEncode", "inputs": {"text": "{{positive_prompt}}"}},
+                }),
+                encoding="utf-8",
+            )
+            with patch.object(image_worker.workflow_manager, "get_executable_workflow_template", return_value={
+                "name": "missing_node",
+                "path": str(template),
+                "workflow_path": str(template),
+                "type": "print_design_basic",
+                "workflow_format": "comfyui_api_prompt",
+                "api_prompt_valid": True,
+            }):
+                with self.assertRaises(image_worker.ImageWorkerError) as raised:
+                    image_worker.prepare_workflow_from_plan(self.image_plan(template, checkpoint))
+
+            self.assertEqual(raised.exception.error_code, "workflow_missing_required_nodes")
+
+        self.run_with_worker(scenario)
+
+    def test_provider_writes_remain_false_for_all_providers(self) -> None:
+        providers = pod_provider_registry.list_providers()["providers"]
+        self.assertTrue(providers)
+        for provider in providers:
+            self.assertFalse(provider["writes_enabled"])
+            self.assertFalse(provider["draft_creation_enabled"])
+            self.assertFalse(provider["order_enabled"])
 
     def test_execute_approved_route_exists(self) -> None:
         try:
@@ -286,6 +375,8 @@ class ImageWorkerExecutionTests(unittest.TestCase):
         self.assertIn("selected_provider", source)
         self.assertIn("selected_assets", source)
         self.assertIn("open_output_folder", source)
+        self.assertIn("ComfyUI open workflow is ignored.", source)
+        self.assertIn("workflow_template_used", source)
 
 
 if __name__ == "__main__":

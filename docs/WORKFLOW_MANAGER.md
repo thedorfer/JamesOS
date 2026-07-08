@@ -1,12 +1,15 @@
 # Workflow Manager
 
-The Workflow Manager selects and validates future ComfyUI workflows without executing them. Phase B adds read-only discovery for local ComfyUI workflow JSON files.
+The Workflow Manager selects and validates ComfyUI workflow templates without executing them. JamesOS-owned API prompt templates on disk are the execution source of truth.
 
 Responsibilities:
 
 - list workflows
 - get a workflow by name
 - validate whether a configured workflow path exists
+- classify workflow format as `comfyui_api_prompt`, `comfyui_ui_workflow`, `jamesos_spec`, or `unknown`
+- create the managed default `print_design_basic.api.json`
+- select executable API prompt templates
 - choose a workflow for a creative package
 - scan local workflow folders
 - write a local workflow inventory and report
@@ -22,13 +25,33 @@ GET /workflows/scan
 GET /workflows/{workflow_name}
 ```
 
+## Managed Template
+
+Default template:
+
+```text
+~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json
+```
+
+This is a ComfyUI API prompt, not the visual UI workflow export. It uses only built-in nodes: `CheckpointLoaderSimple`, two `CLIPTextEncode` nodes, `EmptyLatentImage`, `KSampler`, `VAEDecode`, and `SaveImage`.
+
+To reset it:
+
+```bash
+rm ~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json
+python3 - <<'PY'
+from jamesos.services import workflow_manager
+print(workflow_manager.initialize_default_workflow_templates())
+PY
+```
+
 ## Workflow Discovery
 
 Workflow roots:
 
 ```text
+~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates
 ~/AI/Workflows
-~/AI/ComfyUI/user/default/workflows
 ~/JamesOSData/JamesOS/AI/Workflows
 ```
 
@@ -64,6 +87,8 @@ Recognized workflow types:
 - `img2img`
 - `generic`
 
-`print_design_basic` is the preferred type for flat POD-ready design artwork. `product_art_basic` remains a compatibility alias for older local workflows.
+`print_design_basic` is the preferred type for flat POD-ready design artwork. `product_art_basic` remains a compatibility alias only when it is a valid ComfyUI API prompt.
 
-Each discovered workflow reports name, path, type, status, compatible models, recommended products, transparency/mockup capabilities, `enabled: false`, and `execution_enabled: false`.
+Each discovered workflow reports name, path, type, workflow format, API prompt validity, status, compatible models, recommended products, transparency/mockup capabilities, `enabled: false`, and `execution_enabled: false`.
+
+The ComfyUI browser's open workflow is never inspected or used by JamesOS.

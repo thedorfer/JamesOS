@@ -107,6 +107,8 @@ def gpu_comfyui_readiness() -> dict[str, Any]:
     workflows = _safe_call({"workflows": {}}, workflow_manager.list_workflows)
     workflow_inventory = workflows.get("discovered_inventory", {})
     workflow_summary = workflow_inventory.get("summary", {})
+    default_templates = _safe_call({"default_print_design_workflow_path": ""}, workflow_manager.initialize_default_workflow_templates)
+    last_error = _safe_call({}, image_worker.last_image_generation_error)
     return {
         "configured_api_url": configured_api_url,
         "running": bool(comfy.get("running", False)),
@@ -115,6 +117,10 @@ def gpu_comfyui_readiness() -> dict[str, Any]:
         "model_registry_present": bool(registry.get("present", False)),
         "workflow_registry_present": bool(workflows.get("workflows")),
         "workflow_count": int(workflow_summary.get("total", 0) or 0),
+        "executable_workflow_template_count": int(workflow_summary.get("executable_workflow_template_count", 0) or 0),
+        "default_print_design_workflow_path": default_templates.get("default_print_design_workflow_path", ""),
+        "comfyui_open_workflow_ignored": True,
+        "last_image_generation_error": last_error,
         "workflow_types": workflow_summary.get("by_type", {}),
         "missing_recommended_workflows": workflow_summary.get("missing_recommended_workflows", []),
         "discovered_model_count": int(registry.get("discovered_model_count", 0) or 0),
@@ -130,7 +136,7 @@ def gpu_comfyui_readiness() -> dict[str, Any]:
         "running_image_job_count": image_worker.running_image_job_count(),
         "last_generated_image_path": image_worker.last_generated_image_path(),
         "status": "running" if comfy.get("running") else "configured_not_running",
-        "notes": "Control Center reports readiness only; JamesOS does not execute ComfyUI yet.",
+        "notes": "JamesOS uses API prompt templates from disk; the ComfyUI browser open workflow is ignored.",
     }
 
 
@@ -154,6 +160,10 @@ def integrations() -> dict[str, Any]:
             "model_registry_present": comfyui["model_registry_present"],
             "workflow_registry_present": comfyui["workflow_registry_present"],
             "workflow_count": comfyui["workflow_count"],
+            "executable_workflow_template_count": comfyui["executable_workflow_template_count"],
+            "default_print_design_workflow_path": comfyui["default_print_design_workflow_path"],
+            "comfyui_open_workflow_ignored": True,
+            "last_image_generation_error": comfyui["last_image_generation_error"],
             "workflow_types": comfyui["workflow_types"],
             "missing_recommended_workflows": comfyui["missing_recommended_workflows"],
             "discovered_model_count": comfyui["discovered_model_count"],
@@ -166,7 +176,7 @@ def integrations() -> dict[str, Any]:
             "running_image_job_count": comfyui["running_image_job_count"],
             "last_generated_image_path": comfyui["last_generated_image_path"],
             "gpu_target": integration_rows.get("comfyui", {}).get("gpu_target", "GTX 1080 Ti"),
-            "notes": "Local image engine planned; execution remains disabled.",
+            "notes": "Local image engine uses disk API prompt templates; ComfyUI open workflow is ignored.",
         },
         "printify": {
             "name": "printify",
@@ -275,6 +285,10 @@ def services() -> dict[str, Any]:
             "workflow_manager": {
                 "status": workflows.get("status", "ok"),
                 "workflow_count": int(workflows.get("discovered_inventory", {}).get("summary", {}).get("total", 0) or 0),
+                "executable_workflow_template_count": int(workflows.get("discovered_inventory", {}).get("summary", {}).get("executable_workflow_template_count", 0) or 0),
+                "default_print_design_workflow_path": _safe_call({"default_print_design_workflow_path": ""}, workflow_manager.initialize_default_workflow_templates).get("default_print_design_workflow_path", ""),
+                "comfyui_open_workflow_ignored": True,
+                "last_image_generation_error": image.get("last_image_generation_error", {}),
                 "workflow_types": workflows.get("discovered_inventory", {}).get("summary", {}).get("by_type", {}),
                 "missing_recommended_workflows": workflows.get("discovered_inventory", {}).get("summary", {}).get("missing_recommended_workflows", []),
                 "execution_enabled": False,

@@ -2,6 +2,8 @@
 
 ComfyUI is the local image renderer for approved JamesOS creative image jobs. JamesOS can check health, prepare plans, and execute one explicitly approved local image job at a time.
 
+JamesOS does not use whichever workflow is open in the ComfyUI browser UI. It loads a ComfyUI API prompt template from disk, injects prompt/model/size/seed values, validates it, queues it through `http://127.0.0.1:8188/prompt`, and saves the PNG locally.
+
 ## Install Paths
 
 Preferred path:
@@ -82,12 +84,20 @@ Check:
 curl http://127.0.0.1:8188/system_stats
 ```
 
+If an image job times out, inspect:
+
+- ComfyUI terminal or systemd logs
+- ComfyUI history for the queued prompt
+- the saved `prepared_workflow.json` under the generated job folder
+- image size and sampler steps, especially on GTX 1080 Ti
+
 ## JamesOS Safety Boundary
 
 Current implementation:
 
 - health check and system stats
 - approved single-image prompt queue execution
+- disk API prompt template execution only
 - local output download only
 - no Printify calls
 - no Etsy calls
@@ -97,3 +107,5 @@ Current implementation:
 - no sending
 
 Execution must be approval-gated through Planner, Creative Intelligence, Creative Studio Pipeline, Image Worker, and Job Queue.
+
+Realistic Vision can still bias outputs toward photos or people even with strict prompt guards. A vector/design-focused checkpoint may be needed later for more deterministic print artwork.

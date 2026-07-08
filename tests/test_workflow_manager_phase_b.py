@@ -18,6 +18,12 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
             patches = [
                 patch.object(workflow_manager, "WORKFLOW_INVENTORY_PATH", inventory_path),
                 patch.object(workflow_manager, "REPORT_PATH", report_path),
+                patch.object(workflow_manager, "MANAGED_WORKFLOW_TEMPLATE_ROOT", root / "JamesOSData" / "JamesOS" / "CreativeStudio" / "WorkflowTemplates"),
+                patch.object(workflow_manager, "WORKFLOW_ROOTS", [
+                    root / "JamesOSData" / "JamesOS" / "CreativeStudio" / "WorkflowTemplates",
+                    root / "AI" / "Workflows",
+                    root / "JamesOSData" / "JamesOS" / "AI" / "Workflows",
+                ]),
                 patch.object(control_center.workflow_manager, "WORKFLOW_INVENTORY_PATH", inventory_path),
                 patch.object(control_center.workflow_manager, "REPORT_PATH", report_path),
                 patch.object(image_worker.workflow_manager, "WORKFLOW_INVENTORY_PATH", inventory_path),
@@ -44,6 +50,48 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
             self.assertFalse(inventory["workflows"][0]["enabled"])
             self.assertFalse(inventory["workflows"][0]["execution_enabled"])
             self.assertFalse(inventory["execution_enabled"])
+
+        self.run_with_temp_workflows(scenario)
+
+    def test_default_print_design_api_template_is_created(self) -> None:
+        def scenario(root: Path) -> None:
+            result = workflow_manager.initialize_default_workflow_templates()
+            path = Path(result["default_print_design_workflow_path"])
+
+            self.assertTrue(path.exists())
+            self.assertEqual(path.name, "print_design_basic.api.json")
+            data = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(workflow_manager.validate_comfyui_api_prompt(data)["valid"])
+
+        self.run_with_temp_workflows(scenario)
+
+    def test_workflow_format_classifier_detects_api_ui_and_jamesos_spec(self) -> None:
+        def scenario(root: Path) -> None:
+            api_path = Path(workflow_manager.initialize_default_workflow_templates()["default_print_design_workflow_path"])
+            ui_path = root / "ui_workflow.json"
+            spec_path = root / "jamesos_spec.json"
+            ui_path.write_text(json.dumps({"last_node_id": 7, "nodes": [], "links": []}), encoding="utf-8")
+            spec_path.write_text(json.dumps({"creative_spec": {}, "positive_prompt": "hello"}), encoding="utf-8")
+
+            self.assertEqual(workflow_manager.classify_workflow_format(api_path), "comfyui_api_prompt")
+            self.assertEqual(workflow_manager.classify_workflow_format(ui_path), "comfyui_ui_workflow")
+            self.assertEqual(workflow_manager.classify_workflow_format(spec_path), "jamesos_spec")
+
+        self.run_with_temp_workflows(scenario)
+
+    def test_get_executable_prefers_managed_print_design_template(self) -> None:
+        def scenario(root: Path) -> None:
+            external = root / "AI" / "Workflows"
+            external.mkdir(parents=True)
+            (external / "print_design_basic_other.api.json").write_text(
+                json.dumps(workflow_manager._default_print_design_template()),
+                encoding="utf-8",
+            )
+
+            result = workflow_manager.get_executable_workflow_template("print_design_basic")
+
+            self.assertEqual(Path(result["workflow_path"]).name, "print_design_basic.api.json")
+            self.assertTrue(result["comfyui_open_workflow_ignored"])
 
         self.run_with_temp_workflows(scenario)
 

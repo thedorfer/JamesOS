@@ -10,13 +10,24 @@ Example:
 ~/AI/ComfyUI/models/checkpoints/realisticVisionV60B1_v60B1VAE.safetensors
 ```
 
-## 2. Put a workflow in AI workflows
+## 2. Use the JamesOS API workflow template
 
 ```text
-~/AI/Workflows/print_design_basic.json
+~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json
 ```
 
-`product_art_basic.json` is still accepted as a compatibility alias.
+JamesOS creates this managed ComfyUI API prompt template automatically. It does not use the workflow currently open in the ComfyUI browser UI.
+
+To reset/recreate it, delete only that managed template file and run:
+
+```bash
+python3 - <<'PY'
+from jamesos.services import workflow_manager
+print(workflow_manager.initialize_default_workflow_templates())
+PY
+```
+
+`product_art_basic.json` is only a compatibility fallback if it is a valid ComfyUI API prompt.
 
 The workflow may use these placeholders:
 
@@ -27,6 +38,7 @@ The workflow may use these placeholders:
 {{seed}}
 {{width}}
 {{height}}
+{{filename_prefix}}
 ```
 
 ## 3. Scan models and workflows
@@ -56,6 +68,8 @@ The helper creates a `creative_spec` with a `design_recipe` for UnityStitches pr
 
 The helper output also shows:
 
+- workflow template used
+- `ComfyUI open workflow is ignored.`
 - selected provider
 - selected asset metadata
 - exact approve CLI/API commands
@@ -93,13 +107,17 @@ Generated images are saved locally:
 If something fails, common causes are:
 
 - no discovered checkpoint: run `/models/scan`
-- no `print_design_basic`/`product_art_basic` workflow: place `~/AI/Workflows/print_design_basic.json` and run `/workflows/scan`
+- no `print_design_basic` workflow: recreate the managed `print_design_basic.api.json` template and run `/workflows/scan`
+- no executable template: recreate `print_design_basic.api.json`
 - UI workflow instead of API workflow: export/save the ComfyUI API prompt JSON, not the visual-editor workflow JSON
 - JamesOS spec instead of ComfyUI workflow: use a numbered-node ComfyUI API prompt
 - unreplaced placeholders: confirm the workflow uses supported placeholders exactly
 - ComfyUI not running: check `curl http://127.0.0.1:8188/system_stats`
 - workflow output missing: confirm the workflow saves an image output
 - model not listed in ComfyUI: confirm the checkpoint file is in ComfyUI's models/checkpoints folder and restart/rescan ComfyUI if needed
+- timeout: check ComfyUI logs/history, lower image size or steps, then retry the approved job
+
+Realistic Vision is photo/person-biased. The default prompt strongly asks for flat vector-style print artwork with no people, rooms, mockups, or worn clothing, but a vector/design-focused checkpoint may still be needed later for more reliable print-design output.
 
 Safety boundary:
 

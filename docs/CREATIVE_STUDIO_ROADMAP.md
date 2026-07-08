@@ -128,6 +128,7 @@ Active readiness pieces:
 - ComfyUI health check against `http://127.0.0.1:8188/system_stats`
 - Model Registry at `~/JamesOSData/JamesOS/AI/model_registry.yaml`
 - Workflow Manager for listing, selection, and path validation
+- managed API prompt template at `~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json`
 - Image Worker safe execution plans
 - approved single-image execution through local ComfyUI only
 - generated draft assets saved under `~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/<job_id>/`
@@ -140,10 +141,11 @@ Implemented execution:
 - GTX 1080 Ti-aware workflow choices
 - workflow JSON loading
 - placeholder replacement for prompt/negative prompt/checkpoint/seed/size
+- prepared workflow copy saved beside generated output
 - PNG download and local asset storage
 - Job Queue attachment of generated assets
 
-ComfyUI is only the image engine. JamesOS remains the workflow owner.
+ComfyUI is only the image engine. JamesOS remains the workflow owner, and the ComfyUI browser's open workflow is ignored. Realistic Vision may still produce photo/person-biased outputs; a vector/design checkpoint may be needed later for stricter print artwork.
 
 ## Phase 6: Printify Draft Integration
 
@@ -214,4 +216,5 @@ Creative Studio must keep these defaults:
 - draft-only
 - evidence-labeled when possible
 - Job Queue-backed for consequential actions
-- no Printify/Etsy/ComfyUI execution until the corresponding phase is intentionally implemented
+- ComfyUI execution only for explicitly approved local image jobs
+- no Printify/Etsy/provider writes until the corresponding phase is intentionally implemented

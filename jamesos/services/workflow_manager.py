@@ -8,9 +8,11 @@ from jamesos.config import VAULT
 from jamesos.services import model_registry
 
 
+MANAGED_WORKFLOW_TEMPLATE_ROOT = VAULT / "JamesOS" / "CreativeStudio" / "WorkflowTemplates"
+
 WORKFLOW_ROOTS = [
+    MANAGED_WORKFLOW_TEMPLATE_ROOT,
     Path.home() / "AI" / "Workflows",
-    Path.home() / "AI" / "ComfyUI" / "user" / "default" / "workflows",
     VAULT / "JamesOS" / "AI" / "Workflows",
 ]
 
@@ -32,6 +34,81 @@ WORKFLOW_TYPES = {
 }
 
 RECOMMENDED_WORKFLOW_TYPES = ["print_design_basic", "transparent_png", "typography", "mockup", "upscale"]
+
+REQUIRED_API_NODE_TYPES = {
+    "CheckpointLoaderSimple",
+    "CLIPTextEncode",
+    "EmptyLatentImage",
+    "KSampler",
+    "VAEDecode",
+    "SaveImage",
+}
+
+
+def _default_print_design_template() -> dict[str, Any]:
+    return {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": "{{checkpoint_name}}"},
+        },
+        "2": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"clip": ["1", 1], "text": "{{positive_prompt}}"},
+        },
+        "3": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {"clip": ["1", 1], "text": "{{negative_prompt}}"},
+        },
+        "4": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": "{{width}}", "height": "{{height}}", "batch_size": 1},
+        },
+        "5": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "latent_image": ["4", 0],
+                "seed": "{{seed}}",
+                "steps": 28,
+                "cfg": 7.0,
+                "sampler_name": "euler",
+                "scheduler": "normal",
+                "denoise": 1.0,
+            },
+        },
+        "6": {
+            "class_type": "VAEDecode",
+            "inputs": {"samples": ["5", 0], "vae": ["1", 2]},
+        },
+        "7": {
+            "class_type": "SaveImage",
+            "inputs": {"images": ["6", 0], "filename_prefix": "{{filename_prefix}}"},
+        },
+    }
+
+
+def initialize_default_workflow_templates() -> dict[str, Any]:
+    MANAGED_WORKFLOW_TEMPLATE_ROOT.mkdir(parents=True, exist_ok=True)
+    path = MANAGED_WORKFLOW_TEMPLATE_ROOT / "print_design_basic.api.json"
+    created = False
+    should_write = not path.exists()
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            should_write = not validate_comfyui_api_prompt(data).get("valid")
+        except Exception:
+            should_write = True
+    if should_write:
+        path.write_text(json.dumps(_default_print_design_template(), indent=2), encoding="utf-8")
+        created = True
+    return {
+        "status": "ok",
+        "template_root": str(MANAGED_WORKFLOW_TEMPLATE_ROOT),
+        "default_print_design_workflow_path": str(path),
+        "created": created,
+    }
 
 
 def _inventory_path(path: Path | None = None) -> Path:
@@ -57,6 +134,7 @@ def _workflow_with_validation(workflow: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_workflows() -> dict[str, Any]:
+    initialize_default_workflow_templates()
     registry = model_registry.load_registry()
     configured_workflows = {
         name: _workflow_with_validation(workflow)
@@ -141,6 +219,7 @@ def choose_workflow_for_package(package: dict[str, Any]) -> dict[str, Any]:
 
 
 def scan_workflows(workflow_roots: list[Path] | None = None) -> list[Path]:
+    initialize_default_workflow_templates()
     roots = workflow_roots or WORKFLOW_ROOTS
     files: list[Path] = []
     for root in roots:
@@ -187,6 +266,37 @@ def _load_workflow_json(path: Path) -> Any:
         return None
 
 
+def validate_comfyui_api_prompt(workflow_json: Any) -> dict[str, Any]:
+    if not isinstance(workflow_json, dict):
+        return {"valid": False, "error_code": "workflow_file_not_json", "missing_required_nodes": sorted(REQUIRED_API_NODE_TYPES)}
+    if isinstance(workflow_json.get("nodes"), list) or "last_node_id" in workflow_json or "links" in workflow_json:
+        return {"valid": False, "error_code": "workflow_is_comfyui_ui_format_export_api_needed", "missing_required_nodes": sorted(REQUIRED_API_NODE_TYPES)}
+    if "creative_spec" in workflow_json or "image_plan" in workflow_json or "positive_prompt" in workflow_json:
+        return {"valid": False, "error_code": "workflow_is_jamesos_spec_not_comfyui_api_prompt", "missing_required_nodes": sorted(REQUIRED_API_NODE_TYPES)}
+    nodes = [node for node in workflow_json.values() if isinstance(node, dict)]
+    class_types = {str(node.get("class_type") or "") for node in nodes}
+    missing = sorted(REQUIRED_API_NODE_TYPES - class_types)
+    if missing:
+        return {"valid": False, "error_code": "workflow_missing_required_nodes", "missing_required_nodes": missing}
+    return {"valid": True, "error_code": "", "missing_required_nodes": []}
+
+
+def classify_workflow_format(path: Path) -> str:
+    data = _load_workflow_json(path)
+    if data is None:
+        return "unknown"
+    if isinstance(data, dict) and (isinstance(data.get("nodes"), list) or "last_node_id" in data or "links" in data):
+        return "comfyui_ui_workflow"
+    if isinstance(data, dict) and ("creative_spec" in data or "image_plan" in data or "positive_prompt" in data):
+        return "jamesos_spec"
+    validation = validate_comfyui_api_prompt(data)
+    if validation["valid"]:
+        return "comfyui_api_prompt"
+    if isinstance(data, dict) and any(isinstance(node, dict) and node.get("class_type") for node in data.values()):
+        return "comfyui_api_prompt"
+    return "unknown"
+
+
 def _compatible_models(workflow_type: str) -> list[str]:
     mapping = {
         "print_design_basic": ["sdxl_base", "flux_schnell", "sd15"],
@@ -224,11 +334,18 @@ def _recommended_products(workflow_type: str) -> list[str]:
 def classify_workflow(path: Path) -> dict[str, Any]:
     data = _load_workflow_json(path)
     workflow_type = infer_workflow_type(path, data)
+    workflow_format = classify_workflow_format(path)
+    validation = validate_comfyui_api_prompt(data)
+    name = path.stem[:-4] if path.stem.endswith(".api") else path.stem
     return {
-        "name": path.stem,
+        "name": name,
         "path": str(path),
         "workflow_path": str(path),
         "type": workflow_type,
+        "workflow_format": workflow_format,
+        "api_prompt_valid": bool(validation.get("valid")),
+        "validation_error_code": validation.get("error_code", ""),
+        "missing_required_nodes": validation.get("missing_required_nodes", []),
         "status": "discovered",
         "compatible_models": _compatible_models(workflow_type),
         "recommended_products": _recommended_products(workflow_type),
@@ -241,10 +358,20 @@ def classify_workflow(path: Path) -> dict[str, Any]:
 
 def _summarize_inventory(workflows: list[dict[str, Any]]) -> dict[str, Any]:
     by_type: dict[str, int] = {}
+    by_format: dict[str, int] = {}
     for workflow in workflows:
         by_type[workflow["type"]] = by_type.get(workflow["type"], 0) + 1
+        workflow_format = str(workflow.get("workflow_format") or "unknown")
+        by_format[workflow_format] = by_format.get(workflow_format, 0) + 1
     missing = [item for item in RECOMMENDED_WORKFLOW_TYPES if item not in by_type]
-    return {"total": len(workflows), "by_type": dict(sorted(by_type.items())), "missing_recommended_workflows": missing}
+    executable = [item for item in workflows if item.get("workflow_format") == "comfyui_api_prompt" and item.get("api_prompt_valid")]
+    return {
+        "total": len(workflows),
+        "by_type": dict(sorted(by_type.items())),
+        "by_format": dict(sorted(by_format.items())),
+        "executable_workflow_template_count": len(executable),
+        "missing_recommended_workflows": missing,
+    }
 
 
 def build_workflow_inventory(
@@ -296,6 +423,35 @@ def load_workflow_inventory(inventory_path: Path | None = None) -> dict[str, Any
             "summary": {"total": 0, "by_type": {}, "missing_recommended_workflows": RECOMMENDED_WORKFLOW_TYPES},
             "execution_enabled": False,
         }
+
+
+def get_executable_workflow_template(workflow_type: str) -> dict[str, Any]:
+    initialize_default_workflow_templates()
+    requested = (workflow_type or "print_design_basic").strip() or "print_design_basic"
+    inventory = build_workflow_inventory()
+    workflows = inventory.get("workflows", [])
+    candidates = [
+        item for item in workflows
+        if item.get("workflow_format") == "comfyui_api_prompt"
+        and item.get("api_prompt_valid")
+        and item.get("type") == requested
+    ]
+    if requested == "print_design_basic":
+        for item in candidates:
+            if Path(str(item.get("workflow_path") or "")).name == "print_design_basic.api.json":
+                return {**item, "status": "ok", "comfyui_open_workflow_ignored": True}
+    if candidates:
+        return {**candidates[0], "status": "ok", "comfyui_open_workflow_ignored": True}
+    if requested == "print_design_basic":
+        fallback = [
+            item for item in workflows
+            if item.get("workflow_format") == "comfyui_api_prompt"
+            and item.get("api_prompt_valid")
+            and item.get("name") == "product_art_basic"
+        ]
+        if fallback:
+            return {**fallback[0], "status": "ok", "workflow_alias_used": True, "comfyui_open_workflow_ignored": True}
+    raise KeyError(f"No executable ComfyUI API prompt template found for workflow type: {requested}")
 
 
 def write_workflow_inventory_report(
