@@ -57,6 +57,36 @@ class ModelRegistryPhaseATests(unittest.TestCase):
         self.assertEqual(model_registry.classify_model_file(path), "checkpoints")
         self.assertEqual(model_registry.infer_model_family(path), "sd15")
 
+    def test_known_sd15_checkpoint_names_classify_as_sd15(self) -> None:
+        names = [
+            "DreamShaper_8.safetensors",
+            "Deliberate_v2.safetensors",
+            "CounterfeitV30.safetensors",
+            "AnythingV5.safetensors",
+            "EpicRealism_pureEvolution.safetensors",
+            "revAnimated_v122.safetensors",
+            "majicMIX_realistic.safetensors",
+            "AbsoluteReality_v181.safetensors",
+        ]
+        for name in names:
+            path = Path("/tmp/AI/ComfyUI/models/checkpoints") / name
+            self.assertEqual(model_registry.classify_model_file(path), "checkpoints")
+            self.assertEqual(model_registry.infer_model_family(path), "sd15")
+
+    def test_unknown_checkpoint_defaults_to_sd15_but_sdxl_and_flux_override(self) -> None:
+        self.assertEqual(model_registry.infer_model_family(Path("/tmp/AI/ComfyUI/models/checkpoints/local_model.safetensors")), "sd15")
+        self.assertEqual(model_registry.infer_model_family(Path("/tmp/AI/ComfyUI/models/checkpoints/my_sdxl_model.safetensors")), "sdxl")
+        self.assertEqual(model_registry.infer_model_family(Path("/tmp/AI/ComfyUI/models/checkpoints/flux_dev.safetensors")), "flux")
+
+    def test_vae_text_does_not_override_checkpoint_folder(self) -> None:
+        checkpoint_path = Path("/tmp/AI/ComfyUI/models/checkpoints/someModel_v1VAE.safetensors")
+        vae_path = Path("/tmp/AI/ComfyUI/models/vae/someModel_v1VAE.safetensors")
+
+        self.assertEqual(model_registry.classify_model_file(checkpoint_path), "checkpoints")
+        self.assertEqual(model_registry.infer_model_family(checkpoint_path), "sd15")
+        self.assertEqual(model_registry.classify_model_file(vae_path), "vae")
+        self.assertEqual(model_registry.infer_model_family(vae_path), "vae")
+
     def test_classifier_recognizes_lora_by_path_name(self) -> None:
         path = Path("/tmp/AI/ComfyUI/models/loras/pride_typography_lora.safetensors")
         self.assertEqual(model_registry.classify_model_file(path), "loras")

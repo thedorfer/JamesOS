@@ -98,3 +98,5 @@ Recognized workflow types:
 Each discovered workflow reports name, path, type, workflow format, API prompt validity, status, compatible models, recommended products, transparency/mockup capabilities, `enabled: false`, and `execution_enabled: false`.
 
 The ComfyUI browser's open workflow is never inspected or used by JamesOS.
+
+Model Registry note: common SD1.5 checkpoint names such as DreamShaper, RealisticVision, Deliberate, Counterfeit, Anything/AnythingV5, EpicRealism, RevAnimated, MajicMix, and AbsoluteReality classify as `sd15` when found under checkpoint folders. VAE filename text does not override checkpoint-folder classification.

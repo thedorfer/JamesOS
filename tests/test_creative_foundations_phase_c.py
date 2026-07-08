@@ -156,8 +156,40 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
         self.assertIn("Love Is Love", package["positive_prompt"])
         self.assertIn("clean vector-like print art", package["positive_prompt"])
         self.assertIn("Print notes", package["positive_prompt"])
+        self.assertIn("STYLE", package["positive_prompt"])
+        self.assertIn("SUBJECT", package["positive_prompt"])
+        self.assertIn("TYPOGRAPHY", package["positive_prompt"])
+        self.assertIn("LAYOUT", package["positive_prompt"])
+        self.assertIn("PRINT", package["positive_prompt"])
         self.assertEqual(package["recommended_workflow_type"], "print_design_basic")
         self.assertEqual(package["design_recipe"]["provider"], "printify")
+        self.assertTrue(package["composition_metadata"]["safe_margins"])
+        self.assertEqual(package["composition_metadata"]["canvas_coverage"], "approximately 75% of canvas")
+
+    def test_design_recipe_templates_and_premium_quality_terms(self) -> None:
+        templates = prompt_library.list_design_recipe_templates()
+        for name in ["typography", "sticker", "minimal", "vintage", "retro", "badge", "emblem", "line_art", "cartoon", "grunge", "watercolor", "seasonal"]:
+            self.assertIn(name, templates["templates"])
+
+        package = prompt_library.creative_spec_to_prompt_package({
+            "stage": "design_art",
+            "design_recipe": {
+                "template": "sticker",
+                "quality": "premium",
+                "product_type": "design_art",
+                "niche": "LGBTQ+ pride",
+                "background": "transparent background",
+                "text": "LOVE IS LOVE",
+            },
+        })
+
+        prompt = package["positive_prompt"]
+        self.assertIn("clean edges", prompt)
+        self.assertIn("crisp typography", prompt)
+        self.assertIn("transparent background", prompt)
+        self.assertIn("thumbnail optimization", prompt)
+        self.assertEqual(package["design_quality_level"], "premium")
+        self.assertEqual(package["recommended_workflow_type"], "transparent_print_design_basic")
 
     def test_design_art_prompt_rejects_person_model_and_mockup(self) -> None:
         package = prompt_library.creative_spec_to_prompt_package({

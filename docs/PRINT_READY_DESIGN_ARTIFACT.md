@@ -40,3 +40,17 @@ No external background-removal services are called.
 JamesOS does not call Printify. When a PNG exists, the job is marked for POD review/manual upload, but provider writes remain disabled.
 
 Future phases may add local background removal and upscaling workflows before marking an artifact `final_print_ready`.
+
+## Design Quality
+
+Production candidates are driven by `design_recipe`, then transformed into structured prompt sections:
+
+- `STYLE`
+- `SUBJECT`
+- `TYPOGRAPHY`
+- `LAYOUT`
+- `PRINT`
+
+Recipe templates include typography, sticker, minimal, vintage, retro, badge, emblem, line art, cartoon, grunge, watercolor, and seasonal. `premium` quality adds vector-like edges, crisp typography, balanced spacing, isolated artwork, transparent background, high contrast, and thumbnail optimization.
+
+Assets remain metadata-only. Filenames are translated into semantic descriptions such as “six-stripe rainbow pride flag colors” before prompt building.

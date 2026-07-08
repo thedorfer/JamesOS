@@ -177,6 +177,16 @@ creative_spec:
 
 Prompt Library converts this into positive/negative prompts, image size, recommended workflow type, and recommended model family.
 
+Prompts are now built from `design_recipe` first. `creative_spec` remains business context. Professional prompts are sectioned as `STYLE`, `SUBJECT`, `TYPOGRAPHY`, `LAYOUT`, and `PRINT`; negative terms remain in the negative prompt. Empty sections are omitted.
+
+Design quality levels:
+
+- `draft`: clear concept, simple printable layout
+- `production`: clean vector-like artwork, crisp typography, balanced spacing, high contrast, thumbnail readable
+- `premium`: vector-like, clean edges, crisp typography, balanced spacing, isolated artwork, transparent background, high contrast, thumbnail optimization
+
+Composition metadata requires centered artwork, about 75% canvas coverage, safe margins, a single focal point, balanced composition, thumbnail readability, clean silhouette, high contrast, large readable typography, and minimal unnecessary detail.
+
 Asset metadata is selected into `selected_assets`. JamesOS scans general Creative Studio assets plus brand assets such as:
 
 ```text

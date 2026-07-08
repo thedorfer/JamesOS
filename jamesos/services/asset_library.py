@@ -13,6 +13,51 @@ FONT_EXTENSIONS = {".ttf", ".otf"}
 METADATA_ONLY_EXTENSIONS = FONT_EXTENSIONS | {".ai", ".eps", ".pdf"}
 
 
+def semantic_asset_metadata(name: str) -> dict[str, Any]:
+    normalized = name.lower().replace("-", "_").replace(" ", "_")
+    if "unitystitches" in normalized and "logo" in normalized:
+        return {
+            "semantic_role": "brand_mark",
+            "motif": "optional small brand mark space",
+            "prompt_description": "optional small brand mark space, do not recreate exact logo",
+        }
+    if "transgender_pride" in normalized or "trans_pride" in normalized:
+        return {
+            "semantic_role": "color_palette",
+            "motif": "trans pride colors",
+            "prompt_description": "pastel blue, pink, and white trans pride colors",
+        }
+    if "intersex" in normalized:
+        return {
+            "semantic_role": "color_palette",
+            "motif": "inclusive pride palette",
+            "prompt_description": "inclusive pride flag color palette",
+        }
+    if "pride" in normalized and "flag" in normalized:
+        return {
+            "semantic_role": "color_palette",
+            "motif": "pride rainbow",
+            "prompt_description": "six-stripe rainbow pride flag colors",
+        }
+    if "rainbow" in normalized:
+        return {
+            "semantic_role": "motif",
+            "motif": "pride rainbow",
+            "prompt_description": "pride rainbow color accents",
+        }
+    if "logo" in normalized:
+        return {
+            "semantic_role": "brand_mark",
+            "motif": "brand mark space",
+            "prompt_description": "optional small brand mark space",
+        }
+    return {
+        "semantic_role": "motif",
+        "motif": normalized.replace("_", " "),
+        "prompt_description": normalized.replace("_", " "),
+    }
+
+
 def initialize_asset_library(root: Path | None = None) -> dict[str, Any]:
     asset_root = root or ASSET_ROOT
     asset_root.mkdir(parents=True, exist_ok=True)
@@ -28,6 +73,7 @@ def _asset_record(path: Path) -> dict[str, Any]:
     asset_type = "font" if suffix in FONT_EXTENSIONS else suffix.lstrip(".")
     lower_name = path.stem.lower()
     role = "logo" if "logo" in lower_name else ("flag" if any(token in lower_name for token in ["pride", "rainbow", "trans", "intersex", "lgbtq", "flag"]) else "asset")
+    semantic = semantic_asset_metadata(path.stem)
     return {
         "name": path.stem,
         "extension": suffix,
@@ -36,6 +82,9 @@ def _asset_record(path: Path) -> dict[str, Any]:
         "path": str(path) if suffix not in FONT_EXTENSIONS else "",
         "file_size_bytes": size,
         "metadata_only": suffix in METADATA_ONLY_EXTENSIONS,
+        "semantic_role": semantic["semantic_role"],
+        "motif": semantic["motif"],
+        "prompt_description": semantic["prompt_description"],
         "content_included": False,
         "execution_enabled": False,
     }

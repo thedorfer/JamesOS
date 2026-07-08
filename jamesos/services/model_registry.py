@@ -301,16 +301,42 @@ def classify_model_file(path: Path) -> str:
     return "checkpoints"
 
 
-def infer_model_family(path_or_name: Path | str) -> str:
+SD15_CHECKPOINT_MARKERS = [
+    "dreamshaper",
+    "realisticvision",
+    "realistic vision",
+    "deliberate",
+    "counterfeit",
+    "anything",
+    "anythingv5",
+    "anything v5",
+    "epicrealism",
+    "epic realism",
+    "revanimated",
+    "rev animated",
+    "majicmix",
+    "majic mix",
+    "absolutereality",
+    "absolute reality",
+]
+
+
+def infer_model_family(path_or_name: Path | str, category: str | None = None) -> str:
     path = Path(str(path_or_name))
     text = str(path_or_name).lower().replace("_", " ").replace("-", " ")
     parts = [part.lower() for part in path.parts]
     parent_parts = parts[:-1]
-    if any(term in text for term in ["upscaler", "ultrasharp", "realesrgan", "esrgan", "4x"]):
+    inferred_category = category or ""
+    in_checkpoint_folder = inferred_category == "checkpoints" or any(part in {"checkpoints", "checkpoint", "ckpt"} for part in parent_parts)
+    in_vae_folder = inferred_category == "vae" or any(part in {"vae", "vaes"} for part in parent_parts)
+    in_lora_folder = inferred_category == "loras" or any(part in {"loras", "lora", "lycoris"} for part in parent_parts)
+    in_upscaler_folder = inferred_category == "upscalers" or any(part in {"upscalers", "upscaler", "upscale_models", "upscale models"} for part in parent_parts)
+
+    if in_upscaler_folder or any(term in text for term in ["upscaler", "ultrasharp", "realesrgan", "esrgan", "4x"]):
         return "upscaler"
-    if any(part in {"vae", "vaes"} for part in parent_parts) or path.name.lower() in {"vae.safetensors", "vae.ckpt", "vae.pt", "vae.pth", "vae.bin"} or path.name.lower().endswith(".vae.safetensors"):
+    if in_vae_folder:
         return "vae"
-    if "lora" in text or "loras" in text or "lycoris" in text:
+    if in_lora_folder or "lora" in text or "loras" in text or "lycoris" in text:
         return "lora"
     if "flux" in text:
         return "flux"
@@ -318,7 +344,9 @@ def infer_model_family(path_or_name: Path | str) -> str:
         return "pony"
     if any(term in text for term in ["sdxl", "xl base", "stable diffusion xl"]):
         return "sdxl"
-    if any(term in text for term in ["sd15", "sd 1.5", "stable diffusion 1.5", "v1-5", "1.5", "realisticvision", "realistic vision"]):
+    if any(term in text for term in ["sd15", "sd 1.5", "stable diffusion 1.5", "v1-5", "1.5"] + SD15_CHECKPOINT_MARKERS):
+        return "sd15"
+    if in_checkpoint_folder:
         return "sd15"
     return "unknown"
 
@@ -357,7 +385,7 @@ def _vram_notes(category: str, family: str) -> str:
 
 def _inventory_record(path: Path) -> dict[str, Any]:
     category = classify_model_file(path)
-    family = infer_model_family(path)
+    family = infer_model_family(path, category=category)
     try:
         file_size_mb = round(path.stat().st_size / (1024 * 1024), 2)
     except OSError:

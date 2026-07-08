@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--height", type=int, default=1024)
     parser.add_argument("--brand-id", default="unitystitches")
     parser.add_argument("--draft-path", default="")
-    parser.add_argument("--quality", choices=["draft", "production"], default="production")
+    parser.add_argument("--quality", choices=["draft", "production", "premium"], default="production")
     parser.add_argument("--transparent", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--provider", default="printify")
     args = parser.parse_args()

@@ -63,6 +63,108 @@ DEFAULT_TEMPLATES: dict[str, dict[str, Any]] = {
     },
 }
 
+DESIGN_RECIPE_TEMPLATES: dict[str, dict[str, Any]] = {
+    "typography": {
+        "composition": "large centered typography with supporting motif",
+        "effects": "clean vector edges, high contrast",
+        "typography_style": "bold readable sans",
+        "negative_emphasis": ["blurry text", "misspelled text", "thin unreadable lettering"],
+        "print_recommendations": "thumbnail readable, safe margins, crisp lettering",
+    },
+    "sticker": {
+        "composition": "single centered sticker-like focal point",
+        "effects": "clean outline, flat color fills, crisp edges",
+        "typography_style": "bold rounded sans when text is present",
+        "negative_emphasis": ["background scene", "photo texture", "busy detail"],
+        "print_recommendations": "isolated artwork, strong silhouette, transparent background requested",
+    },
+    "minimal": {
+        "composition": "simple centered focal point with generous spacing",
+        "effects": "minimal flat graphic, no unnecessary detail",
+        "typography_style": "clean modern sans",
+        "negative_emphasis": ["clutter", "busy background", "tiny details"],
+        "print_recommendations": "clean silhouette, high contrast, safe margins",
+    },
+    "vintage": {
+        "composition": "centered vintage badge layout",
+        "effects": "subtle distressed print texture, retro ink feel",
+        "typography_style": "vintage display lettering",
+        "negative_emphasis": ["photograph", "realistic person", "muddy colors"],
+        "print_recommendations": "limited palette, readable from thumbnail",
+    },
+    "retro": {
+        "composition": "balanced retro poster-style focal point",
+        "effects": "flat retro color blocks, clean edges",
+        "typography_style": "bold retro display type",
+        "negative_emphasis": ["lens flare", "photo realism", "background scene"],
+        "print_recommendations": "strong contrast, clear shape language",
+    },
+    "badge": {
+        "composition": "centered badge with border and single focal icon",
+        "effects": "flat emblem style, crisp outline",
+        "typography_style": "arched bold badge lettering",
+        "negative_emphasis": ["tiny text", "crowded symbols", "mockup"],
+        "print_recommendations": "safe margins, balanced spacing, print-ready silhouette",
+    },
+    "emblem": {
+        "composition": "symmetrical emblem with one focal motif",
+        "effects": "clean vector emblem, high contrast",
+        "typography_style": "bold emblem lettering",
+        "negative_emphasis": ["asymmetrical clutter", "photo texture", "background scene"],
+        "print_recommendations": "centered, isolated, scalable artwork",
+    },
+    "line_art": {
+        "composition": "centered line-art focal point",
+        "effects": "clean consistent line weight",
+        "typography_style": "minimal sans",
+        "negative_emphasis": ["messy lines", "sketch noise", "low contrast"],
+        "print_recommendations": "bold enough line weight for apparel printing",
+    },
+    "cartoon": {
+        "composition": "single cartoon focal point with readable support text",
+        "effects": "flat cartoon illustration, crisp outline",
+        "typography_style": "friendly rounded bold type",
+        "negative_emphasis": ["realistic person", "photograph", "busy scene"],
+        "print_recommendations": "clean silhouette, bright but controlled palette",
+    },
+    "grunge": {
+        "composition": "centered distressed typography and simple motif",
+        "effects": "controlled grunge texture, screenprint feel",
+        "typography_style": "bold distressed display type",
+        "negative_emphasis": ["muddy detail", "unreadable text", "photo background"],
+        "print_recommendations": "keep distress subtle enough for readable print",
+    },
+    "watercolor": {
+        "composition": "centered soft motif with clean printable edges",
+        "effects": "watercolor-inspired color wash, simplified for printing",
+        "typography_style": "clean readable sans or script accent",
+        "negative_emphasis": ["muddy wash", "blurred text", "background scene"],
+        "print_recommendations": "preserve contrast and isolated shape",
+    },
+    "seasonal": {
+        "composition": "centered seasonal motif and short readable phrase",
+        "effects": "clean festive vector style",
+        "typography_style": "bold seasonal display lettering",
+        "negative_emphasis": ["busy holiday scene", "photo props", "tiny ornaments"],
+        "print_recommendations": "clear seasonal signal, safe margins, high contrast",
+    },
+}
+
+QUALITY_LEVELS: dict[str, list[str]] = {
+    "draft": ["clear concept", "simple printable layout"],
+    "production": ["clean vector-like artwork", "crisp typography", "balanced spacing", "high contrast", "thumbnail readable"],
+    "premium": [
+        "vector-like",
+        "clean edges",
+        "crisp typography",
+        "balanced spacing",
+        "isolated artwork",
+        "transparent background",
+        "high contrast",
+        "thumbnail optimization",
+    ],
+}
+
 
 NEGATIVE_PRINT_DESIGN_TERMS = [
     "person",
@@ -110,6 +212,8 @@ def _asset_name(asset: Any) -> str:
 
 
 def describe_asset_for_prompt(asset: Any) -> str:
+    if isinstance(asset, dict) and asset.get("prompt_description"):
+        return _text(asset.get("prompt_description"))
     name = _asset_name(asset)
     normalized = name.lower().replace("-", "_").replace(" ", "_")
     if "gay_pride_flag" in normalized or ("pride" in normalized and "flag" in normalized and "trans" not in normalized and "intersex" not in normalized):
@@ -162,8 +266,56 @@ def _negative_prompt(extra: str = "", include_design_terms: bool = True) -> str:
     if include_design_terms:
         terms.extend(NEGATIVE_PRINT_DESIGN_TERMS)
     if extra:
-        terms.append(extra)
+        terms.extend(part.strip() for part in extra.split(",") if part.strip())
     return _clean_prompt(", ".join(dict.fromkeys(term for term in terms if term)))
+
+
+def recipe_template(template_name: str) -> dict[str, Any]:
+    key = (template_name or "sticker").strip().lower().replace(" ", "_").replace("-", "_")
+    return DESIGN_RECIPE_TEMPLATES.get(key, DESIGN_RECIPE_TEMPLATES["sticker"])
+
+
+def list_design_recipe_templates() -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "templates": DESIGN_RECIPE_TEMPLATES,
+        "template_count": len(DESIGN_RECIPE_TEMPLATES),
+        "execution_enabled": False,
+    }
+
+
+def _quality_terms(level: str) -> list[str]:
+    return QUALITY_LEVELS.get((level or "production").lower(), QUALITY_LEVELS["production"])
+
+
+def _section(title: str, items: list[Any]) -> str:
+    rendered = [_text(item) for item in items if _text(item)]
+    if not rendered:
+        return ""
+    return f"{title}\n" + "\n".join(dict.fromkeys(rendered))
+
+
+def _structured_prompt(sections: list[tuple[str, list[Any]]]) -> str:
+    text = "\n\n".join(_section(title, items) for title, items in sections if _section(title, items))
+    lines = [" ".join(line.split()) for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).lstrip(" .,:;-\n\t")
+
+
+def _composition_metadata(template: dict[str, Any], recipe: dict[str, Any], quality_level: str) -> dict[str, Any]:
+    return {
+        "composition": _text(recipe.get("composition") or template.get("composition") or "centered single focal point"),
+        "canvas_coverage": "approximately 75% of canvas",
+        "centered": True,
+        "safe_margins": True,
+        "single_focal_point": True,
+        "balanced_composition": True,
+        "thumbnail_readable": True,
+        "clean_silhouette": True,
+        "high_contrast": True,
+        "large_readable_typography": True,
+        "minimal_unnecessary_detail": True,
+        "quality_level": quality_level,
+    }
 
 
 def initialize_prompt_library(root: Path | None = None) -> dict[str, Any]:
@@ -229,42 +381,71 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
     assets = recipe.get("assets") or creative_spec.get("selected_assets") or creative_spec.get("assets") or []
     asset_descriptions = asset_prompt_descriptions(assets)
     motifs = recipe.get("motifs") or creative_spec.get("motifs") or []
-    positive_parts = [
-        _sentence("Design goal", recipe.get("design_goal")),
-        f"Standalone print design for {product_type}" + (f" and {niche}." if niche else "."),
-        _sentence("Artwork type", recipe.get("artwork_type") or "flat print design"),
-        _sentence("Background", recipe.get("background") or "white or transparent-background-friendly"),
-        _sentence("Layout", recipe.get("layout") or "centered composition"),
-        _sentence("Palette", recipe.get("palette")),
-        _sentence("Text", recipe.get("text") or creative_spec.get("text")),
-        _sentence("Typography", recipe.get("typography") or creative_spec.get("typography")),
-        _sentence("Motifs", motifs),
-        _sentence("Assets/reference motifs", asset_descriptions),
-        _sentence("Effects", recipe.get("effects") or "clean vector-style print art"),
-        _sentence("Provider", provider),
-        _sentence("Print notes", recipe.get("print_notes") or "high contrast, large readable typography, print-on-demand ready, no person, no mockup"),
-    ]
-    if not is_mockup_stage:
-        positive_parts.extend([
-            "Vector-style or clean graphic artwork.",
-            "Centered composition.",
-            "No person.",
-            "No human model.",
-            "No product mockup.",
-            "No lifestyle background.",
-            "High contrast.",
-            "Large readable typography.",
-            "Print-on-demand ready.",
+    template_name = _text(recipe.get("template") or recipe.get("style_template") or creative_spec.get("design_template") or "minimal")
+    template = recipe_template(template_name)
+    quality_level = _text(recipe.get("quality") or creative_spec.get("quality") or "production").lower() or "production"
+    composition = _composition_metadata(template, recipe, quality_level)
+    text = _text(recipe.get("text") or creative_spec.get("text"))
+    typography = _text(recipe.get("typography") or template.get("typography_style") or creative_spec.get("typography"))
+    lower = " ".join([_text(recipe.get("artwork_type")), product_type, niche, _text(recipe.get("layout")), _text(recipe.get("background")), template_name]).lower()
+    if is_mockup_stage:
+        positive = _structured_prompt([
+            ("STYLE", ["local review mockup concept", recipe.get("artwork_type"), recipe.get("effects") or template.get("effects")]),
+            ("SUBJECT", [recipe.get("design_goal"), product_type, niche, motifs, asset_descriptions]),
+            ("TYPOGRAPHY", [text, typography]),
+            ("LAYOUT", [recipe.get("layout") or template.get("composition"), "balanced spacing"]),
+            ("PRINT", ["review-only mockup", "no upload", provider]),
         ])
-    positive = _join_parts(positive_parts)
-    lower = " ".join([_text(recipe.get("artwork_type")), product_type, niche, _text(recipe.get("layout"))]).lower()
+    else:
+        positive = _structured_prompt([
+            ("STYLE", [
+                recipe.get("artwork_type") or "clean vector illustration",
+                "flat graphic",
+                "sticker artwork",
+                recipe.get("background") or "transparent background",
+                "high contrast",
+                recipe.get("effects") or template.get("effects"),
+                _quality_terms(quality_level),
+            ]),
+            ("SUBJECT", [recipe.get("design_goal"), product_type, niche, motifs, asset_descriptions]),
+            ("TYPOGRAPHY", [text, typography]),
+            ("LAYOUT", [
+                recipe.get("layout") or template.get("composition"),
+                composition["canvas_coverage"],
+                "centered",
+                "safe margins",
+                "single focal point",
+                "balanced composition",
+                "clean silhouette",
+            ]),
+            ("PRINT", [
+                "isolated artwork",
+                "white background or transparent",
+                "POD ready",
+                "thumbnail readable",
+                "large readable typography",
+                _sentence("Print notes", recipe.get("print_notes") or template.get("print_recommendations")),
+                provider,
+            ]),
+        ])
+    transparent_requested = (
+        "transparent background" in lower
+        or "transparent print" in lower
+        or template_name.lower() == "sticker"
+        or "sticker" in lower
+    )
     if is_mockup_stage:
         workflow_type = "mockup"
-    elif "transparent" in lower or "sticker" in lower:
+    elif transparent_requested:
         workflow_type = "transparent_print_design_basic"
     else:
         workflow_type = "print_design_basic"
-    negative = _negative_prompt(_text(creative_spec.get("safety_notes")), include_design_terms=not is_mockup_stage)
+    negative_extra = ", ".join([
+        _text(creative_spec.get("safety_notes")),
+        _text(recipe.get("negative_emphasis")),
+        _text(template.get("negative_emphasis")),
+    ])
+    negative = _negative_prompt(negative_extra, include_design_terms=not is_mockup_stage)
     return {
         "positive_prompt": positive,
         "negative_prompt": negative,
@@ -275,6 +456,9 @@ def _recipe_prompt_package(creative_spec: dict[str, Any], recipe: dict[str, Any]
         "creative_spec": creative_spec,
         "design_recipe": recipe,
         "asset_prompt_descriptions": asset_descriptions,
+        "composition_metadata": composition,
+        "design_quality_level": quality_level,
+        "design_recipe_template": template_name,
         "execution_enabled": False,
     }
 
@@ -301,46 +485,59 @@ def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, 
         or "flat design only, print-ready graphic, POD-safe, high contrast, large readable text, white or transparent-background-friendly background"
     )
     safety_notes = _text(creative_spec.get("safety_notes") or "marketplace-safe, no copyrighted logos")
+    quality_level = _text(creative_spec.get("quality") or "production").lower() or "production"
+    template_name = _text(creative_spec.get("design_template") or "sticker")
+    template = recipe_template(template_name)
+    composition = _composition_metadata(template, {"layout": layout}, quality_level)
 
     color_text = _text(colors)
     asset_descriptions = asset_prompt_descriptions(assets)
     asset_text = _text(asset_descriptions)
     is_mockup_stage = "mockup" in stage.lower()
     if is_mockup_stage:
-        positive = _join_parts([
-            brand_voice,
-            f"Local review mockup concept for {product_type}" + (f" artwork for {niche}." if niche else "."),
-            _sentence("Audience", audience),
-            _sentence("Emotional hook", emotional_hook),
-            _sentence("Text", text),
-            _sentence("Typography", typography),
-            _sentence("Colors", color_text),
-            _sentence("Assets/reference motifs", asset_text),
-            _sentence("Layout", layout),
-            print_requirements,
-            "Review-only mockup, no upload.",
+        positive = _structured_prompt([
+            ("STYLE", [brand_voice, "local review mockup concept", style]),
+            ("SUBJECT", [product_type, niche, audience, emotional_hook, color_text, asset_text]),
+            ("TYPOGRAPHY", [text, typography]),
+            ("LAYOUT", [layout, "balanced spacing"]),
+            ("PRINT", [print_requirements, "review-only mockup", "no upload"]),
         ])
     else:
-        positive = _join_parts([
-            brand_voice,
-            f"Standalone print design, flat centered print artwork for {product_type}" + (f" and {niche}." if niche else "."),
-            "Vector-style or clean graphic artwork.",
-            "Centered composition.",
-            "No person.",
-            "No human model.",
-            "No product mockup.",
-            "No lifestyle background.",
-            "High contrast.",
-            "Large readable typography.",
-            "Print-on-demand ready.",
-            _sentence("Audience", audience),
-            _sentence("Emotional hook", emotional_hook),
-            _sentence("Text", text),
-            _sentence("Typography", typography),
-            _sentence("Colors", color_text),
-            _sentence("Assets/reference motifs", asset_text),
-            _sentence("Layout", layout),
-            print_requirements,
+        positive = _structured_prompt([
+            ("STYLE", [
+                brand_voice,
+                "Standalone print design",
+                "flat centered print artwork",
+                "clean vector illustration",
+                "flat graphic",
+                "sticker artwork",
+                "high contrast",
+                style,
+                _quality_terms(quality_level),
+            ]),
+            ("SUBJECT", [product_type, niche, audience, emotional_hook, color_text, asset_text]),
+            ("TYPOGRAPHY", [text, typography]),
+            ("LAYOUT", [
+                layout,
+                composition["canvas_coverage"],
+                "centered",
+                "safe margins",
+                "single focal point",
+                "balanced composition",
+                "thumbnail readable",
+                "clean silhouette",
+            ]),
+            ("PRINT", [
+                print_requirements,
+                "isolated artwork",
+                "white background or transparent",
+                "POD ready",
+                "large readable typography",
+                "No person",
+                "No human model",
+                "No product mockup",
+                "No lifestyle background",
+            ]),
         ])
     negative = _negative_prompt(safety_notes, include_design_terms=not is_mockup_stage)
 
@@ -372,5 +569,8 @@ def creative_spec_to_prompt_package(creative_spec: dict[str, Any]) -> dict[str, 
         "recommended_model_family": model_family,
         "creative_spec": creative_spec,
         "asset_prompt_descriptions": asset_descriptions,
+        "composition_metadata": composition,
+        "design_quality_level": quality_level,
+        "design_recipe_template": template_name,
         "execution_enabled": False,
     }

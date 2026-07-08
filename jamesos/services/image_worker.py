@@ -150,7 +150,8 @@ def _design_artifact(
     source_image_path: str = "",
 ) -> dict[str, Any]:
     prompt_only = bool(transparent)
-    quality_stage = "production_candidate" if quality == "production" else "draft"
+    normalized_quality = (quality or "production").lower()
+    quality_stage = "production_candidate" if normalized_quality in {"production", "premium"} else "draft"
     return {
         "artifact_type": "print_ready_png",
         "background": "transparent" if transparent else "white_or_transparent_background_friendly",
@@ -166,6 +167,7 @@ def _design_artifact(
         "manual_upload_ready": bool(output_image_paths or source_image_path),
         "provider_target": provider,
         "quality_stage": quality_stage,
+        "design_quality_level": normalized_quality,
         "output_status": "production_candidate" if quality_stage == "production_candidate" else "draft_candidate",
         "final_print_ready": False,
         "source_image_path": source_image_path,
@@ -291,9 +293,12 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify", 
         "product_type": "design_art",
         "niche": "LGBTQ+ pride",
         "design_goal": "Create a joyful pride design that reads clearly on POD products.",
+        "template": "sticker",
+        "quality": "production",
         "artwork_type": "flat print design",
         "background": "transparent background requested, prompt-only transparency" if transparent else "white or transparent-background-friendly",
         "layout": "centered",
+        "composition": "single centered focal point occupying approximately 75% of canvas with safe margins and balanced spacing",
         "palette": ["rainbow", "white", "black accent"],
         "text": "Love Is Love",
         "typography": "bold readable rounded sans",
@@ -302,6 +307,7 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify", 
         "effects": "clean vector-like print art",
         "provider": provider,
         "print_notes": "high contrast, readable at thumbnail size, no person, no product, no mockup, isolated design element only",
+        "negative_emphasis": ["person", "human", "mockup", "shirt", "wearing", "photograph", "background scene", "blurry text", "misspelled text"],
         "width": width,
         "height": height,
     }
@@ -325,6 +331,7 @@ def create_test_image_job(
     workflow = _product_art_basic_workflow(requested_workflow_type)
     provider = provider.lower()
     design_recipe = _default_design_recipe(width, height, provider, transparent)
+    design_recipe["quality"] = quality
     selected_assets = asset_library.suggest_assets({
         "brand_id": brand_id,
         "niche": design_recipe["niche"],
@@ -333,7 +340,7 @@ def create_test_image_job(
         "title": design_recipe["text"],
     })
     if selected_assets:
-        design_recipe["assets"] = [asset.get("name") for asset in selected_assets if asset.get("name")]
+        design_recipe["assets"] = selected_assets
     creative_spec = {
         "brand_id": brand_id,
         "brand_name": "UnityStitches",
