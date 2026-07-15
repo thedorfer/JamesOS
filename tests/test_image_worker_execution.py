@@ -298,6 +298,11 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertTrue(payload["concept_approved"])
             self.assertEqual(payload["design_artifact"]["transparent_artifact_path"], str(artifact_path))
             self.assertEqual(payload["design_artifact"]["source_image_path"], str(source_path))
+            self.assertEqual(payload["image_status"], "generated_concept")
+            self.assertEqual(payload["transparent_artifact_status"], "transparent_derivative")
+            self.assertEqual(payload["design_artifact"]["transparent_artifact_status"], "transparent_derivative")
+            self.assertNotIn("final_image_path", payload["design_artifact"])
+            self.assertEqual(payload["design_status"], "needs_design_review")
             self.assertFalse(payload["final_print_ready"])
             self.assertEqual(payload["provider_status"], "not_ready")
             self.assertEqual(payload["printify_status"], "not_ready")
@@ -337,7 +342,13 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             artifact_path.write_bytes(b"stale derivative")
             image_worker.update_job_payload(job["job_id"], {
                 "transparent_artifact_path": str(artifact_path),
+                "transparent_artifact_status": "transparent_derivative",
                 "finishing_metadata": {"status": "stale success"},
+                "design_artifact": {
+                    "transparent_artifact_status": "transparent_derivative",
+                    "output_status": "transparent_derivative_ready",
+                    "final_image_path": str(artifact_path),
+                },
             })
 
             with self.assertRaises(job_queue.JobQueueError):
@@ -345,7 +356,11 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
             payload = job_queue.get_job(job["job_id"])["payload"]
             self.assertNotIn("transparent_artifact_path", payload)
+            self.assertNotIn("transparent_artifact_status", payload)
             self.assertNotIn("finishing_metadata", payload)
+            self.assertNotIn("transparent_artifact_status", payload["design_artifact"])
+            self.assertNotIn("final_image_path", payload["design_artifact"])
+            self.assertNotIn("output_status", payload["design_artifact"])
             self.assertFalse(artifact_path.exists())
 
         self.run_with_worker(scenario)

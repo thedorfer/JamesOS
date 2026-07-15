@@ -68,16 +68,27 @@ def _sha256(path: Path) -> str:
 def _clear_finishing_success(job_id: str, payload: dict[str, Any], artifact_path: Path, temporary_path: Path) -> None:
     artifact_path.unlink(missing_ok=True)
     temporary_path.unlink(missing_ok=True)
-    for key in ("transparent_artifact_path", "transparent_artifact_analysis", "finishing_metadata"):
+    for key in ("transparent_artifact_path", "transparent_artifact_analysis", "transparent_artifact_status", "finishing_metadata"):
         payload.pop(key, None)
     artifact = payload.get("design_artifact")
     if isinstance(artifact, dict):
         artifact = dict(artifact)
-        for key in ("transparent_artifact_path", "transparent_artifact_generated_at", "final_image_path", "finishing_metadata"):
+        for key in (
+            "transparent_artifact_path",
+            "transparent_artifact_generated_at",
+            "transparent_artifact_status",
+            "final_image_path",
+            "finishing_metadata",
+        ):
             artifact.pop(key, None)
+        if artifact.get("output_status") == "transparent_derivative_ready":
+            artifact.pop("output_status")
         payload["design_artifact"] = artifact
     update_job_payload(job_id, payload)
-    remove_job_payload_keys(job_id, ("transparent_artifact_path", "transparent_artifact_analysis", "finishing_metadata"))
+    remove_job_payload_keys(
+        job_id,
+        ("transparent_artifact_path", "transparent_artifact_analysis", "transparent_artifact_status", "finishing_metadata"),
+    )
 
 
 def approve_concept_for_job(job_id: str, approved_by: str = "James") -> dict[str, Any]:
@@ -212,18 +223,21 @@ def prepare_transparent_artifact_for_job(job_id: str, white_threshold: int = 240
     }
     payload["transparent_artifact_path"] = str(artifact_path)
     payload["transparent_artifact_analysis"] = analysis
+    payload["transparent_artifact_status"] = "transparent_derivative"
     payload["finishing_metadata"] = finishing_metadata
     payload["design_artifact"] = dict(payload.get("design_artifact") or {})
     payload["design_artifact"]["transparent_artifact_path"] = str(artifact_path)
     payload["design_artifact"]["transparent_artifact_generated_at"] = datetime.now().isoformat(timespec="seconds")
+    payload["design_artifact"]["transparent_artifact_status"] = "transparent_derivative"
     payload["design_artifact"]["source_image_path"] = str(source_path)
-    payload["design_artifact"]["final_image_path"] = str(artifact_path)
+    payload["design_artifact"].pop("final_image_path", None)
     payload["design_artifact"]["background_removal_required"] = False
     payload["design_artifact"]["transparent_background_required"] = True
-    payload["design_artifact"]["output_status"] = "transparent_derivative_ready"
+    if payload["design_artifact"].get("output_status") == "transparent_derivative_ready":
+        payload["design_artifact"].pop("output_status")
     payload["design_artifact"]["finishing_metadata"] = finishing_metadata
     payload["design_status"] = "needs_design_review"
-    payload["image_status"] = "finished_concept"
+    payload["image_status"] = "generated_concept"
     payload["provider_status"] = "not_ready"
     payload["printify_status"] = "not_ready"
     payload["final_print_ready"] = False
