@@ -29,6 +29,53 @@ class ArtworkPipelineE2ETests(unittest.TestCase):
     def transition(self, name: str) -> dict:
         return next(item for item in self.report["transitions"] if item["stage"] == name)
 
+    def authoritative_live_fixture(self, root: Path, job_id: str = "e2e-artwork-fixture-00000001") -> tuple[dict, dict]:
+        job_root = root / job_id
+        candidate_root = job_root / "production-artifacts" / "candidate"
+        intermediates_root = candidate_root / "intermediates"
+        intermediates_root.mkdir(parents=True)
+        source, derivative = job_root / "generated-concept.png", job_root / "transparent_artifact.png"
+        Image.new("RGB", (8, 8), "white").save(source)
+        Image.new("RGBA", (8, 8), (10, 20, 30, 128)).save(derivative)
+        derivative_sha, source_sha = harness.hash_file(derivative), harness.hash_file(source)
+        stages, prior_sha, prior_path = [], derivative_sha, derivative
+        for number in range(1, 4):
+            output = intermediates_root / f"stage-{number}.png"
+            Image.new("RGBA", (8 * 2 ** number, 8 * 2 ** number), (number, 20, 30, 128)).save(output)
+            output_sha = harness.hash_file(output)
+            stages.append({"stage": number, "input_path": str(prior_path), "input_sha256": prior_sha,
+                           "output_path": str(output), "output_sha256": output_sha})
+            prior_sha, prior_path = output_sha, output
+        candidate = candidate_root / "production-candidate.png"
+        Image.new("RGBA", (32, 40), (1, 2, 3, 128)).save(candidate)
+        production = {
+            "job_id": job_id, "status": "production_candidate_complete", "production_artifact_status": "needs_final_review",
+            "production_candidate_path": str(candidate), "production_candidate_sha256": harness.hash_file(candidate),
+            "approved_source_path": str(derivative), "approved_source_sha256": derivative_sha,
+            "model_name": harness.DEFAULT_MODEL, "model_sha256": "model-sha", "intermediate_stages": stages,
+            "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
+        }
+        for name, color in (("white", "white"), ("dark", "black"), ("checkerboard", "gray")):
+            preview = candidate_root / f"production-preview-{name}.png"
+            Image.new("RGB", (32, 40), color).save(preview)
+            production[f"{name}_preview_path"] = str(preview)
+            production[f"{name}_preview_sha256"] = harness.hash_file(preview)
+        metadata = candidate_root / "production-artifact.json"
+        metadata.write_text(json.dumps(production, indent=2, sort_keys=True), encoding="utf-8")
+        approval = {"approved_artifact_path": str(derivative), "approved_artifact_sha256": derivative_sha,
+                    "approved_by": "fixture-reviewer", "approved_at": "2026-07-15T12:00:00-05:00"}
+        payload = {
+            "e2e_test_job": True, "output_image_path": str(source), "concept_approved": True,
+            "concept_approved_by": "fixture-reviewer", "concept_approved_at": "2026-07-15T11:59:00-05:00",
+            "finishing_metadata": {"source_sha256_before": source_sha, "source_sha256_after": source_sha},
+            "transparent_artifact_path": str(derivative), "transparent_derivative_approval": approval,
+            "production_artifact": production, "production_artifact_status": "needs_final_review",
+            "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
+        }
+        model = {"model_name": harness.DEFAULT_MODEL, "sha256": "model-sha", "validated": True,
+                 "production_approved": True, "path": str(root / "model.pth")}
+        return {"job_id": job_id, "payload": payload}, model
+
     def test_complete_mocked_happy_path_and_machine_report(self) -> None:
         self.assertEqual(self.report["result"], "passed")
         self.assertEqual(self.report["mode"], "mocked")
@@ -202,6 +249,68 @@ class ArtworkPipelineE2ETests(unittest.TestCase):
         source = Path(harness.__file__).read_text(encoding="utf-8").lower()
         for forbidden in ("upload(", "publish(", "order(", "create_listing", "submit_order", "provider_client"):
             self.assertNotIn(forbidden, source)
+
+    def test_resume_reconstructs_from_authoritative_state_without_processing_or_approval(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job, model = self.authoritative_live_fixture(root)
+            report_path = root / "resumed.json"
+            artifact_hashes = {str(path): harness.hash_file(path) for path in root.rglob("*") if path.is_file()}
+            with patch.object(job_queue, "get_job", return_value=job), \
+                    patch.object(harness.upscale_model_registry, "select_upscale_model", return_value=model), \
+                    patch.object(harness, "prepare_transparent_artifact_for_job") as processing, \
+                    patch.object(harness.production_artifact, "approve_transparent_artifact_for_job") as derivative_approval, \
+                    patch.object(harness.production_artifact, "approve_production_artifact_for_job") as final_approval:
+                report = harness.resume_live(report_path, job_id=job["job_id"])
+            processing.assert_not_called()
+            derivative_approval.assert_not_called()
+            final_approval.assert_not_called()
+            self.assertEqual(report["result"], "candidate_ready_for_visual_review")
+            self.assertEqual(report["recovery_reason"], "client_interrupted_after_server_processing")
+            self.assertFalse(report["final_artifact_approved"])
+            self.assertTrue(all(report["status_assertions"].values()))
+            self.assertEqual(artifact_hashes, {path: harness.hash_file(Path(path)) for path in artifact_hashes})
+
+    def test_incomplete_report_is_not_approval_authority_and_approve_succeeds_after_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job, model = self.authoritative_live_fixture(root)
+            stale_report = root / "stale.json"
+            stale_report.write_text(json.dumps({"result": "running", "derivative": {"sha256": "stale"}}), encoding="utf-8")
+            resumed_report = root / "resumed.json"
+            with patch.object(job_queue, "get_job", return_value=job), \
+                    patch.object(harness.upscale_model_registry, "select_upscale_model", return_value=model):
+                harness.resume_live(resumed_report, job_id=job["job_id"])
+            approval_path = Path(job["payload"]["production_artifact"]["production_candidate_path"]).parent / "final-artifact-approval.json"
+            response = {"status": "ok"}
+            def api(*_args, **_kwargs):
+                if not approval_path.exists():
+                    approval = {"approved_at": "2026-07-15T12:30:00-05:00"}
+                    approval_path.write_text(json.dumps(approval), encoding="utf-8")
+                return response
+            refreshed = dict(job["payload"])
+            refreshed.update({"final_artifact_approved": True, "final_artifact_status": "approved",
+                              "final_artifact_approval": {"approval_scope": "jamesos_artwork_candidate_human_review_only"}})
+            with patch.object(job_queue, "get_job", side_effect=[job, {"payload": refreshed}]), \
+                    patch.object(harness.upscale_model_registry, "select_upscale_model", return_value=model), \
+                    patch.object(harness, "_api_post", side_effect=api):
+                report = harness.approve_live(resumed_report, job_id=job["job_id"], approved_by="James", confirmed=True)
+            self.assertEqual(report["result"], "approved_after_human_visual_review")
+            self.assertEqual(json.loads(stale_report.read_text(encoding="utf-8"))["result"], "running")
+
+    def test_changed_derivative_and_stale_mutable_approval_are_refused_without_repair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            job, model = self.authoritative_live_fixture(root)
+            derivative = Path(job["payload"]["transparent_artifact_path"])
+            Image.new("RGBA", (8, 8), (99, 1, 2, 255)).save(derivative)
+            before = dict(job["payload"]["transparent_derivative_approval"])
+            with patch.object(job_queue, "get_job", return_value=job), \
+                    patch.object(harness.upscale_model_registry, "select_upscale_model", return_value=model):
+                with self.assertRaisesRegex(harness.E2EHarnessError, "evidence_type=transparent_derivative_approval"):
+                    harness.resume_live(root / "no-report.json", job_id=job["job_id"])
+            self.assertEqual(job["payload"]["transparent_derivative_approval"], before)
+            self.assertFalse((root / "no-report.json").exists())
 
 
 if __name__ == "__main__":

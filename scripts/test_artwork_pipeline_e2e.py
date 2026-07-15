@@ -503,19 +503,11 @@ def approve_live(report_path: Path, *, job_id: str, approved_by: str, confirmed:
     payload = job.get("payload") or {}
     if not payload.get("e2e_test_job"):
         raise E2EHarnessError("Approval is restricted to isolated E2E artwork jobs.")
-    production = payload.get("production_artifact") or {}
-    _assert(payload.get("production_artifact_status") == "needs_final_review" and
-            production.get("production_artifact_status") == "needs_final_review",
-            "Production artifact must be needs_final_review")
-    derivative, candidate, metadata, _ = production_artifact._critical_job_paths(job_id, payload)
-    if not candidate.is_file() or not metadata.is_file() or not derivative.is_file():
-        raise E2EHarnessError("Candidate, production metadata, and approved derivative must exist.")
-    candidate_before, metadata_before = hash_file(candidate), hash_file(metadata)
-    _assert(candidate_before == production.get("production_candidate_sha256"), "Candidate SHA differs from production metadata")
-    derivative_approval = payload.get("transparent_artifact_approval") or {}
-    _assert(hash_file(derivative) == derivative_approval.get("approved_artifact_sha256"), "Derivative approval SHA is stale")
-    model = upscale_model_registry.select_upscale_model(production.get("model_name"))
-    _assert(model["production_approved"] and model["sha256"] == production.get("model_sha256"), "Model approval evidence is stale")
+    evidence = validate_live_evidence(job_id, job)
+    production = evidence["production"]
+    derivative, candidate, metadata = evidence["derivative_path"], evidence["candidate_path"], evidence["metadata_path"]
+    candidate_before, metadata_before = evidence["candidate"]["sha256"], evidence["production_metadata"]["sha256"]
+    model = evidence["model"]
     api_key = (VAULT / "JamesOS" / "Secrets" / "api_key.txt").read_text(encoding="utf-8").strip()
     route = f"/image-worker/jobs/{job_id}/approve-production-artifact"
     body = {"confirmed": True, "approved_by": approved_by.strip()}
@@ -548,9 +540,134 @@ def approve_live(report_path: Path, *, job_id: str, approved_by: str, confirmed:
     return report
 
 
+def _evidence_error(evidence_type: str, expected: Any, actual: Any, path: Path | str) -> None:
+    raise E2EHarnessError(
+        f"Authoritative evidence mismatch: evidence_type={evidence_type}; expected_sha={expected or '<missing>'}; "
+        f"actual_sha={actual or '<missing>'}; authoritative_source_path={path}"
+    )
+
+
+def validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Validate an existing candidate without trusting or modifying an E2E report."""
+    validate_test_job_id(job_id)
+    job = job or job_queue.get_job(job_id)
+    payload = job.get("payload") or {}
+    if not payload.get("e2e_test_job"):
+        raise E2EHarnessError("Recovery is restricted to isolated E2E artwork jobs.")
+    production = payload.get("production_artifact")
+    if not isinstance(production, dict):
+        raise E2EHarnessError("Authoritative production metadata is missing from job state.")
+    _assert(payload.get("production_artifact_status") == "needs_final_review" and
+            production.get("production_artifact_status") == "needs_final_review",
+            "Production artifact must be needs_final_review")
+    derivative, candidate, metadata, approval_path = production_artifact._critical_job_paths(job_id, payload)
+    for evidence_type, path in (("transparent_derivative", derivative), ("production_candidate", candidate),
+                                ("production_metadata", metadata)):
+        if not path.is_file():
+            _evidence_error(evidence_type, "file-present", "file-missing", path)
+    if approval_path.exists() or payload.get("final_artifact_approved") or payload.get("final_artifact_approval"):
+        raise E2EHarnessError("Existing final approval evidence is not candidate-ready recovery state.")
+    try:
+        file_metadata = json.loads(metadata.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise E2EHarnessError(f"Authoritative production metadata is unreadable: {exc}") from exc
+    if file_metadata != production:
+        raise E2EHarnessError(f"Authoritative evidence mismatch: evidence_type=production_metadata_content; "
+                              f"expected_sha=job-state-content; actual_sha=file-content; authoritative_source_path={metadata}")
+    candidate_sha = hash_file(candidate)
+    if candidate_sha != production.get("production_candidate_sha256"):
+        _evidence_error("production_candidate", production.get("production_candidate_sha256"), candidate_sha, candidate)
+    derivative_sha = hash_file(derivative)
+    derivative_approval = payload.get("transparent_derivative_approval")
+    if not isinstance(derivative_approval, dict):
+        _evidence_error("transparent_derivative_approval", "SHA-bound approval", "missing", derivative)
+    approved_path = Path(str(derivative_approval.get("approved_artifact_path") or "")).expanduser().resolve()
+    approved_sha = derivative_approval.get("approved_artifact_sha256")
+    if approved_path != derivative:
+        raise E2EHarnessError(f"Authoritative evidence mismatch: evidence_type=transparent_derivative_approval_path; "
+                              f"expected_sha={derivative}; actual_sha={approved_path}; authoritative_source_path={derivative}")
+    if derivative_sha != approved_sha:
+        _evidence_error("transparent_derivative_approval", approved_sha, derivative_sha, derivative)
+    if production.get("approved_source_sha256") != approved_sha:
+        _evidence_error("production_approved_source", production.get("approved_source_sha256"), approved_sha, metadata)
+    source = Path(str(payload.get("output_image_path") or "")).expanduser().resolve()
+    if not source.is_file():
+        _evidence_error("generated_source", "file-present", "file-missing", source)
+    finishing = payload.get("finishing_metadata") or {}
+    source_sha = hash_file(source)
+    if source_sha != finishing.get("source_sha256_before") or source_sha != finishing.get("source_sha256_after"):
+        _evidence_error("generated_source", finishing.get("source_sha256_before"), source_sha, source)
+    stages = production.get("intermediate_stages")
+    if not isinstance(stages, list) or len(stages) != 3:
+        raise E2EHarnessError("Authoritative production stage evidence must contain exactly three stages.")
+    intermediates = []
+    expected_input_sha = approved_sha
+    for index, stage in enumerate(stages, 1):
+        path = Path(str(stage.get("output_path") or "")).expanduser().resolve()
+        actual = hash_file(path) if path.is_file() else "file-missing"
+        if stage.get("stage") != index or stage.get("input_sha256") != expected_input_sha:
+            _evidence_error(f"production_stage_{index}_input", expected_input_sha, stage.get("input_sha256"), metadata)
+        if actual != stage.get("output_sha256"):
+            _evidence_error(f"production_stage_{index}_output", stage.get("output_sha256"), actual, path)
+        intermediates.append(_image_facts(path))
+        expected_input_sha = actual
+    previews = {}
+    for name in ("white", "dark", "checkerboard"):
+        path = Path(str(production.get(f"{name}_preview_path") or "")).expanduser().resolve()
+        actual = hash_file(path) if path.is_file() else "file-missing"
+        if actual != production.get(f"{name}_preview_sha256"):
+            _evidence_error(f"{name}_preview", production.get(f"{name}_preview_sha256"), actual, path)
+        previews[name] = _image_facts(path)
+    model = upscale_model_registry.select_upscale_model(production.get("model_name"))
+    if not model.get("validated") or not model.get("production_approved") or model.get("sha256") != production.get("model_sha256"):
+        _evidence_error("installed_validated_model", production.get("model_sha256"), model.get("sha256"), model.get("path", production.get("model_name")))
+    return {
+        "payload": payload, "production": production, "source": _image_facts(source),
+        "derivative": _image_facts(derivative), "derivative_approval": dict(derivative_approval),
+        "intermediates": intermediates, "candidate": _image_facts(candidate), "previews": previews,
+        "production_metadata": {"path": str(metadata), "sha256": hash_file(metadata), "content": production},
+        "model": model, "derivative_path": derivative, "candidate_path": candidate, "metadata_path": metadata,
+    }
+
+
+def resume_live(report_path: Path, *, job_id: str) -> dict[str, Any]:
+    started = time.perf_counter()
+    evidence = validate_live_evidence(job_id)
+    payload, production = evidence["payload"], evidence["production"]
+    status_payload = dict(payload)
+    status_payload.update({"final_artifact_approved": False, "final_artifact_status": "needs_final_review"})
+    report = {
+        "test_job_id": job_id, "mode": "resume-live", "result": "candidate_ready_for_visual_review",
+        "recovery_reason": "client_interrupted_after_server_processing",
+        "transitions": [
+            {"stage": "generated_concept_inspected", "artifact": evidence["source"]},
+            {"stage": "concept_approved", "approved_by": payload.get("concept_approved_by"), "approved_at": payload.get("concept_approved_at")},
+            {"stage": "transparent_artifact_prepared", "artifact": evidence["derivative"]},
+            {"stage": "transparent_artifact_approved", "approval": evidence["derivative_approval"]},
+            {"stage": "model_verified", "model_name": production["model_name"], "model_sha256": production["model_sha256"]},
+            {"stage": "production_stages_complete", "stages": production["intermediate_stages"]},
+            {"stage": "production_candidate_prepared", "candidate": evidence["candidate"], "previews": evidence["previews"]},
+        ],
+        "source": evidence["source"], "derivative": evidence["derivative"],
+        "derivative_approval": evidence["derivative_approval"], "intermediates": evidence["intermediates"],
+        "candidate": evidence["candidate"], "production_metadata": evidence["production_metadata"],
+        "previews": evidence["previews"],
+        "model": {"model_name": production["model_name"], "model_sha256": production["model_sha256"]},
+        "final_artifact_approved": False, "final_artifact_status": "needs_final_review",
+        "production_artifact_status": "needs_final_review", "approval_scope": "not_yet_approved",
+        "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
+        "status_assertions": _status_assertions(status_payload, approved=False),
+        "retained_artifact_directory": str(evidence["candidate_path"].parents[2]),
+        "retention_status": "retained_until_explicit_cleanup", "total_runtime_seconds": time.perf_counter() - started,
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    return report
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run an isolated JamesOS artwork pipeline E2E harness.")
-    parser.add_argument("--mode", choices=("mocked", "live", "approve-live", "cleanup"), default="mocked")
+    parser.add_argument("--mode", choices=("mocked", "live", "resume-live", "approve-live", "cleanup"), default="mocked")
     parser.add_argument("--report-path", type=Path, default=Path.cwd() / REPORT_FILENAME)
     parser.add_argument("--confirm-live", action="store_true")
     parser.add_argument("--job-id")
@@ -567,6 +684,12 @@ def main() -> int:
             if args.cleanup or args.confirm_cleanup or args.confirm_visual_review or args.approved_by:
                 raise E2EHarnessError("Live candidate creation cannot approve or clean up in the same command.")
             result = run_live(args.report_path, confirmed=args.confirm_live, base_url=args.base_url)
+        elif args.mode == "resume-live":
+            if args.confirm_live or args.cleanup or args.confirm_cleanup or args.confirm_visual_review or args.approved_by:
+                raise E2EHarnessError("resume-live is inspection-only and accepts no processing, approval, or cleanup flags.")
+            if not args.job_id:
+                raise E2EHarnessError("resume-live requires --job-id.")
+            result = resume_live(args.report_path, job_id=args.job_id)
         elif args.mode == "approve-live":
             if args.confirm_live or args.cleanup or args.confirm_cleanup:
                 raise E2EHarnessError("approve-live is a separate approval-only command.")
