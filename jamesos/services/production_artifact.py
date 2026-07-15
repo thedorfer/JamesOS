@@ -4,6 +4,7 @@ from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -110,6 +111,283 @@ def approve_transparent_artifact_for_job(job_id: str, approved_by: str = "James"
     append_job_log(job_id, f"Transparent derivative approved by {approved_by}")
     mark_step(job_id, "transparent derivative approved", "complete", "SHA-bound derivative approval recorded.")
     return {"status": "ok", "job_id": job_id, **approval}
+
+
+FINAL_APPROVAL_PAYLOAD_KEYS = (
+    "final_artifact_approval",
+    "final_artifact_approval_record_path",
+    "final_artifact_approval_record_sha256",
+    "approved_artifact_path",
+    "approved_artifact_sha256",
+    "production_metadata_sha256",
+    "approved_by",
+    "approved_at",
+)
+
+
+def _invalidate_final_artifact_approval(
+    job_id: str, payload: dict[str, Any], reason: str, approval_path: Path | None = None,
+) -> None:
+    if (
+        not payload.get("final_artifact_approved")
+        and "final_artifact_approval" not in payload
+        and (approval_path is None or not approval_path.exists())
+    ):
+        return
+    if approval_path is not None:
+        approval_path.unlink(missing_ok=True)
+    for key in FINAL_APPROVAL_PAYLOAD_KEYS:
+        payload.pop(key, None)
+    payload.update({
+        "final_artifact_approved": False,
+        "final_artifact_status": "invalidated",
+        "final_artifact_invalidation_reason": reason,
+        "provider_status": "not_ready",
+        "printify_status": "not_ready",
+        "final_print_ready": False,
+    })
+    remove_job_payload_keys(job_id, FINAL_APPROVAL_PAYLOAD_KEYS)
+    update_job_payload(job_id, payload)
+
+
+def _critical_job_paths(job_id: str, payload: dict[str, Any]) -> tuple[Path, Path, Path, Path]:
+    production = payload.get("production_artifact") if isinstance(payload.get("production_artifact"), dict) else {}
+    derivative_value = str(payload.get("transparent_artifact_path") or "").strip()
+    candidate_value = str(production.get("production_candidate_path") or "").strip()
+    if not derivative_value or not candidate_value:
+        raise JobQueueError("Production candidate or transparent derivative path is missing.")
+    derivative_raw = Path(derivative_value).expanduser()
+    candidate_raw = Path(candidate_value).expanduser()
+    if not derivative_raw.is_absolute() or not candidate_raw.is_absolute():
+        raise JobQueueError("Production approval paths must be absolute canonical paths.")
+    if ".." in derivative_raw.parts or ".." in candidate_raw.parts:
+        raise JobQueueError("Production approval paths must not contain traversal segments.")
+    job_root_raw = derivative_raw.parent
+    if job_root_raw.name != job_id or derivative_raw != job_root_raw / "transparent_artifact.png":
+        raise JobQueueError("Transparent derivative is not in the canonical job directory.")
+    expected_candidate_raw = job_root_raw / "production-artifacts" / "candidate" / "production-candidate.png"
+    if candidate_raw != expected_candidate_raw:
+        raise JobQueueError("Production candidate path is not canonical for this job.")
+    critical = (
+        job_root_raw,
+        derivative_raw,
+        candidate_raw.parent,
+        candidate_raw,
+        candidate_raw.parent / "production-artifact.json",
+    )
+    if any(path.is_symlink() for path in critical):
+        raise JobQueueError("Production approval refuses symlinked job artifacts or directories.")
+    job_root = job_root_raw.resolve()
+    derivative = derivative_raw.resolve()
+    candidate = candidate_raw.resolve()
+    metadata = (candidate_raw.parent / "production-artifact.json").resolve()
+    approval = (candidate_raw.parent / "final-artifact-approval.json").resolve()
+    if not all(path.is_relative_to(job_root) for path in (derivative, candidate, metadata, approval)):
+        raise JobQueueError("Production approval path escaped the canonical job directory.")
+    return derivative, candidate, metadata, approval
+
+
+def _write_approval_atomically(path: Path, approval: dict[str, Any]) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", prefix=".final-artifact-approval-", suffix=".tmp",
+            dir=path.parent, delete=False,
+        ) as handle:
+            json.dump(approval, handle, indent=2, sort_keys=True)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        temporary_path.replace(path)
+        temporary_path = None
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+def approve_production_artifact_for_job(
+    job_id: str, *, approved_by: str, confirmed: bool = False,
+) -> dict[str, Any]:
+    """Record human review of a candidate without granting provider readiness."""
+    if not confirmed:
+        raise JobQueueError("Production-artifact approval requires explicit confirmation.")
+    approved_by = str(approved_by or "").strip()
+    if not approved_by:
+        raise JobQueueError("Production-artifact approval requires approved_by.")
+    job = get_job(job_id)
+    payload = _payload(job)
+    approval_path: Path | None = None
+
+    def refuse(message: str, *, invalidate: bool = True) -> None:
+        if invalidate:
+            _invalidate_final_artifact_approval(job_id, payload, message, approval_path)
+        raise JobQueueError(message)
+
+    production = payload.get("production_artifact")
+    if not isinstance(production, dict):
+        refuse("Production metadata is missing.")
+    if payload.get("production_artifact_status") != "needs_final_review" or production.get("production_artifact_status") != "needs_final_review":
+        refuse("Production artifact status must be needs_final_review before approval.")
+    try:
+        derivative, candidate_path, metadata_path, approval_path = _critical_job_paths(job_id, payload)
+    except JobQueueError as exc:
+        refuse(str(exc))
+    if not candidate_path.is_file():
+        refuse("Production candidate is missing.")
+    if not metadata_path.is_file():
+        refuse("Production metadata file is missing.")
+    try:
+        file_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        refuse(f"Production metadata file is unreadable: {exc}")
+    if not isinstance(file_metadata, dict) or file_metadata != production:
+        refuse("Production metadata file differs from the recorded job metadata.")
+    if str(production.get("job_id") or "") != job_id:
+        refuse("Production metadata job ID does not match the requested job.")
+
+    candidate_sha = _hash_file(candidate_path)
+    if candidate_sha != str(production.get("production_candidate_sha256") or ""):
+        refuse("Production candidate SHA differs from production metadata.")
+    metadata_sha = _hash_file(metadata_path)
+
+    derivative_approval = payload.get("transparent_derivative_approval")
+    if not isinstance(derivative_approval, dict):
+        refuse("Transparent derivative approval is missing.")
+    if not derivative.is_file():
+        refuse("Approved transparent derivative is missing.")
+    derivative_sha = _hash_file(derivative)
+    approved_derivative_path = Path(str(derivative_approval.get("approved_artifact_path") or "")).expanduser().resolve()
+    approved_derivative_sha = str(derivative_approval.get("approved_artifact_sha256") or "")
+    if approved_derivative_path != derivative or derivative_sha != approved_derivative_sha:
+        refuse("Transparent derivative approval evidence has changed.")
+    if str(production.get("approved_source_sha256") or "") != approved_derivative_sha:
+        refuse("Production metadata does not match the approved transparent derivative.")
+
+    model_name = str(production.get("model_name") or "")
+    try:
+        selected = upscale_model_registry.select_upscale_model(model_name)
+    except JobQueueError as exc:
+        refuse(f"Approved production model is unavailable: {exc}")
+    if not selected.get("validated") or not selected.get("production_approved"):
+        refuse(f"Approved production model is not SHA-validated: {selected.get('validation_reason')}")
+    model_sha = str(selected.get("sha256") or "")
+    if model_sha != str(production.get("model_sha256") or ""):
+        refuse("Installed production model SHA differs from production metadata.")
+
+    evidence = {
+        "job_id": job_id,
+        "approved_artifact_path": str(candidate_path),
+        "approved_artifact_sha256": candidate_sha,
+        "production_metadata_path": str(metadata_path),
+        "production_metadata_sha256": metadata_sha,
+        "approved_by": approved_by,
+        "visual_review_result": "passed",
+        "approval_scope": "jamesos_artwork_candidate_human_review_only",
+        "derivative_evidence": {
+            "approved_artifact_path": str(derivative),
+            "approved_artifact_sha256": approved_derivative_sha,
+            "approved_by": derivative_approval.get("approved_by"),
+            "approved_at": derivative_approval.get("approved_at"),
+        },
+        "model_evidence": {
+            "model_name": model_name,
+            "model_sha256": model_sha,
+            "validated_model_sha256": selected.get("validated_model_sha256"),
+            "validation_reason": selected.get("validation_reason"),
+        },
+    }
+    prior: dict[str, Any] | None = None
+    if approval_path.exists():
+        if approval_path.is_symlink():
+            refuse("Final approval record must not be a symlink.")
+        try:
+            loaded_prior = json.loads(approval_path.read_text(encoding="utf-8"))
+            prior = loaded_prior if isinstance(loaded_prior, dict) else None
+        except Exception as exc:
+            refuse(f"Final approval record is unreadable: {exc}")
+    payload_prior = payload.get("final_artifact_approval")
+    if prior is not None or isinstance(payload_prior, dict):
+        if prior is None or payload_prior != prior:
+            refuse("Final approval file and job-state evidence differ.")
+        prior_without_time = {key: value for key, value in prior.items() if key != "approved_at"}
+        if prior_without_time == evidence and prior.get("approved_by") == approved_by:
+            return {
+                "status": "ok", "job_id": job_id, "idempotent": True,
+                "final_artifact_approved": True, "final_artifact_status": "approved",
+                "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
+                "approval": prior,
+            }
+        if prior.get("approved_by") != approved_by:
+            refuse("Production artifact is already approved by a different approver.", invalidate=False)
+        refuse("Recorded production-artifact approval evidence no longer matches.")
+
+    approval = {**evidence, "approved_at": datetime.now().astimezone().isoformat(timespec="seconds")}
+    _write_approval_atomically(approval_path, approval)
+    approval_file_sha = _hash_file(approval_path)
+
+    # Re-read every immutable input and the installed model immediately after record publication.
+    revalidated_model = upscale_model_registry.select_upscale_model(model_name)
+    if (
+        _hash_file(candidate_path) != candidate_sha
+        or _hash_file(metadata_path) != metadata_sha
+        or _hash_file(derivative) != approved_derivative_sha
+        or not revalidated_model.get("validated")
+        or not revalidated_model.get("production_approved")
+        or str(revalidated_model.get("sha256") or "") != model_sha
+    ):
+        approval_path.unlink(missing_ok=True)
+        raise JobQueueError("Approval evidence changed during immediate post-approval revalidation.")
+
+    payload.pop("final_artifact_invalidation_reason", None)
+    payload.update({
+        "final_artifact_approved": True,
+        "final_artifact_status": "approved",
+        "final_artifact_approval": approval,
+        "final_artifact_approval_record_path": str(approval_path),
+        "final_artifact_approval_record_sha256": approval_file_sha,
+        "approved_artifact_path": approval["approved_artifact_path"],
+        "approved_artifact_sha256": candidate_sha,
+        "production_metadata_sha256": metadata_sha,
+        "approved_by": approved_by,
+        "approved_at": approval["approved_at"],
+        "provider_status": "not_ready",
+        "printify_status": "not_ready",
+        "final_print_ready": False,
+    })
+    try:
+        remove_job_payload_keys(job_id, ("final_artifact_invalidation_reason",))
+        update_job_payload(job_id, payload)
+    except Exception as exc:
+        approval_path.unlink(missing_ok=True)
+        try:
+            remove_job_payload_keys(job_id, FINAL_APPROVAL_PAYLOAD_KEYS)
+        except Exception:
+            pass
+        raise JobQueueError(f"Final approval job-state persistence failed: {exc}") from exc
+    post_persist_model = upscale_model_registry.select_upscale_model(model_name)
+    if (
+        _hash_file(candidate_path) != candidate_sha
+        or _hash_file(metadata_path) != metadata_sha
+        or _hash_file(derivative) != approved_derivative_sha
+        or not post_persist_model.get("validated")
+        or not post_persist_model.get("production_approved")
+        or str(post_persist_model.get("sha256") or "") != model_sha
+    ):
+        _invalidate_final_artifact_approval(
+            job_id, payload, "Approval evidence changed during post-persistence revalidation.", approval_path
+        )
+        raise JobQueueError("Approval evidence changed during post-persistence revalidation.")
+    try:
+        append_job_log(job_id, f"Production artifact passed human review by {approved_by}")
+        mark_step(job_id, "production artifact approved", "complete", "Artwork candidate approved; provider readiness remains false.")
+    except Exception:
+        pass
+    return {
+        "status": "ok", "job_id": job_id, "idempotent": False,
+        "final_artifact_approved": True, "final_artifact_status": "approved",
+        "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
+        "approval": approval,
+    }
 
 
 def calculate_placement(artwork_size: tuple[int, int], target: dict[str, Any]) -> dict[str, Any]:

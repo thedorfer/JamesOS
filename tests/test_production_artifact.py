@@ -77,6 +77,14 @@ class ProductionArtifactTests(unittest.TestCase):
                     payload={"output_image_path": str(original), "transparent_artifact_path": str(derivative)},
                     requires_approval=False,
                 )
+                canonical_generated = generated.parent / job["job_id"]
+                generated.rename(canonical_generated)
+                original = canonical_generated / original.name
+                derivative = canonical_generated / derivative.name
+                job_queue.update_job_payload(job["job_id"], {
+                    "output_image_path": str(original),
+                    "transparent_artifact_path": str(derivative),
+                })
                 callback(root, job["job_id"], original, derivative)
             finally:
                 for item in reversed(patches):
@@ -120,6 +128,13 @@ class ProductionArtifactTests(unittest.TestCase):
 
     def approve(self, job_id: str):
         return production_artifact.approve_transparent_artifact_for_job(job_id, approved_by="reviewer")
+
+    def prepare_candidate(self, job_id: str):
+        self.approve(job_id)
+        state, patches = self.mocked_pipeline(job_id)
+        with patches[0], patches[1], patches[2], patches[3]:
+            result = production_artifact.prepare_production_artifact_for_job(job_id, confirmed=True)
+        return result
 
     def test_separate_sha_bound_derivative_approval(self) -> None:
         def scenario(root, job_id, original, derivative):
@@ -314,6 +329,263 @@ class ProductionArtifactTests(unittest.TestCase):
         self.assertEqual(authenticated.call_count, 2)
         approve.assert_called_once_with("job", approved_by="reviewer")
         prepare.assert_called_once_with("job", upscale_model_name=self.MODEL, confirmed=True, target_overrides=None)
+
+    def test_final_approval_requires_explicit_confirmation(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="final-reviewer")
+            self.assertNotIn("final_artifact_approval", job_queue.get_job(job_id)["payload"])
+        self.sandbox(scenario)
+
+    def test_successful_final_approval_is_bound_to_all_evidence_and_truthful_statuses(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            candidate = self.prepare_candidate(job_id)
+            candidate_before = Path(candidate["production_candidate_path"]).read_bytes()
+            metadata_path = Path(candidate["production_candidate_path"]).parent / "production-artifact.json"
+            metadata_before = metadata_path.read_bytes()
+            result = production_artifact.approve_production_artifact_for_job(
+                job_id, approved_by="final-reviewer", confirmed=True
+            )
+            payload = job_queue.get_job(job_id)["payload"]
+            record = payload["final_artifact_approval"]
+            self.assertTrue(payload["final_artifact_approved"])
+            self.assertEqual(payload["final_artifact_status"], "approved")
+            self.assertEqual(record["job_id"], job_id)
+            self.assertEqual(record["approved_artifact_path"], candidate["production_candidate_path"])
+            self.assertEqual(record["approved_artifact_sha256"], candidate["production_candidate_sha256"])
+            self.assertEqual(record["production_metadata_sha256"], sha256(Path(record["production_metadata_path"]).read_bytes()).hexdigest())
+            self.assertEqual(record["model_evidence"]["model_name"], self.MODEL)
+            self.assertEqual(record["model_evidence"]["model_sha256"], candidate["model_sha256"])
+            self.assertEqual(record["derivative_evidence"]["approved_artifact_sha256"], payload["transparent_derivative_approval"]["approved_artifact_sha256"])
+            self.assertEqual(record["visual_review_result"], "passed")
+            self.assertEqual(record["approval_scope"], "jamesos_artwork_candidate_human_review_only")
+            approval_path = Path(payload["final_artifact_approval_record_path"])
+            self.assertEqual(approval_path, Path(candidate["production_candidate_path"]).parent / "final-artifact-approval.json")
+            self.assertTrue(approval_path.is_file())
+            self.assertEqual(json.loads(approval_path.read_text(encoding="utf-8")), record)
+            self.assertEqual(payload["final_artifact_approval_record_sha256"], sha256(approval_path.read_bytes()).hexdigest())
+            self.assertEqual(Path(candidate["production_candidate_path"]).read_bytes(), candidate_before)
+            self.assertEqual(metadata_path.read_bytes(), metadata_before)
+            self.assertEqual(result["provider_status"], "not_ready")
+            self.assertEqual(result["printify_status"], "not_ready")
+            self.assertFalse(result["final_print_ready"])
+            self.assertEqual(payload["provider_status"], "not_ready")
+            self.assertEqual(payload["printify_status"], "not_ready")
+            self.assertFalse(payload["final_print_ready"])
+        self.sandbox(scenario)
+
+    def test_candidate_hash_mismatch_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            Path(result["production_candidate_path"]).write_bytes(b"changed candidate")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_metadata_hash_or_content_mismatch_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            metadata = Path(result["production_candidate_path"]).parent / "production-artifact.json"
+            changed = json.loads(metadata.read_text(encoding="utf-8"))
+            changed["total_execution_time_seconds"] = 999
+            metadata.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_changed_derivative_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            derivative.write_bytes(derivative.read_bytes() + b"changed")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_changed_model_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            (root / "ComfyUI" / "models" / "upscale_models" / self.MODEL).write_bytes(b"changed model")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_absent_candidate_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            Path(result["production_candidate_path"]).unlink()
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_absent_metadata_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            (Path(result["production_candidate_path"]).parent / "production-artifact.json").unlink()
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_incorrect_production_status_refuses_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            payload = job_queue.get_job(job_id)["payload"]
+            payload["production_artifact_status"] = "draft"
+            job_queue.update_job_payload(job_id, payload)
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(scenario)
+
+    def test_valid_final_approval_repeat_is_idempotent(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            first = production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            approval_path = Path(first["approval"]["production_metadata_path"]).parent / "final-artifact-approval.json"
+            file_sha_before = sha256(approval_path.read_bytes()).hexdigest()
+            mtime_before = approval_path.stat().st_mtime_ns
+            second = production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            self.assertFalse(first["idempotent"])
+            self.assertTrue(second["idempotent"])
+            self.assertEqual(first["approval"]["approved_at"], second["approval"]["approved_at"])
+            self.assertEqual(sha256(approval_path.read_bytes()).hexdigest(), file_sha_before)
+            self.assertEqual(approval_path.stat().st_mtime_ns, mtime_before)
+        self.sandbox(scenario)
+
+    def test_different_approver_cannot_replace_existing_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.prepare_candidate(job_id)
+            first = production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            approval_path = Path(first["approval"]["production_metadata_path"]).parent / "final-artifact-approval.json"
+            before = approval_path.read_bytes()
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="different-reviewer", confirmed=True)
+            self.assertEqual(approval_path.read_bytes(), before)
+            self.assertEqual(job_queue.get_job(job_id)["payload"]["approved_by"], "reviewer")
+        self.sandbox(scenario)
+
+    def test_immediate_post_approval_revalidates_every_hash_and_model(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            candidate = Path(result["production_candidate_path"])
+            metadata = candidate.parent / "production-artifact.json"
+            with (
+                patch.object(production_artifact, "_hash_file", wraps=production_artifact._hash_file) as hashed,
+                patch.object(upscale_model_registry, "select_upscale_model", wraps=upscale_model_registry.select_upscale_model) as selected,
+            ):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            hashed_paths = [call.args[0] for call in hashed.call_args_list]
+            self.assertGreaterEqual(hashed_paths.count(candidate), 2)
+            self.assertGreaterEqual(hashed_paths.count(metadata), 2)
+            self.assertGreaterEqual(hashed_paths.count(derivative.resolve()), 2)
+            self.assertGreaterEqual(selected.call_count, 3)
+        self.sandbox(scenario)
+
+    def test_changed_evidence_invalidates_prior_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            candidate_parent = Path(result["production_candidate_path"]).parent
+            approval_path = candidate_parent / "final-artifact-approval.json"
+            preserved = {
+                path: path.read_bytes()
+                for path in (
+                    candidate_parent / "production-artifact.json",
+                    derivative,
+                    Path(result["white_preview_path"]),
+                    Path(result["dark_preview_path"]),
+                    Path(result["checkerboard_preview_path"]),
+                    Path(result["intermediate_stages"][0]["output_path"]),
+                    derivative.parent / "production-artifacts" / "debug" / "stage-1-submitted-workflow.json",
+                )
+            }
+            Path(result["production_candidate_path"]).write_bytes(b"changed after approval")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            payload = job_queue.get_job(job_id)["payload"]
+            self.assertFalse(payload["final_artifact_approved"])
+            self.assertEqual(payload["final_artifact_status"], "invalidated")
+            self.assertNotIn("final_artifact_approval", payload)
+            self.assertFalse(approval_path.exists())
+            for path, content in preserved.items():
+                self.assertEqual(path.read_bytes(), content)
+            self.assertEqual(payload["provider_status"], "not_ready")
+            self.assertEqual(payload["printify_status"], "not_ready")
+            self.assertFalse(payload["final_print_ready"])
+        self.sandbox(scenario)
+
+    def test_failed_final_job_state_save_rolls_back_approval_record(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            candidate = Path(result["production_candidate_path"])
+            metadata = candidate.parent / "production-artifact.json"
+            candidate_before, metadata_before = candidate.read_bytes(), metadata.read_bytes()
+            with patch.object(production_artifact, "update_job_payload", side_effect=RuntimeError("synthetic final-state failure")):
+                with self.assertRaises(job_queue.JobQueueError):
+                    production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            self.assertFalse((candidate.parent / "final-artifact-approval.json").exists())
+            self.assertNotIn("final_artifact_approval", job_queue.get_job(job_id)["payload"])
+            self.assertEqual(candidate.read_bytes(), candidate_before)
+            self.assertEqual(metadata.read_bytes(), metadata_before)
+        self.sandbox(scenario)
+
+    def test_final_approval_refuses_traversal_and_symlink_escape(self) -> None:
+        def traversal(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            payload = job_queue.get_job(job_id)["payload"]
+            payload["production_artifact"]["production_candidate_path"] = str(
+                Path(result["production_candidate_path"]).parent / ".." / "candidate" / "production-candidate.png"
+            )
+            job_queue.update_job_payload(job_id, payload)
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(traversal)
+
+        def symlink(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            candidate = Path(result["production_candidate_path"])
+            external = root / "external-candidate.png"
+            candidate.replace(external)
+            candidate.symlink_to(external)
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+        self.sandbox(symlink)
+
+    def test_changed_metadata_invalidates_prior_final_approval(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            result = self.prepare_candidate(job_id)
+            production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            metadata_path = Path(result["production_candidate_path"]).parent / "production-artifact.json"
+            metadata_path.write_bytes(metadata_path.read_bytes() + b"\n")
+            with self.assertRaises(job_queue.JobQueueError):
+                production_artifact.approve_production_artifact_for_job(job_id, approved_by="reviewer", confirmed=True)
+            payload = job_queue.get_job(job_id)["payload"]
+            self.assertFalse(payload["final_artifact_approved"])
+            self.assertEqual(payload["final_artifact_status"], "invalidated")
+            self.assertNotIn("final_artifact_approval", payload)
+        self.sandbox(scenario)
+
+    def test_final_approval_api_is_authenticated_and_forwards_required_fields(self) -> None:
+        from jamesos.core import api
+        expected = {"status": "ok", "final_artifact_approved": True}
+        with (
+            patch.object(api, "require_key", return_value=None) as authenticated,
+            patch.object(api, "approve_production_artifact_for_job", return_value=expected) as approve,
+        ):
+            request = api.ProductionArtifactApprovalRequest(approved_by="reviewer", confirmed=True)
+            self.assertEqual(api.image_worker_approve_production_artifact_route("job", request, None), expected)
+        authenticated.assert_called_once_with(None)
+        approve.assert_called_once_with("job", approved_by="reviewer", confirmed=True)
+
+    def test_final_approval_api_rejects_missing_authentication_before_service(self) -> None:
+        from jamesos.core import api
+        request = api.ProductionArtifactApprovalRequest(approved_by="reviewer", confirmed=True)
+        with (
+            patch.object(api, "require_key", side_effect=PermissionError("authentication required")),
+            patch.object(api, "approve_production_artifact_for_job") as approve,
+        ):
+            with self.assertRaises(PermissionError):
+                api.image_worker_approve_production_artifact_route("job", request, None)
+            approve.assert_not_called()
 
 
 if __name__ == "__main__":
