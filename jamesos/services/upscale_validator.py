@@ -4,7 +4,7 @@ from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
-import shutil
+import tempfile
 import time
 from typing import Any
 
@@ -23,9 +23,11 @@ GENERATED_ROOT = VAULT / "JamesOS" / "CreativeStudio" / "Generated"
 MANAGED_WORKFLOW_PATH = VAULT / "JamesOS" / "CreativeStudio" / "WorkflowTemplates" / "upscale_model_validation.api.json"
 SOURCE_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "workflow_templates" / "upscale_model_validation.api.json"
 COMFYUI_URL = "http://127.0.0.1:8188"
-MASK_RESIZE_TYPE = "scale dimensions"
-MASK_SCALE_METHOD = "lanczos"
-MASK_CROP = "disabled"
+DEFAULT_BLEED_ITERATIONS = 16
+DEFAULT_ALPHA_THRESHOLD = 128
+DEFAULT_ALPHA_RESIZE_METHOD = "lanczos"
+ALPHA_RESIZE_METHODS = {"nearest-exact": Image.Resampling.NEAREST, "lanczos": Image.Resampling.LANCZOS}
+PREVIEW_BACKGROUNDS = {"dark": (24, 24, 24, 255), "white": (255, 255, 255, 255)}
 
 
 def _hash_bytes(content: bytes) -> str:
@@ -40,26 +42,91 @@ def _hash_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _png_bytes(image: Image.Image) -> bytes:
+    output = BytesIO()
+    image.save(output, format="PNG")
+    return output.getvalue()
+
+
 def _image_metadata(content: bytes) -> dict[str, Any]:
     try:
         with Image.open(BytesIO(content)) as image:
             image.load()
-            mode = image.mode
-            size = image.size
-            if "A" not in mode:
-                alpha_extrema = None
-                meaningful_transparency = False
-            else:
-                alpha_extrema = tuple(image.getchannel("A").getextrema())
-                meaningful_transparency = alpha_extrema[0] < 255
+            alpha_extrema = image.getchannel("A").getextrema() if "A" in image.mode else None
             return {
-                "dimensions": [size[0], size[1]],
-                "mode": mode,
+                "dimensions": [image.width, image.height],
+                "mode": image.mode,
                 "alpha_extrema": list(alpha_extrema) if alpha_extrema else None,
-                "meaningful_transparency": meaningful_transparency,
+                "meaningful_transparency": bool(alpha_extrema and alpha_extrema[0] < 255),
             }
     except Exception as exc:
         raise JobQueueError(f"Upscale validation image is unreadable: {exc}") from exc
+
+
+def _validate_halo_settings(bleed_iterations: int, alpha_threshold: int, alpha_resize_method: str) -> None:
+    if isinstance(bleed_iterations, bool) or not isinstance(bleed_iterations, int) or not 1 <= bleed_iterations <= 256:
+        raise JobQueueError("Edge-bleed iterations must be an integer from 1 through 256.")
+    if isinstance(alpha_threshold, bool) or not isinstance(alpha_threshold, int) or not 1 <= alpha_threshold <= 255:
+        raise JobQueueError("Edge-bleed alpha threshold must be an integer from 1 through 255.")
+    if alpha_resize_method not in ALPHA_RESIZE_METHODS:
+        raise JobQueueError("Alpha resize method must be nearest-exact or lanczos.")
+
+
+def prepare_halo_safe_rgb(
+    source: Image.Image, *, bleed_iterations: int = DEFAULT_BLEED_ITERATIONS, alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD
+) -> Image.Image:
+    """Return RGB with a bounded, deterministic 8-neighbor color bleed under alpha."""
+    _validate_halo_settings(bleed_iterations, alpha_threshold, DEFAULT_ALPHA_RESIZE_METHOD)
+    rgba = source.convert("RGBA")
+    width, height = rgba.size
+    pixels = list(rgba.get_flattened_data())
+    reliable = bytearray(1 if pixel[3] >= alpha_threshold else 0 for pixel in pixels)
+    colors = [(pixel[0], pixel[1], pixel[2]) if reliable[index] else (0, 0, 0) for index, pixel in enumerate(pixels)]
+
+    for _ in range(bleed_iterations):
+        additions: list[tuple[int, tuple[int, int, int]]] = []
+        for index in range(width * height):
+            if reliable[index]:
+                continue
+            x, y = index % width, index // width
+            neighbors: list[tuple[int, int, int]] = []
+            for ny in range(max(0, y - 1), min(height, y + 2)):
+                for nx in range(max(0, x - 1), min(width, x + 2)):
+                    neighbor = ny * width + nx
+                    if neighbor != index and reliable[neighbor]:
+                        neighbors.append(colors[neighbor])
+            if neighbors:
+                count = len(neighbors)
+                additions.append((index, tuple(sum(color[channel] for color in neighbors) // count for channel in range(3))))
+        if not additions:
+            break
+        for index, color in additions:
+            colors[index] = color
+            reliable[index] = 1
+
+    prepared = Image.new("RGB", rgba.size)
+    prepared.putdata(colors)
+    return prepared
+
+
+def resize_alpha(alpha: Image.Image, output_size: tuple[int, int], method: str) -> Image.Image:
+    _validate_halo_settings(DEFAULT_BLEED_ITERATIONS, DEFAULT_ALPHA_THRESHOLD, method)
+    return alpha.convert("L").resize(output_size, ALPHA_RESIZE_METHODS[method])
+
+
+def halo_diagnostics(image: Image.Image) -> dict[str, Any]:
+    rgba = image.convert("RGBA")
+    partial = near_white = 0
+    for red, green, blue, alpha in rgba.get_flattened_data():
+        if 0 < alpha < 255:
+            partial += 1
+            if min(red, green, blue) >= 240:
+                near_white += 1
+    return {
+        "partially_transparent_pixel_count": partial,
+        "near_white_partially_transparent_pixel_count": near_white,
+        "near_white_partially_transparent_percentage": round(near_white * 100 / partial, 6) if partial else 0.0,
+    }
 
 
 def _source_for_job(job_id: str) -> Path:
@@ -71,62 +138,24 @@ def _source_for_job(job_id: str) -> Path:
     return matches[0]
 
 
-def build_upscale_validation_workflow(
-    input_filename: str,
-    upscale_model_name: str,
-    output_size: tuple[int, int],
-) -> dict[str, Any]:
+def build_upscale_validation_workflow(input_filename: str, upscale_model_name: str) -> dict[str, Any]:
     workflow = json.loads(SOURCE_TEMPLATE_PATH.read_text(encoding="utf-8"))
     workflow["1"]["inputs"]["image"] = input_filename
     workflow["2"]["inputs"]["model_name"] = upscale_model_name
-    workflow["4"]["inputs"]["resize_type.width"] = output_size[0]
-    workflow["4"]["inputs"]["resize_type.height"] = output_size[1]
-    _validate_rendered_workflow(workflow, output_size)
+    _validate_rendered_workflow(workflow)
     return workflow
 
 
-def _validate_rendered_workflow(workflow: dict[str, Any], output_size: tuple[int, int]) -> None:
-    expected_nodes = {
-        "1": "LoadImage",
-        "2": "UpscaleModelLoader",
-        "3": "ImageUpscaleWithModel",
-        "4": "ResizeImageMaskNode",
-        "5": "JoinImageWithAlpha",
-        "6": "SaveImage",
-    }
-    for node_id, class_type in expected_nodes.items():
+def _validate_rendered_workflow(workflow: dict[str, Any]) -> None:
+    expected = {"1": "LoadImage", "2": "UpscaleModelLoader", "3": "ImageUpscaleWithModel", "4": "SaveImage"}
+    if set(workflow) != set(expected):
+        raise JobQueueError("Upscale validation workflow must contain only the RGB upscale path.")
+    for node_id, class_type in expected.items():
         if workflow.get(node_id, {}).get("class_type") != class_type:
             raise JobQueueError(f"Upscale validation workflow node {node_id} must be {class_type}.")
-    mask_inputs = workflow["4"].get("inputs") or {}
-    required = {
-        "input",
-        "resize_type",
-        "scale_method",
-        "resize_type.width",
-        "resize_type.height",
-        "resize_type.crop",
-    }
-    missing = sorted(required - set(mask_inputs))
-    if missing:
-        raise JobQueueError(f"ResizeImageMaskNode is missing required inputs: {', '.join(missing)}")
-    if mask_inputs["input"] != ["1", 1]:
-        raise JobQueueError("ResizeImageMaskNode must receive the LoadImage alpha mask output.")
-    if mask_inputs["resize_type"] != MASK_RESIZE_TYPE or mask_inputs["scale_method"] != MASK_SCALE_METHOD:
-        raise JobQueueError("ResizeImageMaskNode has invalid resize settings.")
-    if any(key in mask_inputs for key in ("width", "height", "crop")) or isinstance(mask_inputs.get("resize_type"), dict):
-        raise JobQueueError("ResizeImageMaskNode dynamic inputs must use exact dotted API keys.")
-    if mask_inputs["resize_type.crop"] != MASK_CROP:
-        raise JobQueueError("ResizeImageMaskNode crop must be disabled to preserve the complete alpha mask.")
-    if (
-        mask_inputs["resize_type.width"],
-        mask_inputs["resize_type.height"],
-    ) != output_size or not all(isinstance(value, int) for value in output_size):
-        raise JobQueueError("ResizeImageMaskNode dimensions were not resolved to the expected numeric output size.")
     if workflow["3"]["inputs"] != {"upscale_model": ["2", 0], "image": ["1", 0]}:
         raise JobQueueError("ImageUpscaleWithModel wiring is invalid.")
-    if workflow["5"]["inputs"] != {"image": ["3", 0], "alpha": ["4", 0]}:
-        raise JobQueueError("JoinImageWithAlpha wiring is invalid.")
-    if workflow["6"]["inputs"].get("images") != ["5", 0]:
+    if workflow["4"]["inputs"].get("images") != ["3", 0]:
         raise JobQueueError("SaveImage wiring is invalid.")
 
 
@@ -139,10 +168,10 @@ class UpscalePromptValidationError(JobQueueError):
         self.status_code = exc.status_code
         self.response_body = exc.response_body
         self.response_json = exc.response_json
-        if isinstance(exc.response_json, dict):
-            self.prompt_validation_details = exc.response_json.get("node_errors") or exc.response_json.get("error") or exc.response_json
-        else:
-            self.prompt_validation_details = exc.response_body
+        self.prompt_validation_details = (
+            exc.response_json.get("node_errors") or exc.response_json.get("error") or exc.response_json
+            if isinstance(exc.response_json, dict) else exc.response_body
+        )
         self.validation_issues = [self.prompt_validation_details]
 
 
@@ -153,18 +182,16 @@ def _write_managed_workflow(workflow: dict[str, Any]) -> Path:
 
 
 def validate_upscale_model_for_job(
-    job_id: str,
-    *,
-    upscale_model_name: str | None = None,
-    confirmed: bool = False,
+    job_id: str, *, upscale_model_name: str | None = None, confirmed: bool = False,
+    bleed_iterations: int = DEFAULT_BLEED_ITERATIONS, alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD,
+    alpha_resize_method: str = DEFAULT_ALPHA_RESIZE_METHOD,
 ) -> dict[str, Any]:
     if not confirmed:
         raise JobQueueError("Upscale-model validation requires explicit confirmation.")
+    _validate_halo_settings(bleed_iterations, alpha_threshold, alpha_resize_method)
     source_path = _source_for_job(job_id)
     selected_model = upscale_model_registry.select_upscale_model(upscale_model_name)
-    selected_model_name = selected_model["model_name"]
     scale_factor = selected_model["scale_factor"]
-
     input_content = source_path.read_bytes()
     input_sha256 = _hash_bytes(input_content)
     input_metadata = _image_metadata(input_content)
@@ -172,27 +199,39 @@ def validate_upscale_model_for_job(
         raise JobQueueError(f"Validation input must be exactly {INPUT_SIZE[0]}x{INPUT_SIZE[1]}.")
     if input_metadata["mode"] != "RGBA" or not input_metadata["meaningful_transparency"]:
         raise JobQueueError("Validation input must be an RGBA image with meaningful transparency.")
-    input_size = tuple(input_metadata["dimensions"])
-    output_size = (input_size[0] * scale_factor, input_size[1] * scale_factor)
+    output_size = tuple(value * scale_factor for value in INPUT_SIZE)
 
+    settings_slug = f"halo-safe-{alpha_resize_method}-bleed-{bleed_iterations}-threshold-{alpha_threshold}"
+    model_stem = Path(selected_model["validation_output_filename"]).stem
     validation_folder = source_path.parent / "upscale-tests"
-    output_filename = Path(selected_model["validation_output_filename"]).name
-    output_path = validation_folder / output_filename
+    output_path = validation_folder / f"{model_stem}-{settings_slug}.png"
     metadata_path = output_path.with_suffix(".json")
-    submitted_workflow_path = validation_folder / "submitted-upscale-workflow.json"
-    temporary_output_path = validation_folder / f".{output_filename}.tmp"
-    input_copy_name = f"jamesos-{job_id}-transparent-artifact.png"
-    input_copy_path = COMFYUI_INPUT_ROOT / input_copy_name
-    workflow = build_upscale_validation_workflow(input_copy_name, selected_model_name, output_size)
+    dark_preview_path = output_path.with_name(f"{output_path.stem}-preview-dark.png")
+    white_preview_path = output_path.with_name(f"{output_path.stem}-preview-white.png")
+    submitted_workflow_path = validation_folder / f"submitted-upscale-workflow-{settings_slug}.json"
+    final_paths = [output_path, metadata_path, dark_preview_path, white_preview_path]
+    if any(path.exists() for path in final_paths):
+        raise JobQueueError("A validation output already exists for these halo-safe settings; choose different settings.")
 
+    input_copy_name = f"jamesos-{job_id}-{settings_slug}-rgb.png"
+    input_copy_path = COMFYUI_INPUT_ROOT / input_copy_name
+    workflow = build_upscale_validation_workflow(input_copy_name, selected_model["model_name"])
+    created_paths: list[Path] = []
     started = time.perf_counter()
     prompt_id = ""
     try:
         validation_folder.mkdir(parents=True, exist_ok=True)
         COMFYUI_INPUT_ROOT.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source_path, input_copy_path)
-        if _hash_file(input_copy_path) != input_sha256:
-            raise JobQueueError("ComfyUI input copy failed source hash verification.")
+        with Image.open(BytesIO(input_content)) as source_image:
+            source_image.load()
+            original_alpha = source_image.getchannel("A").copy()
+            prepared_rgb = prepare_halo_safe_rgb(
+                source_image, bleed_iterations=bleed_iterations, alpha_threshold=alpha_threshold
+            )
+        prepared_rgb.save(input_copy_path, format="PNG")
+        with Image.open(input_copy_path) as prepared_check:
+            if prepared_check.mode != "RGB":
+                raise JobQueueError("Prepared ComfyUI input must be RGB.")
         _write_managed_workflow(workflow)
         submitted_workflow_path.write_text(json.dumps(workflow, indent=2), encoding="utf-8")
         if not comfyui_client.is_running(COMFYUI_URL, timeout=2.0):
@@ -210,61 +249,62 @@ def validate_upscale_model_for_job(
         outputs = comfyui_client.get_output_images(prompt_id, api_url=COMFYUI_URL)
         if len(outputs) != 1 or not outputs[0].get("content"):
             raise JobQueueError("ComfyUI upscale validation must return exactly one image.")
-        output_content = bytes(outputs[0]["content"])
+        with Image.open(BytesIO(bytes(outputs[0]["content"]))) as ai_image:
+            ai_image.load()
+            if ai_image.size != output_size:
+                raise JobQueueError(f"Upscale validation output must be exactly {output_size[0]}x{output_size[1]}.")
+            upscaled_rgb = ai_image.convert("RGB")
+        scaled_alpha = resize_alpha(original_alpha, output_size, alpha_resize_method)
+        rgba_output = upscaled_rgb.copy()
+        rgba_output.putalpha(scaled_alpha)
+        output_content = _png_bytes(rgba_output)
         output_metadata = _image_metadata(output_content)
-        if tuple(output_metadata["dimensions"]) != output_size:
-            raise JobQueueError(f"Upscale validation output must be exactly {output_size[0]}x{output_size[1]}.")
-        if output_metadata["mode"] != "RGBA":
-            raise JobQueueError("Upscale validation output must be RGBA.")
         if not output_metadata["meaningful_transparency"]:
             raise JobQueueError("Upscale validation output lost meaningful transparency.")
         if _hash_file(source_path) != input_sha256:
             raise JobQueueError("Source transparent artifact changed during validation.")
 
-        temporary_output_path.write_bytes(output_content)
-        temporary_output_path.replace(output_path)
-        execution_time_seconds = time.perf_counter() - started
-        metadata = {
-            "status": "validation_complete",
-            "validation_only": True,
-            "job_id": job_id,
-            "source_path": str(source_path),
-            "output_path": str(output_path),
-            "input_sha256": input_sha256,
-            "output_sha256": _hash_bytes(output_content),
-            "input_dimensions": input_metadata["dimensions"],
-            "output_dimensions": output_metadata["dimensions"],
-            "input_mode": input_metadata["mode"],
-            "output_mode": output_metadata["mode"],
-            "input_alpha_extrema": input_metadata["alpha_extrema"],
-            "output_alpha_extrema": output_metadata["alpha_extrema"],
-            "input_meaningful_transparency": input_metadata["meaningful_transparency"],
-            "output_meaningful_transparency": output_metadata["meaningful_transparency"],
-            "input_unchanged": True,
-            "model_name": selected_model_name,
-            "model_sha256": selected_model["sha256"],
-            "scale_factor": scale_factor,
-            "model_family": selected_model["model_family"],
-            "model_intended_use": selected_model["intended_use"],
-            "model_validated": selected_model["validated"],
-            "execution_time_seconds": execution_time_seconds,
-            "comfyui_prompt_id": prompt_id,
-            "workflow_path": str(MANAGED_WORKFLOW_PATH),
-            "provider_status": "not_ready",
-            "printify_status": "not_ready",
-            "final_print_ready": False,
+        previews = {
+            dark_preview_path: _png_bytes(Image.alpha_composite(Image.new("RGBA", output_size, PREVIEW_BACKGROUNDS["dark"]), rgba_output).convert("RGB")),
+            white_preview_path: _png_bytes(Image.alpha_composite(Image.new("RGBA", output_size, PREVIEW_BACKGROUNDS["white"]), rgba_output).convert("RGB")),
         }
-        metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
+        metadata = {
+            "status": "validation_complete", "validation_only": True, "job_id": job_id,
+            "source_path": str(source_path), "output_path": str(output_path),
+            "dark_preview_path": str(dark_preview_path), "white_preview_path": str(white_preview_path),
+            "input_sha256": input_sha256, "output_sha256": _hash_bytes(output_content),
+            "input_dimensions": input_metadata["dimensions"], "output_dimensions": output_metadata["dimensions"],
+            "input_mode": input_metadata["mode"], "output_mode": output_metadata["mode"],
+            "input_alpha_extrema": input_metadata["alpha_extrema"], "output_alpha_extrema": output_metadata["alpha_extrema"],
+            "input_meaningful_transparency": input_metadata["meaningful_transparency"],
+            "output_meaningful_transparency": output_metadata["meaningful_transparency"], "input_unchanged": True,
+            "model_name": selected_model["model_name"], "model_sha256": selected_model["sha256"],
+            "scale_factor": scale_factor, "model_family": selected_model["model_family"],
+            "model_intended_use": selected_model["intended_use"], "model_validated": False,
+            "edge_bleed_iterations": bleed_iterations, "edge_bleed_alpha_threshold": alpha_threshold,
+            "alpha_resize_method": alpha_resize_method, **halo_diagnostics(rgba_output),
+            "execution_time_seconds": time.perf_counter() - started, "comfyui_prompt_id": prompt_id,
+            "workflow_path": str(MANAGED_WORKFLOW_PATH), "provider_status": "not_ready",
+            "printify_status": "not_ready", "final_print_ready": False,
+        }
+        with tempfile.TemporaryDirectory(prefix=".halo-safe-", dir=validation_folder) as staging_name:
+            staging = Path(staging_name)
+            staged = {
+                output_path: output_content, metadata_path: json.dumps(metadata, indent=2, sort_keys=True).encode(), **previews
+            }
+            for destination, content in staged.items():
+                temporary = staging / destination.name
+                temporary.write_bytes(content)
+                temporary.replace(destination)
+                created_paths.append(destination)
         return metadata
     except JobQueueError:
-        temporary_output_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        metadata_path.unlink(missing_ok=True)
+        for path in created_paths:
+            path.unlink(missing_ok=True)
         raise
     except Exception as exc:
-        temporary_output_path.unlink(missing_ok=True)
-        output_path.unlink(missing_ok=True)
-        metadata_path.unlink(missing_ok=True)
+        for path in created_paths:
+            path.unlink(missing_ok=True)
         raise JobQueueError(f"Upscale-model validation failed: {exc}") from exc
     finally:
         input_copy_path.unlink(missing_ok=True)

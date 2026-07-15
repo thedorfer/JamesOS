@@ -18,6 +18,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run one confirmed configurable upscale-model validation pass through local ComfyUI.")
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--upscale-model-name", default=None, help="Configured model name; defaults to the registry default.")
+    parser.add_argument("--bleed-iterations", type=int, default=16)
+    parser.add_argument("--alpha-threshold", type=int, default=128)
+    parser.add_argument("--alpha-resize-method", choices=("nearest-exact", "lanczos"), default="lanczos")
     parser.add_argument("--confirm", action="store_true", help="Required acknowledgement that this queues one local validation pass.")
     args = parser.parse_args()
     try:
@@ -25,6 +28,9 @@ def main() -> int:
             args.job_id,
             upscale_model_name=args.upscale_model_name,
             confirmed=args.confirm,
+            bleed_iterations=args.bleed_iterations,
+            alpha_threshold=args.alpha_threshold,
+            alpha_resize_method=args.alpha_resize_method,
         )
     except Exception as exc:
         print(json.dumps({"status": "error", "message": str(exc)}, indent=2, sort_keys=True))

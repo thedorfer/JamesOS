@@ -238,6 +238,9 @@ class ConceptApprovalRequest(BaseModel):
 class UpscaleValidationRequest(BaseModel):
     confirmed: bool = False
     upscale_model_name: str | None = None
+    bleed_iterations: int = 16
+    alpha_threshold: int = 128
+    alpha_resize_method: str = "lanczos"
 
 
 class PhoneEventRequest(BaseModel):
@@ -821,6 +824,9 @@ def image_worker_validate_upscale_model_route(
             job_id,
             upscale_model_name=req.upscale_model_name,
             confirmed=req.confirmed,
+            bleed_iterations=req.bleed_iterations,
+            alpha_threshold=req.alpha_threshold,
+            alpha_resize_method=req.alpha_resize_method,
         )
     except JobQueueError as exc:
         from jamesos.services.image_worker import structured_error

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from copy import deepcopy
-from io import BytesIO
 from hashlib import sha256
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
@@ -15,410 +14,384 @@ import yaml
 from jamesos.services import comfyui_client, image_worker, job_queue, upscale_model_registry, upscale_validator
 
 
-def png_bytes(size: tuple[int, int], mode: str = "RGBA", transparent: bool = True) -> bytes:
-    color = (30, 40, 50, 0 if transparent else 255) if mode == "RGBA" else (30, 40, 50)
-    image = Image.new(mode, size, color)
-    if mode == "RGBA":
-        image.putpixel((size[0] // 2, size[1] // 2), (200, 30, 40, 255))
+def png_bytes(image: Image.Image) -> bytes:
     output = BytesIO()
     image.save(output, format="PNG")
     return output.getvalue()
 
 
 class UpscaleValidatorTests(unittest.TestCase):
-    DEFAULT_MODEL = "RealESRGAN_x2plus.pth"
+    MODEL = "RealESRGAN_x2plus.pth"
     ALTERNATE_MODEL = "AlternateArtwork_x2.pth"
     FOUR_X_MODEL = "FutureArtwork_x4.pth"
+    MISSING_MODEL = "MissingArtwork_x4.pth"
+    DISABLED_MODEL = "DisabledArtwork_x2.pth"
 
-    def run_with_validation_paths(self, callback) -> None:
+    def run_in_sandbox(self, callback) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            generated_root = root / "Generated"
-            comfy_root = root / "ComfyUI"
-            model_root = comfy_root / "models" / "upscale_models"
-            model_root.mkdir(parents=True)
-            (model_root / self.DEFAULT_MODEL).write_bytes(b"default model")
-            (model_root / self.ALTERNATE_MODEL).write_bytes(b"alternate model")
-            (model_root / self.FOUR_X_MODEL).write_bytes(b"future 4x model")
-            registry_path = root / "upscale_models.yaml"
-            registry_path.write_text(yaml.safe_dump({"models": {
-                self.DEFAULT_MODEL: {
-                    "model_name": self.DEFAULT_MODEL,
-                    "scale_factor": 2,
-                    "model_family": "Real-ESRGAN",
-                    "intended_use": "general artwork",
-                    "enabled": True,
-                    "validated": False,
-                    "default": True,
+            generated = root / "Generated"
+            comfy = root / "ComfyUI"
+            models = comfy / "models" / "upscale_models"
+            models.mkdir(parents=True)
+            (models / self.MODEL).write_bytes(b"model")
+            (models / self.ALTERNATE_MODEL).write_bytes(b"alternate model")
+            (models / self.FOUR_X_MODEL).write_bytes(b"four-x model")
+            (models / self.DISABLED_MODEL).write_bytes(b"disabled model")
+            registry = root / "upscale_models.yaml"
+            registry.write_text(yaml.safe_dump({"models": {
+                self.MODEL: {
+                    "model_name": self.MODEL, "scale_factor": 2, "model_family": "Real-ESRGAN",
+                    "intended_use": "general artwork", "enabled": True, "validated": False, "default": True,
                     "validation_output_filename": "realesrgan-x2-validation.png",
                 },
                 self.ALTERNATE_MODEL: {
-                    "model_name": self.ALTERNATE_MODEL,
-                    "scale_factor": 2,
-                    "model_family": "test family",
-                    "intended_use": "artwork testing",
-                    "enabled": True,
-                    "validated": True,
-                    "default": False,
+                    "model_name": self.ALTERNATE_MODEL, "scale_factor": 2, "model_family": "test family",
+                    "intended_use": "artwork testing", "enabled": True, "validated": True, "default": False,
                     "validation_output_filename": "alternate-x2-validation.png",
                 },
                 self.FOUR_X_MODEL: {
-                    "model_name": self.FOUR_X_MODEL,
-                    "scale_factor": 4,
-                    "model_family": "future test family",
-                    "intended_use": "future 4x artwork testing",
-                    "enabled": True,
-                    "validated": False,
-                    "default": False,
+                    "model_name": self.FOUR_X_MODEL, "scale_factor": 4, "model_family": "future family",
+                    "intended_use": "4x testing", "enabled": True, "validated": False, "default": False,
                     "validation_output_filename": "future-x4-validation.png",
                 },
-                "MissingArtwork_x4.pth": {
-                    "model_name": "MissingArtwork_x4.pth",
-                    "scale_factor": 4,
-                    "model_family": "test family",
-                    "intended_use": "artwork testing",
-                    "enabled": True,
-                    "validated": False,
-                    "default": False,
+                self.MISSING_MODEL: {
+                    "model_name": self.MISSING_MODEL, "scale_factor": 4, "model_family": "missing family",
+                    "intended_use": "missing testing", "enabled": True, "validated": False, "default": False,
+                },
+                self.DISABLED_MODEL: {
+                    "model_name": self.DISABLED_MODEL, "scale_factor": 2, "model_family": "disabled family",
+                    "intended_use": "disabled testing", "enabled": False, "validated": False, "default": False,
                 },
             }}), encoding="utf-8")
             patches = [
-                patch.object(upscale_validator, "GENERATED_ROOT", generated_root),
-                patch.object(upscale_validator, "COMFYUI_ROOT", comfy_root),
-                patch.object(upscale_validator, "COMFYUI_INPUT_ROOT", comfy_root / "input"),
-                patch.object(upscale_validator, "MANAGED_WORKFLOW_PATH", root / "WorkflowTemplates" / "upscale_model_validation.api.json"),
-                patch.object(upscale_model_registry, "REGISTRY_PATH", registry_path),
-                patch.object(upscale_model_registry, "COMFYUI_ROOT", comfy_root),
+                patch.object(upscale_validator, "GENERATED_ROOT", generated),
+                patch.object(upscale_validator, "COMFYUI_ROOT", comfy),
+                patch.object(upscale_validator, "COMFYUI_INPUT_ROOT", comfy / "input"),
+                patch.object(upscale_validator, "MANAGED_WORKFLOW_PATH", root / "managed.json"),
+                patch.object(upscale_model_registry, "REGISTRY_PATH", registry),
+                patch.object(upscale_model_registry, "COMFYUI_ROOT", comfy),
             ]
             for item in patches:
                 item.start()
             try:
-                callback(root, generated_root)
+                callback(root, generated)
             finally:
                 for item in reversed(patches):
                     item.stop()
 
-    def make_source(self, generated_root: Path, job_id: str = "validation-job") -> Path:
-        source = generated_root / "2026-07-14" / job_id / "transparent_artifact.png"
-        source.parent.mkdir(parents=True)
-        source.write_bytes(png_bytes((768, 768)))
+    def make_source(self, generated: Path, size=(8, 8)) -> Path:
+        source = generated / "2026-07-14" / "validation-job" / "transparent_artifact.png"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        image = Image.new("RGBA", size, (253, 253, 253, 0))
+        for y in range(2, 6):
+            for x in range(2, 6):
+                image.putpixel((x, y), (30, 90, 180, 255))
+        source.write_bytes(png_bytes(image))
         return source
 
-    def test_workflow_has_one_ai_pass_and_separate_alpha_path(self) -> None:
-        workflow = upscale_validator.build_upscale_validation_workflow("input.png", self.DEFAULT_MODEL, (1536, 1536))
-        class_types = [node["class_type"] for node in workflow.values()]
+    def run_validation(self, generated: Path, **kwargs):
+        source = self.make_source(generated)
+        captured = {}
 
-        self.assertEqual(class_types.count("ImageUpscaleWithModel"), 1)
-        self.assertEqual(workflow["2"]["inputs"]["model_name"], self.DEFAULT_MODEL)
-        self.assertEqual(workflow["3"]["inputs"]["image"], ["1", 0])
-        self.assertEqual(workflow["4"]["inputs"]["input"], ["1", 1])
-        self.assertEqual(workflow["4"]["inputs"]["resize_type.width"], 1536)
-        self.assertEqual(workflow["4"]["inputs"]["resize_type.height"], 1536)
-        self.assertEqual(workflow["4"]["inputs"]["resize_type.crop"], "disabled")
-        self.assertFalse({"width", "height", "crop"} & set(workflow["4"]["inputs"]))
-        self.assertEqual(workflow["4"]["inputs"]["resize_type"], "scale dimensions")
-        self.assertEqual(workflow["4"]["inputs"]["scale_method"], "lanczos")
-        self.assertEqual(workflow["5"]["inputs"]["image"], ["3", 0])
-        self.assertEqual(workflow["5"]["inputs"]["alpha"], ["4", 0])
-        self.assertEqual(workflow["6"]["class_type"], "SaveImage")
+        def queue(workflow, **unused):
+            captured.update(workflow)
+            input_name = workflow["1"]["inputs"]["image"]
+            with Image.open(upscale_validator.COMFYUI_INPUT_ROOT / input_name) as prepared:
+                self.assertEqual(prepared.mode, "RGB")
+                upscaled = prepared.resize((16, 16), Image.Resampling.NEAREST)
+            captured["output"] = png_bytes(upscaled)
+            return {"prompt_id": "one-pass"}
 
-    def test_dynamic_combo_uses_exact_dotted_api_keys_and_rejects_other_shapes(self) -> None:
-        workflow = upscale_validator.build_upscale_validation_workflow("input.png", self.DEFAULT_MODEL, (1536, 1536))
-        inputs = workflow["4"]["inputs"]
-        self.assertEqual(
-            set(inputs),
-            {
-                "input",
-                "resize_type",
-                "resize_type.width",
-                "resize_type.height",
-                "resize_type.crop",
-                "scale_method",
-            },
-        )
+        with (
+            patch.object(upscale_validator, "INPUT_SIZE", (8, 8)),
+            patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
+            patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=queue),
+            patch.object(upscale_validator.comfyui_client, "wait_for_completion", return_value={"status": "completed"}),
+            patch.object(upscale_validator.comfyui_client, "get_output_images", side_effect=lambda *a, **k: [{"content": captured["output"]}]),
+        ):
+            result = upscale_validator.validate_upscale_model_for_job("validation-job", confirmed=True, **kwargs)
+        return source, result, captured
 
-        flattened = deepcopy(workflow)
-        flattened_inputs = flattened["4"]["inputs"]
-        flattened_inputs["width"] = flattened_inputs.pop("resize_type.width")
-        flattened_inputs["height"] = flattened_inputs.pop("resize_type.height")
-        flattened_inputs["crop"] = flattened_inputs.pop("resize_type.crop")
-        with self.assertRaises(job_queue.JobQueueError):
-            upscale_validator._validate_rendered_workflow(flattened, (1536, 1536))
+    def test_transparent_rgb_is_decontaminated_and_nearby_color_bleeds(self) -> None:
+        image = Image.new("RGBA", (5, 5), (255, 255, 255, 0))
+        image.putpixel((2, 2), (12, 80, 160, 255))
+        result = upscale_validator.prepare_halo_safe_rgb(image, bleed_iterations=1, alpha_threshold=128)
+        self.assertEqual(result.getpixel((2, 1)), (12, 80, 160))
+        self.assertEqual(result.getpixel((0, 0)), (0, 0, 0))
+        self.assertNotEqual(result.getpixel((2, 1)), (255, 255, 255))
 
-        nested = deepcopy(workflow)
-        nested["4"]["inputs"] = {
-            "input": ["1", 1],
-            "resize_type": {"value": "scale dimensions", "width": 1536, "height": 1536, "crop": "disabled"},
-            "scale_method": "lanczos",
-        }
-        with self.assertRaises(job_queue.JobQueueError):
-            upscale_validator._validate_rendered_workflow(nested, (1536, 1536))
+    def test_enclosed_reliable_white_artwork_remains_white(self) -> None:
+        image = Image.new("RGBA", (5, 5), (0, 0, 0, 0))
+        image.putpixel((2, 2), (255, 255, 255, 255))
+        result = upscale_validator.prepare_halo_safe_rgb(image, bleed_iterations=2, alpha_threshold=128)
+        self.assertEqual(result.getpixel((2, 2)), (255, 255, 255))
 
-    def test_mocked_validation_saves_verified_rgba_output_and_metadata(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            source = self.make_source(generated_root)
-            source_before = source.read_bytes()
-            output_content = png_bytes((1536, 1536))
-            captured_workflow: dict = {}
+    def test_settings_ranges_are_validated(self) -> None:
+        image = Image.new("RGBA", (2, 2))
+        for iterations, threshold, method in ((0, 128, "lanczos"), (1, 0, "lanczos"), (1, 128, "cubic")):
+            with self.assertRaises(job_queue.JobQueueError):
+                upscale_validator._validate_halo_settings(iterations, threshold, method)
+        self.assertEqual(upscale_validator.resize_alpha(image.getchannel("A"), (4, 4), "nearest-exact").size, (4, 4))
+        self.assertEqual(upscale_validator.resize_alpha(image.getchannel("A"), (4, 4), "lanczos").size, (4, 4))
 
-            def queue(workflow, **kwargs):
-                captured_workflow.update(workflow)
-                return {"status": "queued", "prompt_id": "prompt-123"}
+    def test_alpha_methods_are_distinct_and_preserve_extrema(self) -> None:
+        alpha = Image.new("L", (2, 1), 0)
+        alpha.putpixel((1, 0), 255)
+        nearest = upscale_validator.resize_alpha(alpha, (8, 1), "nearest-exact")
+        lanczos = upscale_validator.resize_alpha(alpha, (8, 1), "lanczos")
+        self.assertEqual(nearest.getextrema(), (0, 255))
+        self.assertEqual(lanczos.getextrema(), (0, 255))
+        self.assertNotEqual(list(nearest.get_flattened_data()), list(lanczos.get_flattened_data()))
 
-            with (
-                patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
-                patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=queue),
-                patch.object(upscale_validator.comfyui_client, "wait_for_completion", return_value={"status": "completed"}),
-                patch.object(upscale_validator.comfyui_client, "get_output_images", return_value=[{"filename": "out.png", "content": output_content}]),
-            ):
-                result = upscale_validator.validate_upscale_model_for_job("validation-job", confirmed=True)
+    def test_halo_diagnostics_count_partial_near_white_pixels(self) -> None:
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([(255, 255, 255, 128), (20, 30, 40, 64), (255, 255, 255, 255)])
+        stats = upscale_validator.halo_diagnostics(image)
+        self.assertEqual(stats["partially_transparent_pixel_count"], 2)
+        self.assertEqual(stats["near_white_partially_transparent_pixel_count"], 1)
+        self.assertEqual(stats["near_white_partially_transparent_percentage"], 50.0)
 
-            output_path = source.parent / "upscale-tests" / "realesrgan-x2-validation.png"
-            metadata_path = output_path.with_suffix(".json")
-            self.assertEqual(output_path.read_bytes(), output_content)
-            self.assertTrue(metadata_path.exists())
-            self.assertEqual(source.read_bytes(), source_before)
-            self.assertEqual(result["input_dimensions"], [768, 768])
-            self.assertEqual(result["output_dimensions"], [1536, 1536])
-            self.assertEqual(result["input_mode"], "RGBA")
-            self.assertEqual(result["output_mode"], "RGBA")
-            self.assertTrue(result["output_meaningful_transparency"])
+    def test_one_rgb_ai_pass_recombines_alpha_creates_previews_and_metadata(self) -> None:
+        def scenario(root, generated):
+            source, result, workflow = self.run_validation(generated, bleed_iterations=2, alpha_threshold=128)
+            output = Path(result["output_path"])
+            self.assertTrue(output.exists())
+            with Image.open(output) as image:
+                self.assertEqual(image.mode, "RGBA")
+            with Image.open(result["dark_preview_path"]) as image:
+                self.assertEqual(image.mode, "RGB")
+            with Image.open(result["white_preview_path"]) as image:
+                self.assertEqual(image.mode, "RGB")
+            self.assertEqual(sum(node.get("class_type") == "ImageUpscaleWithModel" for node in workflow.values() if isinstance(node, dict)), 1)
+            self.assertEqual(result["input_sha256"], sha256(source.read_bytes()).hexdigest())
             self.assertTrue(result["input_unchanged"])
-            self.assertEqual(result["model_name"], self.DEFAULT_MODEL)
-            self.assertTrue(result["model_sha256"])
-            self.assertEqual(result["scale_factor"], 2)
-            self.assertEqual(result["comfyui_prompt_id"], "prompt-123")
-            self.assertGreaterEqual(result["execution_time_seconds"], 0)
+            self.assertFalse(result["model_validated"])
             self.assertEqual(result["provider_status"], "not_ready")
             self.assertEqual(result["printify_status"], "not_ready")
             self.assertFalse(result["final_print_ready"])
-            self.assertEqual(captured_workflow["2"]["class_type"], "UpscaleModelLoader")
-            self.assertEqual(captured_workflow["3"]["class_type"], "ImageUpscaleWithModel")
-            self.assertFalse((upscale_validator.COMFYUI_INPUT_ROOT / "jamesos-validation-job-transparent-artifact.png").exists())
-            self.assertEqual(json.loads(metadata_path.read_text(encoding="utf-8"))["output_sha256"], result["output_sha256"])
+            self.assertEqual(result["edge_bleed_iterations"], 2)
+            self.assertEqual(result["alpha_resize_method"], "lanczos")
+            self.assertIn("partially_transparent_pixel_count", result)
+        self.run_in_sandbox(scenario)
 
-        self.run_with_validation_paths(scenario)
+    def test_each_alpha_method_gets_separate_output(self) -> None:
+        def scenario(root, generated):
+            _, nearest, _ = self.run_validation(generated, alpha_resize_method="nearest-exact")
+            _, lanczos, _ = self.run_validation(generated, alpha_resize_method="lanczos")
+            self.assertNotEqual(nearest["output_path"], lanczos["output_path"])
+            self.assertTrue(Path(nearest["output_path"]).exists())
+            self.assertTrue(Path(lanczos["output_path"]).exists())
+        self.run_in_sandbox(scenario)
 
-    def test_configured_4x_model_drives_workflow_dimensions_and_metadata(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            source = generated_root / "2026-07-14" / "validation-job" / "transparent_artifact.png"
-            source.parent.mkdir(parents=True)
-            source.write_bytes(png_bytes((8, 8)))
-            captured_workflow: dict = {}
+    def test_source_stays_byte_for_byte_unchanged(self) -> None:
+        def scenario(root, generated):
+            source = self.make_source(generated)
+            before = source.read_bytes()
+            self.run_validation(generated)
+            self.assertEqual(source.read_bytes(), before)
+        self.run_in_sandbox(scenario)
 
-            def queue(workflow, **kwargs):
-                captured_workflow.update(workflow)
-                return {"prompt_id": "four-x-prompt"}
-
+    def test_failure_cleans_temporary_input_and_records_no_success_metadata(self) -> None:
+        def scenario(root, generated):
+            source = self.make_source(generated)
             with (
                 patch.object(upscale_validator, "INPUT_SIZE", (8, 8)),
                 patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
+                patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=RuntimeError("boom")),
+            ):
+                with self.assertRaises(job_queue.JobQueueError):
+                    upscale_validator.validate_upscale_model_for_job("validation-job", confirmed=True)
+            folder = source.parent / "upscale-tests"
+            self.assertFalse(list(folder.glob("realesrgan-*.json")))
+            self.assertFalse(list(folder.glob("*.png")))
+            self.assertFalse(list((root / "ComfyUI" / "input").glob("*")))
+        self.run_in_sandbox(scenario)
+
+    def test_registry_default_selection_and_inventory_metadata(self) -> None:
+        def scenario(root, generated):
+            selected = upscale_model_registry.select_upscale_model()
+            inventory = upscale_model_registry.list_upscale_models()
+            self.assertEqual(selected["model_name"], self.MODEL)
+            self.assertTrue(selected["exists"])
+            self.assertTrue(selected["sha256"])
+            self.assertEqual(selected["scale_factor"], 2)
+            self.assertEqual(inventory["default_model"], self.MODEL)
+            self.assertEqual(inventory["validation_state"]["configured_count"], 5)
+            self.assertEqual(inventory["validation_state"]["installed_count"], 4)
+            self.assertEqual(inventory["validation_state"]["validated_count"], 1)
+        self.run_in_sandbox(scenario)
+
+    def test_registry_selects_explicit_configured_installed_model(self) -> None:
+        def scenario(root, generated):
+            selected = upscale_model_registry.select_upscale_model(self.ALTERNATE_MODEL)
+            self.assertEqual(selected["model_name"], self.ALTERNATE_MODEL)
+            self.assertEqual(selected["model_family"], "test family")
+            self.assertTrue(selected["exists"])
+            self.assertTrue(selected["validated"])
+        self.run_in_sandbox(scenario)
+
+    def test_registry_rejects_unknown_paths_missing_and_disabled_models(self) -> None:
+        def scenario(root, generated):
+            rejected = (
+                "Unknown_x2.pth",
+                "/tmp/RealESRGAN_x2plus.pth",
+                "../RealESRGAN_x2plus.pth",
+                self.MISSING_MODEL,
+                self.DISABLED_MODEL,
+            )
+            for model_name in rejected:
+                with self.subTest(model_name=model_name):
+                    with self.assertRaises(job_queue.JobQueueError):
+                        upscale_model_registry.select_upscale_model(model_name)
+        self.run_in_sandbox(scenario)
+
+    def test_configured_4x_model_drives_rgb_alpha_and_persisted_scale_metadata(self) -> None:
+        def scenario(root, generated):
+            source = self.make_source(generated)
+            captured = {}
+
+            def queue(workflow, **unused):
+                captured.update(workflow)
+                input_path = upscale_validator.COMFYUI_INPUT_ROOT / workflow["1"]["inputs"]["image"]
+                with Image.open(input_path) as prepared:
+                    self.assertEqual(prepared.mode, "RGB")
+                    captured["output"] = png_bytes(prepared.resize((32, 32), Image.Resampling.NEAREST))
+                return {"prompt_id": "four-x"}
+
+            original_resize_alpha = upscale_validator.resize_alpha
+            alpha_calls = []
+
+            def capture_alpha(alpha, output_size, method):
+                alpha_calls.append((alpha.size, output_size, method))
+                return original_resize_alpha(alpha, output_size, method)
+
+            with (
+                patch.object(upscale_validator, "INPUT_SIZE", (8, 8)),
+                patch.object(upscale_validator, "resize_alpha", side_effect=capture_alpha),
+                patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
                 patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=queue),
                 patch.object(upscale_validator.comfyui_client, "wait_for_completion", return_value={"status": "completed"}),
-                patch.object(upscale_validator.comfyui_client, "get_output_images", return_value=[{"filename": "out.png", "content": png_bytes((32, 32))}]),
+                patch.object(upscale_validator.comfyui_client, "get_output_images", side_effect=lambda *a, **k: [{"content": captured["output"]}]),
             ):
                 result = upscale_validator.validate_upscale_model_for_job(
                     "validation-job", upscale_model_name=self.FOUR_X_MODEL, confirmed=True
                 )
-
-            self.assertEqual(captured_workflow["2"]["inputs"]["model_name"], self.FOUR_X_MODEL)
-            self.assertEqual(captured_workflow["4"]["inputs"]["resize_type.width"], 32)
-            self.assertEqual(captured_workflow["4"]["inputs"]["resize_type.height"], 32)
-            self.assertEqual(captured_workflow["4"]["inputs"]["resize_type.crop"], "disabled")
-            self.assertEqual(result["input_dimensions"], [8, 8])
+            self.assertEqual(captured["2"]["inputs"]["model_name"], self.FOUR_X_MODEL)
             self.assertEqual(result["output_dimensions"], [32, 32])
+            self.assertEqual(alpha_calls, [((8, 8), (32, 32), "lanczos")])
             self.assertEqual(result["scale_factor"], 4)
-            self.assertEqual(result["model_name"], self.FOUR_X_MODEL)
+            persisted = json.loads(Path(result["output_path"]).with_suffix(".json").read_text(encoding="utf-8"))
+            self.assertEqual(persisted["scale_factor"], 4)
+            with Image.open(result["output_path"]) as output_image:
+                self.assertEqual(output_image.getchannel("A").size, (32, 32))
+            self.assertEqual(sha256(source.read_bytes()).hexdigest(), result["input_sha256"])
+        self.run_in_sandbox(scenario)
 
-        self.run_with_validation_paths(scenario)
-
-    def test_http_400_preserves_prompt_details_and_submitted_workflow_without_success_metadata(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            source = self.make_source(generated_root)
-            source_sha_before = sha256(source.read_bytes()).hexdigest()
+    def test_http_400_preserves_response_and_submitted_workflow(self) -> None:
+        def scenario(root, generated):
+            source = self.make_source(generated)
             response_json = {
                 "error": {"type": "prompt_outputs_failed_validation", "message": "Prompt outputs failed validation"},
-                "node_errors": {
-                    "4": {
-                        "errors": [
-                            {"type": "required_input_missing", "message": "Required input is missing", "details": "width"}
-                        ]
-                    }
-                },
+                "node_errors": {"3": {"errors": [{"type": "invalid_input", "message": "Invalid model input"}]}},
             }
-            http_error = comfyui_client.ComfyUIHTTPError(
-                "ComfyUI prompt queue failed with HTTP 400",
-                400,
-                json.dumps(response_json),
-                response_json,
-            )
+            response_body = json.dumps(response_json)
+            http_error = comfyui_client.ComfyUIHTTPError("HTTP 400", 400, response_body, response_json)
             with (
+                patch.object(upscale_validator, "INPUT_SIZE", (8, 8)),
                 patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
                 patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=http_error),
             ):
                 with self.assertRaises(upscale_validator.UpscalePromptValidationError) as raised:
                     upscale_validator.validate_upscale_model_for_job("validation-job", confirmed=True)
-
             error = raised.exception
+            self.assertIsInstance(error, job_queue.JobQueueError)
             self.assertEqual(error.status_code, 400)
-            self.assertEqual(error.response_body, json.dumps(response_json))
+            self.assertEqual(error.response_body, response_body)
             self.assertEqual(error.response_json, response_json)
             self.assertEqual(error.prompt_validation_details, response_json["node_errors"])
             structured = image_worker.structured_error(error, job_id="validation-job")
-            self.assertEqual(structured["response_body"], json.dumps(response_json))
+            self.assertEqual(structured["response_body"], response_body)
+            self.assertEqual(structured["response_json"], response_json)
             self.assertEqual(structured["prompt_validation_details"], response_json["node_errors"])
+            submitted = source.parent / "upscale-tests" / "submitted-upscale-workflow-halo-safe-lanczos-bleed-16-threshold-128.json"
+            self.assertTrue(submitted.exists())
+            self.assertEqual(json.loads(submitted.read_text(encoding="utf-8"))["3"]["class_type"], "ImageUpscaleWithModel")
+            self.assertFalse(list(source.parent.joinpath("upscale-tests").glob("realesrgan-*.json")))
+        self.run_in_sandbox(scenario)
 
-            validation_folder = source.parent / "upscale-tests"
-            submitted = json.loads((validation_folder / "submitted-upscale-workflow.json").read_text(encoding="utf-8"))
-            node_4 = submitted["4"]["inputs"]
-            self.assertEqual(node_4["resize_type.width"], 1536)
-            self.assertEqual(node_4["resize_type.height"], 1536)
-            self.assertEqual(node_4["resize_type.crop"], "disabled")
-            self.assertFalse((validation_folder / "realesrgan-x2-validation.png").exists())
-            self.assertFalse((validation_folder / "realesrgan-x2-validation.json").exists())
-            self.assertEqual(sha256(source.read_bytes()).hexdigest(), source_sha_before)
-
-        self.run_with_validation_paths(scenario)
-
-    def test_registry_selects_default_model_and_reports_discovery_metadata(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            selected = upscale_model_registry.select_upscale_model()
-            inventory = upscale_model_registry.list_upscale_models()
-
-            self.assertEqual(selected["model_name"], self.DEFAULT_MODEL)
-            self.assertTrue(selected["exists"])
-            self.assertGreater(selected["file_size_bytes"], 0)
-            self.assertTrue(selected["sha256"])
-            self.assertEqual(selected["scale_factor"], 2)
-            self.assertEqual(inventory["default_model"], self.DEFAULT_MODEL)
-            self.assertIn("validation_state", inventory)
-
-        self.run_with_validation_paths(scenario)
-
-    def test_registry_accepts_explicit_configured_installed_model(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            selected = upscale_model_registry.select_upscale_model(self.ALTERNATE_MODEL)
-            self.assertEqual(selected["model_name"], self.ALTERNATE_MODEL)
-            self.assertEqual(selected["model_family"], "test family")
-            self.assertTrue(selected["validated"])
-
-        self.run_with_validation_paths(scenario)
-
-    def test_registry_rejects_unknown_arbitrary_path_and_missing_model(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            with self.assertRaises(job_queue.JobQueueError):
-                upscale_model_registry.select_upscale_model("Unknown_x2.pth")
-            with self.assertRaises(job_queue.JobQueueError):
-                upscale_model_registry.select_upscale_model("/tmp/RealESRGAN_x2plus.pth")
-            with self.assertRaises(job_queue.JobQueueError):
-                upscale_model_registry.select_upscale_model("../RealESRGAN_x2plus.pth")
-            with self.assertRaises(job_queue.JobQueueError):
-                upscale_model_registry.select_upscale_model("MissingArtwork_x4.pth")
-
-        self.run_with_validation_paths(scenario)
-
-    def test_explicit_model_is_written_to_workflow_and_result_metadata(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            self.make_source(generated_root)
-            captured_workflow: dict = {}
-
-            def queue(workflow, **kwargs):
-                captured_workflow.update(workflow)
-                return {"prompt_id": "alternate-prompt"}
-
-            with (
-                patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
-                patch.object(upscale_validator.comfyui_client, "queue_prompt", side_effect=queue),
-                patch.object(upscale_validator.comfyui_client, "wait_for_completion", return_value={"status": "completed"}),
-                patch.object(upscale_validator.comfyui_client, "get_output_images", return_value=[{"filename": "out.png", "content": png_bytes((1536, 1536))}]),
-            ):
-                result = upscale_validator.validate_upscale_model_for_job(
-                    "validation-job", upscale_model_name=self.ALTERNATE_MODEL, confirmed=True
-                )
-
-            self.assertEqual(captured_workflow["2"]["inputs"]["model_name"], self.ALTERNATE_MODEL)
+    def test_explicit_model_is_in_workflow_returned_and_persisted_metadata(self) -> None:
+        def scenario(root, generated):
+            source, result, workflow = self.run_validation(generated, upscale_model_name=self.ALTERNATE_MODEL)
+            self.assertEqual(workflow["2"]["inputs"]["model_name"], self.ALTERNATE_MODEL)
             self.assertEqual(result["model_name"], self.ALTERNATE_MODEL)
-            self.assertTrue(result["model_sha256"])
-            self.assertEqual(result["scale_factor"], 2)
             self.assertEqual(result["model_family"], "test family")
             persisted = json.loads(Path(result["output_path"]).with_suffix(".json").read_text(encoding="utf-8"))
             self.assertEqual(persisted["model_name"], self.ALTERNATE_MODEL)
             self.assertEqual(persisted["model_sha256"], result["model_sha256"])
+            submitted = source.parent / "upscale-tests" / "submitted-upscale-workflow-halo-safe-lanczos-bleed-16-threshold-128.json"
+            self.assertEqual(json.loads(submitted.read_text(encoding="utf-8"))["2"]["inputs"]["model_name"], self.ALTERNATE_MODEL)
+        self.run_in_sandbox(scenario)
 
-        self.run_with_validation_paths(scenario)
-
-    def test_confirmation_is_required_before_any_comfyui_call(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            self.make_source(generated_root)
-            with patch.object(upscale_validator.comfyui_client, "queue_prompt") as queued:
-                with self.assertRaises(job_queue.JobQueueError):
-                    upscale_validator.validate_upscale_model_for_job("validation-job")
-            queued.assert_not_called()
-
-        self.run_with_validation_paths(scenario)
-
-    def test_invalid_mocked_output_is_rejected_without_validation_artifact(self) -> None:
-        def scenario(root: Path, generated_root: Path) -> None:
-            source = self.make_source(generated_root)
-            source_before = source.read_bytes()
+    def test_dimensionally_incorrect_ai_output_is_rejected_without_success_publication(self) -> None:
+        def scenario(root, generated):
+            source = self.make_source(generated)
+            bad_output = png_bytes(Image.new("RGB", (15, 16)))
             with (
+                patch.object(upscale_validator, "INPUT_SIZE", (8, 8)),
                 patch.object(upscale_validator.comfyui_client, "is_running", return_value=True),
-                patch.object(upscale_validator.comfyui_client, "queue_prompt", return_value={"prompt_id": "prompt-bad"}),
+                patch.object(upscale_validator.comfyui_client, "queue_prompt", return_value={"prompt_id": "bad-size"}),
                 patch.object(upscale_validator.comfyui_client, "wait_for_completion", return_value={"status": "completed"}),
-                patch.object(upscale_validator.comfyui_client, "get_output_images", return_value=[{"filename": "bad.png", "content": png_bytes((1536, 1536), mode="RGB")}]),
+                patch.object(upscale_validator.comfyui_client, "get_output_images", return_value=[{"content": bad_output}]),
             ):
                 with self.assertRaises(job_queue.JobQueueError):
                     upscale_validator.validate_upscale_model_for_job("validation-job", confirmed=True)
-
             folder = source.parent / "upscale-tests"
-            self.assertFalse((folder / "realesrgan-x2-validation.png").exists())
-            self.assertFalse((folder / "realesrgan-x2-validation.json").exists())
-            self.assertEqual(source.read_bytes(), source_before)
+            self.assertFalse(list(folder.glob("realesrgan-*.png")))
+            self.assertFalse(list(folder.glob("realesrgan-*.json")))
+        self.run_in_sandbox(scenario)
 
-        self.run_with_validation_paths(scenario)
+    def test_upscale_models_api_is_read_only_and_reports_full_inventory(self) -> None:
+        def scenario(root, generated):
+            from jamesos.core import api
+            registry_before = upscale_model_registry.REGISTRY_PATH.read_bytes()
+            model_hashes_before = {
+                path.name: sha256(path.read_bytes()).hexdigest()
+                for path in (root / "ComfyUI" / "models" / "upscale_models").iterdir()
+            }
+            with patch.object(api, "require_key", return_value=None):
+                result = api.image_worker_upscale_models_route(None)
+            self.assertEqual(result["status"], "ok")
+            self.assertEqual(result["default_model"], self.MODEL)
+            self.assertEqual(len(result["installed_models"]), 4)
+            self.assertEqual(len(result["configured_models"]), 5)
+            self.assertEqual(result["validation_state"]["validated_count"], 1)
+            self.assertEqual(upscale_model_registry.REGISTRY_PATH.read_bytes(), registry_before)
+            self.assertEqual({path.name: sha256(path.read_bytes()).hexdigest() for path in (root / "ComfyUI" / "models" / "upscale_models").iterdir()}, model_hashes_before)
+        self.run_in_sandbox(scenario)
+
+    def test_confirmation_required_before_queue(self) -> None:
+        def scenario(root, generated):
+            self.make_source(generated)
+            with patch.object(upscale_validator.comfyui_client, "queue_prompt") as queue:
+                with self.assertRaises(job_queue.JobQueueError):
+                    upscale_validator.validate_upscale_model_for_job("validation-job")
+                queue.assert_not_called()
+            self.assertFalse((root / "ComfyUI" / "input").exists())
+        self.run_in_sandbox(scenario)
+
+    def test_api_passes_halo_settings(self) -> None:
+        from jamesos.core import api
+        expected = {"status": "validation_complete"}
+        request = api.UpscaleValidationRequest(confirmed=True, upscale_model_name=self.MODEL, bleed_iterations=3, alpha_threshold=200, alpha_resize_method="nearest-exact")
+        with patch.object(api, "require_key", return_value=None), patch.object(api, "validate_upscale_model_for_job", return_value=expected) as validate:
+            self.assertEqual(api.image_worker_validate_upscale_model_route("job", request, None), expected)
+        validate.assert_called_once_with("job", upscale_model_name=self.MODEL, confirmed=True, bleed_iterations=3, alpha_threshold=200, alpha_resize_method="nearest-exact")
 
     def test_validation_source_contains_no_external_commerce_actions(self) -> None:
         source = Path(upscale_validator.__file__).read_text(encoding="utf-8").lower()
         for token in ("etsy", "printify.", "upload(", "publish(", "order("):
             self.assertNotIn(token, source)
-
-    def test_api_passes_explicit_model_selection_to_validation(self) -> None:
-        try:
-            from jamesos.core import api
-        except ModuleNotFoundError as exc:
-            if exc.name in {"fastapi", "pydantic"}:
-                self.skipTest("fastapi/pydantic are not installed in this Python environment")
-            raise
-        expected = {"status": "validation_complete", "model_name": self.ALTERNATE_MODEL}
-        with (
-            patch.object(api, "require_key", return_value=None),
-            patch.object(api, "validate_upscale_model_for_job", return_value=expected) as validate,
-        ):
-            result = api.image_worker_validate_upscale_model_route(
-                "validation-job",
-                api.UpscaleValidationRequest(confirmed=True, upscale_model_name=self.ALTERNATE_MODEL),
-                None,
-            )
-        self.assertEqual(result, expected)
-        validate.assert_called_once_with(
-            "validation-job", upscale_model_name=self.ALTERNATE_MODEL, confirmed=True
-        )
-
-    def test_upscale_models_api_is_read_only_inventory(self) -> None:
-        try:
-            from jamesos.core import api
-        except ModuleNotFoundError as exc:
-            if exc.name in {"fastapi", "pydantic"}:
-                self.skipTest("fastapi/pydantic are not installed in this Python environment")
-            raise
-        expected = {"status": "ok", "installed_models": [], "default_model": self.DEFAULT_MODEL}
-        with (
-            patch.object(api, "require_key", return_value=None),
-            patch.object(api, "list_upscale_models", return_value=expected) as listed,
-        ):
-            result = api.image_worker_upscale_models_route(None)
-        self.assertEqual(result, expected)
-        listed.assert_called_once_with()
 
 
 if __name__ == "__main__":
