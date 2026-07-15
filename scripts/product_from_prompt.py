@@ -13,6 +13,17 @@ from jamesos.services.error_handler import cli_error, handle_error
 from jamesos.services.product_orchestrator import MODE, ProductOrchestrator
 
 
+def response_summary(state: dict, orchestrator: ProductOrchestrator) -> dict:
+    result = {"result":"failed" if state["stage"]=="failed" else "ok", "job_id":state["job_id"], "stage":state["stage"],
+        "publish_status":state["publish_status"], "order_status":state["order_status"],
+        "report_path":str(orchestrator._path(state["job_id"]).with_name("product-orchestration-report.html"))}
+    if state["stage"] == "failed" and state.get("last_error"):
+        result["last_error"] = state["last_error"]; result.update(state["last_error"])
+    else:
+        result["recovered_from_error_ids"] = [item["error_id"] for item in state.get("recovered_errors") or [] if item.get("error_id")]
+    return result
+
+
 def _main() -> int:
     parser = argparse.ArgumentParser(description="Create or resume a draft-only product from one prompt.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -32,10 +43,7 @@ def _main() -> int:
     elif args.command == "status": state = orchestrator.load(args.job_id)
     else:
         path = orchestrator.report(args.job_id); print(json.dumps({"result":"report_ready","job_id":args.job_id,"report_path":str(path)},indent=2)); return 0
-    result = {"result":"failed" if state["stage"]=="failed" else "ok", "job_id":state["job_id"], "stage":state["stage"],
-              "publish_status":state["publish_status"], "order_status":state["order_status"], "last_error":state.get("last_error"),
-              "report_path":str(orchestrator._path(state["job_id"]).with_name("product-orchestration-report.html"))}
-    if state.get("last_error"): result.update(state["last_error"])
+    result = response_summary(state, orchestrator)
     print(json.dumps(result,indent=2)); return 1 if state["stage"]=="failed" else 0
 
 

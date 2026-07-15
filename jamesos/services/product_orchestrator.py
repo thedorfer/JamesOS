@@ -96,6 +96,54 @@ def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[st
         "draft_status": "not_published", "order_status": "not_created"}
 
 
+def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
+    if not isinstance(response, dict):
+        raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify variants response must be an object.",
+            operation="product_orchestrator", stage="printify_variant_selection")
+    normalized = []
+    for row in response.get("variants") or []:
+        if not isinstance(row, dict): continue
+        title = str(row.get("title") or "").strip(); parts = [part.strip() for part in title.rsplit("/", 1)]
+        color, size = (parts[0], parts[1].upper()) if len(parts) == 2 else ("", "")
+        variant_id = row.get("id")
+        if not isinstance(variant_id, int) or not color or size not in DEFAULT_SIZES: continue
+        normalized.append({"variant_id": variant_id, "title": title, "color": color, "size": size,
+            "is_available": bool(row.get("is_available", True)), "placeholders": row.get("placeholders") or []})
+    return normalized
+
+
+def select_printify_variants(response: dict[str, Any], *, colors: list[str], sizes: list[str]) -> dict[str, Any]:
+    normalized = normalize_printify_variants(response); requested_colors = {value.strip().casefold() for value in colors}
+    requested_sizes = {value.strip().upper() for value in sizes}
+    selected = [row for row in normalized if row["is_available"] and row["color"].casefold() in requested_colors and row["size"] in requested_sizes]
+    if not selected:
+        raise ValidationError("VALIDATION_FAILED", diagnostic_message="No available Printify variants exactly matched the requested colors and sizes.",
+            operation="product_orchestrator", stage="printify_variant_selection",
+            context={"requested_colors": colors, "requested_sizes": sizes, "normalized_variant_count": len(normalized)})
+    return {"normalized_variants": normalized, "selected_variants": selected,
+            "selected_variant_ids": [row["variant_id"] for row in selected], "matching_policy": "exact case-insensitive color; exact normalized size"}
+
+
+def _draft_marker(state: dict[str, Any]) -> str:
+    stable = {"job_id": state["job_id"], "shop_id": state["shop_id"], "selected_design_sha256": state["evidence"]["selection"]["selected"]["png_sha256"]}
+    return f"jamesos-orchestrator-{_json_sha(stable)[:20]}"
+
+
+def _products(response: Any) -> list[dict[str, Any]]:
+    if isinstance(response, list): return [row for row in response if isinstance(row, dict)]
+    if isinstance(response, dict):
+        rows = response.get("data") or response.get("products") or []
+        return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _find_marked_draft(response: Any, marker: str) -> dict[str, Any] | None:
+    for product in _products(response):
+        tags = {str(tag) for tag in product.get("tags") or []}
+        if marker in tags: return product
+    return None
+
+
 def _default_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
     return sale_candidate_vector.generate_v4_refinements(evidence["candidate"], root, phrase=brief["exact_text"])
 
@@ -138,10 +186,25 @@ class ProductOrchestrator:
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
 
+    def _normalize_recovered_error(self, state: dict[str, Any]) -> bool:
+        current = state.get("last_error")
+        if state.get("stage") != "awaiting_human_approval" or not current: return False
+        error_id = current.get("error_id"); history = state.setdefault("recovered_errors", [])
+        failed_transition = next((item for item in reversed(state.get("transitions", [])) if item.get("error_id") == error_id), {})
+        if error_id and not any(item.get("error_id") == error_id for item in history):
+            history.append({"error_id": error_id, "code": current.get("code"), "failed_at": failed_transition.get("timestamp"),
+                "recovered_at": datetime.now().astimezone().isoformat(), "recovered_stage": "awaiting_human_approval",
+                "diagnostic_path": current.get("diagnostic_path")})
+        state["last_error"] = None; _atomic_json(self._path(state["job_id"]), state)
+        return True
+
     def _run(self, state: dict[str, Any], *, price: int | None = None, garment_colors: list[str] | None = None,
              sizes: list[str] | None = None, confirmed: bool = False) -> dict[str, Any]:
         completed = {item["stage"] for item in state["transitions"] if item["result"] == "completed"}
-        if "awaiting_human_approval" in completed: return state
+        if "awaiting_human_approval" in completed:
+            changed = self._normalize_recovered_error(state)
+            if changed: self.report(state["job_id"])
+            return state
         try:
             if "brief_ready" not in completed:
                 state["brief"] = normalize_prompt(state["original_prompt"], price=price, garment_colors=garment_colors, sizes=sizes)
@@ -177,16 +240,21 @@ class ProductOrchestrator:
                 self._transition(state, "printify_image_uploaded", "printify_upload", upload)
             else: client.get_upload(state["evidence"]["upload"]["printify_image_id"])
             if "printify_draft_created" not in completed:
-                variants = client.get_variants(12, 29); wanted = set(state["brief"]["sizes"]); colors = {x.lower() for x in state["brief"]["garment_colors"]}
-                chosen = [x["id"] for x in variants if str(x.get("options", {}).get("size")) in wanted and str(x.get("options", {}).get("color", "")).lower() in colors]
-                if not chosen: raise ValidationError("VALIDATION_FAILED", diagnostic_message="No valid Printify variants matched the brief.", operation="product_orchestrator", stage="printify_draft_created")
+                variant_evidence = select_printify_variants(client.get_variants(12, 29), colors=state["brief"]["garment_colors"], sizes=state["brief"]["sizes"])
+                chosen = variant_evidence["selected_variant_ids"]; marker = state["evidence"].get("draft_marker") or _draft_marker(state)
+                state["evidence"]["variant_selection"] = variant_evidence; state["evidence"]["draft_marker"] = marker
+                _atomic_json(self._path(state["job_id"]), state)
                 listing = state["evidence"]["listing"]; image_id = state["evidence"]["upload"]["printify_image_id"]
                 payload = {"title": listing["title"], "description": listing["description"], "tags": listing["tags"], "blueprint_id": 12, "print_provider_id": 29,
                     "variants": [{"id": x, "price": listing["price_cents"], "is_enabled": True} for x in chosen],
                     "print_areas": [{"variant_ids": chosen, "placeholders": [{"position": "front", "images": [{"id": image_id, "x": .5, "y": .46, "scale": .85, "angle": 0}]}]}]}
-                product = client.create_product(state["shop_id"], payload)
+                payload["tags"] = [*payload["tags"], marker]
+                product = _find_marked_draft(client.list_products(state["shop_id"]), marker)
+                reconciled = product is not None
+                if product is None: product = client.create_product(state["shop_id"], payload)
                 if product.get("id") == PROTECTED_PRODUCT_ID: raise StateConflictError("STATE_CONFLICT", diagnostic_message="Printify returned the protected baseline product ID.", operation="product_orchestrator", stage="printify_draft_created")
-                draft = {"printify_product_id": product["id"], "variant_ids": chosen, "publish_status": "not_published", "order_status": "not_created"}
+                draft = {"printify_product_id": product["id"], "variant_ids": chosen, "draft_marker": marker,
+                    "reconciled_existing_remote_draft": reconciled, "publish_status": "not_published", "order_status": "not_created"}
                 state["evidence"]["draft"] = draft; self._transition(state, "printify_draft_created", "printify_create_unpublished_draft", draft)
             else: client.get_product(state["shop_id"], state["evidence"]["draft"]["printify_product_id"])
             if "mockups_downloaded" not in completed:
@@ -200,7 +268,8 @@ class ProductOrchestrator:
                     mockups.append({"source_url":url,"local_path":str(target),"sha256":_file_sha(target),"variant_ids":image.get("variant_ids",[])})
                 state["evidence"]["mockups"] = mockups; self._transition(state, "mockups_downloaded", "retrieve_mockup_metadata", {"mockups": mockups})
             final = {"status": "awaiting_human_approval", "banner": "DRAFT · NOT PUBLISHED · NO ORDER CREATED · AWAITING HUMAN APPROVAL"}
-            self._transition(state, "awaiting_human_approval", "stop_before_publish", final); self.report(state["job_id"])
+            self._transition(state, "awaiting_human_approval", "stop_before_publish", final)
+            self._normalize_recovered_error(state); self.report(state["job_id"])
             return state
         except Exception as exc:
             envelope = handle_error(exc, operation="product_orchestrator", context={"job_id": state["job_id"], "source_job_id": state.get("source_job_id")},
@@ -215,5 +284,7 @@ class ProductOrchestrator:
         candidates = state.get("evidence", {}).get("candidates", [])
         scores = {x["candidate_id"]: x for x in state.get("evidence", {}).get("selection", {}).get("alternatives_considered", [])}
         cards = "".join(f"<section><h3>{html.escape(x['candidate_id'])}</h3><img src='{html.escape(x.get('thumbnail_path',''))}'><pre>{html.escape(json.dumps(scores.get(x['candidate_id']) or {}, indent=2))}</pre></section>" for x in candidates)
-        document = f"<!doctype html><html><body><h1>DRAFT · NOT PUBLISHED · NO ORDER CREATED · AWAITING HUMAN APPROVAL</h1><h2>Original prompt</h2><p>{html.escape(state['original_prompt'])}</p><h2>Normalized brief</h2><pre>{html.escape(json.dumps(state.get('brief'), indent=2))}</pre><h2>V4 candidates</h2>{cards}<h2>Complete evidence and current state</h2><pre>{html.escape(json.dumps(state, indent=2, default=str))}</pre></body></html>"
+        recovered = state.get("recovered_errors") or []
+        active = "None — the workflow is currently successful." if not state.get("last_error") else html.escape(json.dumps(state["last_error"], indent=2))
+        document = f"<!doctype html><html><body><h1>DRAFT · NOT PUBLISHED · NO ORDER CREATED · AWAITING HUMAN APPROVAL</h1><h2>Current workflow state</h2><p>{html.escape(state['stage'])}</p><h2>Active failure</h2><pre>{active}</pre><h2>Recovered error history</h2><pre>{html.escape(json.dumps(recovered, indent=2))}</pre><h2>Original prompt</h2><p>{html.escape(state['original_prompt'])}</p><h2>Normalized brief</h2><pre>{html.escape(json.dumps(state.get('brief'), indent=2))}</pre><h2>V4 candidates</h2>{cards}<h2>Complete evidence and current state</h2><pre>{html.escape(json.dumps(state, indent=2, default=str))}</pre></body></html>"
         path.write_text(document, encoding="utf-8"); return path
