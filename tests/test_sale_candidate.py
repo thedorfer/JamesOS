@@ -111,5 +111,45 @@ class SaleCandidateTests(unittest.TestCase):
             self.assertTrue((composition_root / "printify" / "upload.json").is_file())
             self.assertTrue((composition_root / "printify" / "product-draft.json").is_file())
 
+    def test_curated_font_library_and_fallback_resolution(self):
+        fonts = sale_candidate.load_curated_fonts()
+        self.assertEqual({item["style_family"] for item in fonts}, {"retro_rounded", "groovy_retro", "hand_lettered_bold", "modern_rounded"})
+        resolved = sale_candidate.list_curated_fonts()
+        self.assertTrue(all(Path(item["resolved_font_path"]).is_absolute() for item in resolved))
+        self.assertTrue(all(len(item["resolved_font_sha256"]) == 64 for item in resolved))
+        fallback = sale_candidate.resolve_curated_font({**fonts[0], "font_path": "/definitely/missing/font.ttf",
+            "fallback_font_path": str(self.FONT)})
+        self.assertTrue(fallback["fallback_used"]); self.assertEqual(fallback["resolved_font_sha256"], sha256(self.FONT.read_bytes()).hexdigest())
+
+    def test_multi_font_preview_selection_is_immutable_and_feeds_listing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); evidence = self.fixture(root); before = evidence["candidate"].read_bytes()
+            profile_path = root / "profile.json"; profile_path.write_text(json.dumps({"profile_sha256": "profile-sha"}), encoding="utf-8")
+            with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
+                previews = sale_candidate.generate_font_previews("job", "love-v2", phrase="LOVE IS LOVE", confirmed=True, preview_run_id="preview-001")
+                composition_root = evidence["job_root"] / "commerce" / "product-compositions" / "love-v2"
+                with self.assertRaisesRegex(job_queue.JobQueueError, "font/style selection"):
+                    sale_candidate.generate_listing(composition_root, profile_path, confirmed=True)
+                first = sale_candidate.approve_font_selection("job", "love-v2", preview_run_id="preview-001",
+                    font_option_id="groovy-retro-01", approved_by="James", confirmed=True)
+                approval_path = composition_root / "font-selection-approval.json"; approval_sha = sha256(approval_path.read_bytes()).hexdigest()
+                repeat = sale_candidate.approve_font_selection("job", "love-v2", preview_run_id="preview-001",
+                    font_option_id="groovy-retro-01", approved_by="James", confirmed=True)
+                with self.assertRaisesRegex(job_queue.JobQueueError, "cannot be replaced"):
+                    sale_candidate.approve_font_selection("job", "love-v2", preview_run_id="preview-001",
+                        font_option_id="modern-rounded-01", approved_by="Other", confirmed=True)
+                listing = sale_candidate.generate_listing(composition_root, profile_path, confirmed=True)
+            self.assertEqual(len(previews["options"]), 4); self.assertEqual(evidence["candidate"].read_bytes(), before)
+            self.assertTrue(Path(previews["comparison_sheet_path"]).is_file()); self.assertTrue(Path(previews["report_path"]).is_file())
+            for option in previews["options"]:
+                self.assertTrue(Path(option["composition_path"]).is_file()); self.assertTrue(Path(option["dark_preview_path"]).is_file())
+                self.assertTrue(Path(option["light_preview_path"]).is_file()); self.assertEqual(len(option["font"]["resolved_font_sha256"]), 64)
+            self.assertTrue(repeat["idempotent"]); self.assertEqual(repeat["approved_at"], first["approved_at"])
+            self.assertEqual(sha256(approval_path.read_bytes()).hexdigest(), approval_sha)
+            self.assertEqual(listing["selected_font_option_id"], "groovy-retro-01")
+            self.assertEqual(listing["composition_sha256"], first["selected_composition_sha256"])
+            self.assertEqual(listing["style_manifest_sha256"], first["manifest_sha256"])
+            self.assertEqual(listing["publish_status"], "not_published"); self.assertEqual(listing["order_status"], "not_created")
+
 
 if __name__ == "__main__": unittest.main()

@@ -16,17 +16,22 @@ from jamesos.services import printify_product, sale_candidate
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Guided, separately confirmed JamesOS sale-candidate workflow.")
-    parser.add_argument("mode", choices=("replay", "profile-store", "compose", "approve-composition", "generate-listing",
-        "approve-listing", "upload", "create-draft", "download-mockups", "build-report"))
-    parser.add_argument("--job-id", required=True); parser.add_argument("--composition-id"); parser.add_argument("--font-path", type=Path)
+    parser.add_argument("mode", choices=("replay", "profile-store", "compose", "approve-composition", "list-fonts", "preview-fonts",
+        "approve-font", "show-font-selection", "generate-listing", "approve-listing", "upload", "create-draft", "download-mockups", "build-report"))
+    parser.add_argument("--job-id"); parser.add_argument("--composition-id"); parser.add_argument("--font-path", type=Path)
+    parser.add_argument("--phrase", default="LOVE IS LOVE"); parser.add_argument("--font-option-id"); parser.add_argument("--preview-run-id")
     parser.add_argument("--run-path", type=Path); parser.add_argument("--report-path", type=Path)
     parser.add_argument("--shop-id", type=int, default=9437076); parser.add_argument("--product-id")
     parser.add_argument("--blueprint-id", type=int); parser.add_argument("--print-provider-id", type=int)
     parser.add_argument("--variant-id", type=int, action="append", default=[]); parser.add_argument("--price", type=int, default=2499)
     parser.add_argument("--scale", type=float, default=.85); parser.add_argument("--approved-by", default="James")
-    for flag in ("confirm-compose", "confirm-composition-approval", "confirm-listing-generation", "confirm-listing-approval", "confirm-upload", "confirm-create-draft"):
+    for flag in ("confirm-compose", "confirm-composition-approval", "confirm-preview-generation", "confirm-font-approval", "confirm-listing-generation", "confirm-listing-approval", "confirm-upload", "confirm-create-draft"):
         parser.add_argument("--" + flag, action="store_true")
-    args = parser.parse_args(); client = PrintifyClient(); evidence = printify_product._approved_evidence(args.job_id)
+    args = parser.parse_args()
+    if args.mode == "list-fonts":
+        print(json.dumps({"fonts": sale_candidate.list_curated_fonts()}, indent=2)); return 0
+    if not args.job_id: parser.error("--job-id is required for this mode")
+    client = PrintifyClient(); evidence = printify_product._approved_evidence(args.job_id)
     run_path = args.run_path or evidence["job_root"] / "commerce" / "sale-candidates" / (args.composition_id or "baseline") / "sale-candidate-run.json"
     report_path = args.report_path or run_path.with_name("sale-candidate-report.html")
     if args.mode == "replay":
@@ -35,6 +40,14 @@ def main() -> int:
     composition_root = evidence["job_root"] / "commerce" / "product-compositions" / (args.composition_id or "")
     profile_path = evidence["job_root"] / "commerce" / "printify" / "unitystitches-style-profile.json"
     if args.mode == "profile-store": result = sale_candidate.profile_store(client, args.shop_id, profile_path)
+    elif args.mode == "preview-fonts": result = sale_candidate.generate_font_previews(args.job_id, args.composition_id or "", phrase=args.phrase,
+        confirmed=args.confirm_preview_generation, preview_run_id=args.preview_run_id)
+    elif args.mode == "approve-font":
+        runs = sorted((composition_root / "font-preview-runs").glob("*/font-preview-manifest.json"))
+        preview_run_id = args.preview_run_id or (runs[-1].parent.name if runs else "")
+        result = sale_candidate.approve_font_selection(args.job_id, args.composition_id or "", preview_run_id=preview_run_id,
+            font_option_id=args.font_option_id or "", approved_by=args.approved_by, confirmed=args.confirm_font_approval)
+    elif args.mode == "show-font-selection": result = sale_candidate.get_font_selection(args.job_id, args.composition_id or "")
     elif args.mode == "compose": result = sale_candidate.create_composition(args.job_id, args.composition_id or "", font_path=args.font_path or Path(""), confirmed=args.confirm_compose)
     elif args.mode == "approve-composition": result = sale_candidate.approve_composition(args.job_id, args.composition_id or "", approved_by=args.approved_by, confirmed=args.confirm_composition_approval)
     elif args.mode == "generate-listing": result = sale_candidate.generate_listing(composition_root, profile_path, confirmed=args.confirm_listing_generation)
@@ -45,15 +58,24 @@ def main() -> int:
         variant_ids=args.variant_id, price=args.price, scale=args.scale)
     elif args.mode == "download-mockups": result = {"mockups": sale_candidate.download_composition_mockups(args.job_id, args.composition_id or "", client=client)}
     else:
-        run = json.loads(run_path.read_text(encoding="utf-8")); sale_candidate.build_html_report(run, report_path); result = {"report_path": str(report_path)}
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+        if run.get("font_manifest"):
+            sale_candidate.build_font_preview_report(run["font_manifest"], report_path, run.get("font_selection"))
+        else: sale_candidate.build_html_report(run, report_path)
+        result = {"report_path": str(report_path)}
     transition = {"stage": args.mode, "timestamp": datetime.now().astimezone().isoformat(), "result_sha256": sale_candidate.sha256(json.dumps(result, sort_keys=True, default=str).encode()).hexdigest()}
     run = json.loads(run_path.read_text(encoding="utf-8")) if run_path.exists() else {"run_id": args.composition_id, "artwork_job_id": args.job_id,
         "composition_id": args.composition_id, "listing_package_id": None, "printify_upload_id": None, "printify_product_id": None,
         "transitions": [], "hashes": {}, "approvals": {}, "publish_status": "not_published", "order_status": "not_created"}
-    run["transitions"].append(transition); run["current_next_action"] = {"compose":"approve-composition", "approve-composition":"generate-listing",
+    run["transitions"].append(transition); run["current_next_action"] = {"preview-fonts":"approve-font", "approve-font":"generate-listing", "compose":"approve-composition", "approve-composition":"generate-listing",
         "generate-listing":"approve-listing", "approve-listing":"upload", "upload":"create-draft", "create-draft":"download-mockups"}.get(args.mode, "human_review")
     run.setdefault("hashes", {})[args.mode] = transition["result_sha256"]
     if args.mode == "profile-store": run["style_profile"] = result
+    elif args.mode == "preview-fonts":
+        run["font_manifest"] = {key: value for key, value in result.items() if key not in ("manifest_path", "manifest_sha256", "report_path")}
+        run["approved_artwork_path"] = result["approved_base_artwork_path"]
+        run["product_brief"] = {"product_type": "unisex_t_shirt", "exact_text": args.phrase, "preferred_mockup_color": "Black"}
+    elif args.mode == "approve-font": run["font_selection"] = result; run.setdefault("approvals", {})["font_selection"] = result
     elif args.mode == "compose":
         run["composition"] = result; run["approved_artwork_path"] = result["approved_source_candidate_path"]
         run["product_brief"] = {"product_type": "unisex_t_shirt", "exact_text": "LOVE IS LOVE",

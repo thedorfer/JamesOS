@@ -17,6 +17,7 @@ from jamesos.services import job_queue, printify_product
 
 CANVAS = (4500, 5400)
 PHRASE = "LOVE IS LOVE"
+FONT_LIBRARY_PATH = Path(__file__).resolve().parents[1] / "config" / "sale_candidate_fonts.json"
 
 
 def _hash(path: Path) -> str:
@@ -43,6 +44,143 @@ def _checkerboard(size: tuple[int, int], tile: int = 120) -> Image.Image:
         for x in range(0, size[0], tile):
             if (x // tile + y // tile) % 2: draw.rectangle((x, y, x + tile - 1, y + tile - 1), fill=(175, 175, 175, 255))
     return image
+
+
+def load_curated_fonts(path: Path = FONT_LIBRARY_PATH) -> list[dict[str, Any]]:
+    loaded = json.loads(path.read_text(encoding="utf-8")); fonts = loaded.get("fonts")
+    required = {"font_id", "display_name", "style_family", "font_path", "fallback_font_path", "source_note", "defaults"}
+    if not isinstance(fonts, list) or len(fonts) < 4: raise job_queue.JobQueueError("Curated sale-candidate font library is incomplete.")
+    if any(not required <= set(item) for item in fonts): raise job_queue.JobQueueError("Curated font metadata is incomplete.")
+    if len({item["font_id"] for item in fonts}) != len(fonts): raise job_queue.JobQueueError("Curated font IDs must be unique.")
+    return fonts
+
+
+def resolve_curated_font(entry: dict[str, Any]) -> dict[str, Any]:
+    requested = Path(entry["font_path"]).expanduser()
+    fallback = Path(entry["fallback_font_path"]).expanduser()
+    selected, fallback_used = (requested, False) if requested.is_file() else (fallback, True)
+    if not selected.is_file(): raise job_queue.JobQueueError(f"Neither configured font nor fallback resolved for {entry['font_id']}.")
+    resolved = selected.resolve()
+    return {**entry, "requested_font_path": str(requested), "resolved_font_path": str(resolved),
+            "resolved_font_sha256": _hash(resolved), "fallback_used": fallback_used}
+
+
+def list_curated_fonts(path: Path = FONT_LIBRARY_PATH) -> list[dict[str, Any]]:
+    return [resolve_curated_font(item) for item in load_curated_fonts(path)]
+
+
+def _color(value: str) -> tuple[int, int, int, int]:
+    clean = value.lstrip("#"); return tuple(int(clean[index:index + 2], 16) for index in (0, 2, 4)) + (255,)
+
+
+def _render_font_variant(source: Path, option_root: Path, option: dict[str, Any], phrase: str) -> dict[str, Any]:
+    defaults = option["defaults"]; option_root.mkdir(parents=True)
+    with Image.open(source) as opened: opened.load(); source_image = opened.convert("RGBA")
+    bbox = source_image.getchannel("A").getbbox()
+    if not bbox: raise job_queue.JobQueueError("Approved artwork has no visible pixels.")
+    heart = source_image.crop(bbox); heart_scale = .87
+    scaled = heart.resize((round(heart.width * heart_scale), round(heart.height * heart_scale)), Image.Resampling.LANCZOS)
+    canvas = Image.new("RGBA", CANVAS, (0, 0, 0, 0)); heart_position = ((CANVAS[0] - scaled.width) // 2, 1450); canvas.alpha_composite(scaled, heart_position)
+    font_size = round(500 * float(defaults["size_scale"])); outline = int(defaults["outline_width"])
+    font = ImageFont.truetype(option["resolved_font_path"], font_size)
+    typography = Image.new("RGBA", CANVAS, (0, 0, 0, 0)); draw = ImageDraw.Draw(typography)
+    widths = [draw.textlength(character, font=font) for character in phrase]
+    tracking = float(defaults["tracking_adjustment"]); total = sum(widths) + tracking * (len(widths) - 1); x = (CANVAS[0] - total) / 2
+    characters = []
+    for index, (character, width) in enumerate(zip(phrase, widths)):
+        normalized = (index / max(1, len(phrase) - 1)) * 2 - 1
+        y = 1050 - round(float(defaults["arch_strength"]) * (1 - normalized * normalized))
+        draw.text((x, y), character, font=font, fill=_color(defaults["fill_color"]), stroke_width=outline,
+                  stroke_fill=_color(defaults["outline_color"]), anchor="la")
+        characters.append({"character": character, "x": round(x, 3), "y": y, "width": round(width, 3)}); x += width + tracking
+    text_bbox = typography.getchannel("A").getbbox()
+    if not text_bbox or text_bbox[0] < 225 or text_bbox[2] > 4275 or text_bbox[1] < 270:
+        raise job_queue.JobQueueError(f"Typography for {option['font_id']} escaped production safe bounds.")
+    typography_path = option_root / "typography.png"; typography.save(typography_path, format="PNG"); canvas.alpha_composite(typography)
+    composition_path = option_root / "composition.png"; dark_path = option_root / "preview-dark.png"; light_path = option_root / "preview-light.png"
+    canvas.save(composition_path, format="PNG"); _preview(canvas, (24, 24, 24, 255), dark_path); _preview(canvas, (255, 255, 255, 255), light_path)
+    record = {"font_option_id": option["font_id"], "display_name": option["display_name"], "style_family": option["style_family"],
+        "phrase": phrase, "font": {key: option[key] for key in ("requested_font_path", "resolved_font_path", "resolved_font_sha256", "fallback_used", "source_note")},
+        "rendering": {**defaults, "font_size": font_size, "text_bounding_box": list(text_bbox), "characters": characters,
+                      "heart_scale": heart_scale, "heart_position": list(heart_position)},
+        "composition_path": str(composition_path), "composition_sha256": _hash(composition_path),
+        "dark_preview_path": str(dark_path), "dark_preview_sha256": _hash(dark_path),
+        "light_preview_path": str(light_path), "light_preview_sha256": _hash(light_path),
+        "typography_path": str(typography_path), "typography_sha256": _hash(typography_path)}
+    _write_json(option_root / "metadata.json", record, immutable=True)
+    canvas.close(); typography.close(); scaled.close(); heart.close(); source_image.close(); return record
+
+
+def generate_font_previews(job_id: str, composition_id: str, *, phrase: str, confirmed: bool,
+                           preview_run_id: str | None = None, font_library_path: Path = FONT_LIBRARY_PATH) -> dict[str, Any]:
+    if not confirmed: raise job_queue.JobQueueError("Font preview generation requires explicit confirmation.")
+    if phrase != PHRASE: raise job_queue.JobQueueError(f"Font previews require the exact phrase: {PHRASE}")
+    evidence = printify_product._approved_evidence(job_id); source = evidence["candidate"]; source_before = _hash(source)
+    composition_root = evidence["job_root"] / "commerce" / "product-compositions" / composition_id
+    preview_run_id = preview_run_id or datetime.now().strftime("font-previews-%Y%m%d-%H%M%S")
+    run_root = composition_root / "font-preview-runs" / preview_run_id
+    if run_root.exists(): raise job_queue.JobQueueError("Font preview run ID already exists; prior preview sets are immutable.")
+    options = [_render_font_variant(source, run_root / item["font_id"], item, phrase) for item in list_curated_fonts(font_library_path)]
+    sheet = Image.new("RGB", (1800, 2160), (238, 238, 238)); sheet_draw = ImageDraw.Draw(sheet)
+    for index, option in enumerate(options):
+        with Image.open(option["dark_preview_path"]) as preview: thumbnail = preview.copy(); thumbnail.thumbnail((850, 950), Image.Resampling.LANCZOS)
+        x, y = (index % 2) * 900 + 25, (index // 2) * 1080 + 75; sheet.paste(thumbnail, (x, y)); thumbnail.close()
+        sheet_draw.text((x, 25 + (index // 2) * 1080), f"{option['display_name']} · {option['font_option_id']}", fill=(20, 20, 25))
+    sheet_path = run_root / "comparison-sheet.jpg"; sheet.save(sheet_path, quality=92); sheet.close()
+    manifest = {"preview_run_id": preview_run_id, "composition_id": composition_id, "source_job_id": job_id,
+        "approved_base_artwork_path": str(source), "approved_base_artwork_sha256": source_before,
+        "final_artwork_approval_sha256": evidence["approval_sha"], "phrase": phrase, "options": options,
+        "comparison_sheet_path": str(sheet_path), "comparison_sheet_sha256": _hash(sheet_path),
+        "created_at": datetime.now().astimezone().isoformat(), "status": "needs_font_selection",
+        "publish_status": "not_published", "order_status": "not_created", "provider_status": "not_ready"}
+    manifest_path = run_root / "font-preview-manifest.json"; _write_json(manifest_path, manifest, immutable=True)
+    report_path = run_root / "font-preview-report.html"; build_font_preview_report(manifest, report_path)
+    if _hash(source) != source_before: raise job_queue.JobQueueError("Approved base artwork changed during font preview generation.")
+    return {**manifest, "manifest_path": str(manifest_path), "manifest_sha256": _hash(manifest_path), "report_path": str(report_path)}
+
+
+def approve_font_selection(job_id: str, composition_id: str, *, preview_run_id: str, font_option_id: str,
+                           approved_by: str, confirmed: bool) -> dict[str, Any]:
+    if not confirmed or not approved_by.strip(): raise job_queue.JobQueueError("Font selection approval requires reviewer and explicit confirmation.")
+    evidence = printify_product._approved_evidence(job_id); composition_root = evidence["job_root"] / "commerce" / "product-compositions" / composition_id
+    manifest_path = composition_root / "font-preview-runs" / preview_run_id / "font-preview-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")); selected = next((item for item in manifest["options"] if item["font_option_id"] == font_option_id), None)
+    if selected is None: raise job_queue.JobQueueError("Selected font option is not present in the immutable manifest.")
+    if _hash(Path(selected["composition_path"])) != selected["composition_sha256"]: raise job_queue.JobQueueError("Selected composition SHA is stale.")
+    approval_path = composition_root / "font-selection-approval.json"
+    if approval_path.exists():
+        existing = json.loads(approval_path.read_text(encoding="utf-8"))
+        if existing["approved_by"] == approved_by.strip() and existing["font_option_id"] == font_option_id and existing["manifest_sha256"] == _hash(manifest_path):
+            return {**existing, "approval_record_sha256": _hash(approval_path), "idempotent": True}
+        raise job_queue.JobQueueError("Existing font selection cannot be replaced by a different reviewer or option.")
+    approval = {"approved_by": approved_by.strip(), "approved_at": datetime.now().astimezone().isoformat(),
+        "selected_font_option_id": font_option_id, "font_option_id": font_option_id,
+        "selected_composition_sha256": selected["composition_sha256"], "selected_composition_path": selected["composition_path"],
+        "manifest_path": str(manifest_path), "manifest_sha256": _hash(manifest_path), "phrase": manifest["phrase"],
+        "preview_run_id": preview_run_id, "visual_review_result": "passed"}
+    _write_json(approval_path, approval, immutable=True)
+    return {**approval, "approval_record_sha256": _hash(approval_path), "idempotent": False}
+
+
+def get_font_selection(job_id: str, composition_id: str) -> dict[str, Any]:
+    evidence = printify_product._approved_evidence(job_id); path = evidence["job_root"] / "commerce" / "product-compositions" / composition_id / "font-selection-approval.json"
+    if not path.is_file(): return {"status": "needs_font_selection", "composition_id": composition_id}
+    return {"status": "approved", **json.loads(path.read_text(encoding="utf-8")), "approval_record_sha256": _hash(path)}
+
+
+def build_font_preview_report(manifest: dict[str, Any], output_path: Path, approval: dict[str, Any] | None = None) -> Path:
+    cards = []
+    for option in manifest["options"]:
+        selected = approval and approval.get("font_option_id") == option["font_option_id"]
+        cards.append(f"<article class='{'selected' if selected else ''}'><h2>{html.escape(option['display_name'])}</h2>"
+            f"<p>{html.escape(option['style_family'])} · {html.escape(option['font_option_id'])}</p>"
+            f"<img src='{html.escape(str(Path(option['dark_preview_path']).relative_to(output_path.parent)))}'>"
+            f"<img src='{html.escape(str(Path(option['light_preview_path']).relative_to(output_path.parent)))}'>"
+            f"<pre>{html.escape(json.dumps({'font': option['font'], 'rendering': option['rendering']}, indent=2))}</pre></article>")
+    selected_text = approval.get("font_option_id") if approval else "None — approval required"
+    document = "<!doctype html><html><head><meta charset='utf-8'><title>Font Preview Selection</title><style>body{font-family:sans-serif;background:#eee}main{display:grid;grid-template-columns:1fr 1fr;gap:18px}article{background:white;padding:15px}.selected{outline:8px solid #28a86b}img{max-width:48%}pre{white-space:pre-wrap}.warning{font-weight:bold;color:#a00}</style></head><body>"
+    document += f"<h1>LOVE IS LOVE — Font Options</h1><p class='warning'>DRAFT · NOT PUBLISHED · NO ORDER CREATED</p><p>Selected font option: {html.escape(selected_text)}</p><p>Next required action: {'generate listing' if approval else 'approve one font option'}</p><h2>Original base heart artwork</h2><img style='max-width:300px' src='{html.escape(manifest['approved_base_artwork_path'])}'><main>{''.join(cards)}</main></body></html>"
+    output_path.write_text(document, encoding="utf-8"); return output_path
 
 
 def create_composition(job_id: str, composition_id: str, *, font_path: Path, confirmed: bool,
@@ -143,9 +281,19 @@ def profile_store(client: PrintifyClient, shop_id: int, output_path: Path) -> di
 
 def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: bool) -> dict[str, Any]:
     if not confirmed: raise job_queue.JobQueueError("Listing generation requires explicit confirmation.")
-    composition_path = composition_root / "composition.json"; approval_path = composition_root / "composition-approval.json"
-    if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved composition is required before listing generation.")
-    composition = json.loads(composition_path.read_text(encoding="utf-8")); profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    font_approval_path = composition_root / "font-selection-approval.json"
+    if (composition_root / "font-preview-runs").exists():
+        if not font_approval_path.is_file(): raise job_queue.JobQueueError("Approved font/style selection is required before listing generation.")
+        font_approval = json.loads(font_approval_path.read_text(encoding="utf-8")); manifest_path = Path(font_approval["manifest_path"])
+        if _hash(manifest_path) != font_approval["manifest_sha256"]: raise job_queue.JobQueueError("Approved font manifest SHA is stale.")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")); selected = next(item for item in manifest["options"] if item["font_option_id"] == font_approval["font_option_id"])
+        if _hash(Path(selected["composition_path"])) != font_approval["selected_composition_sha256"]: raise job_queue.JobQueueError("Approved font composition SHA is stale.")
+        composition = {"composition_id": composition_root.name, "output_sha256": selected["composition_sha256"]}
+    else:
+        composition_path = composition_root / "composition.json"; approval_path = composition_root / "composition-approval.json"
+        if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved composition is required before listing generation.")
+        composition = json.loads(composition_path.read_text(encoding="utf-8")); font_approval = None; manifest = None; selected = None
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
     listing = composition_root / "listing"; listing.mkdir(exist_ok=False)
     title = "Love Is Love Rainbow Heart Unisex Tee"
     description = ("Celebrate colorful, positive love with a bold rainbow heart and an easy-to-read LOVE IS LOVE headline.\n\n"
@@ -161,7 +309,14 @@ def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: b
     package = {"listing_package_id": f"listing-{composition['composition_id']}", "title": title, "description": description,
         "tags": tags, "materials": ["Airlume combed and ring-spun cotton"], "care_instructions": "Machine wash cold; tumble dry low.",
         "pricing": pricing, "variants": variants, "style_profile_sha256": profile["profile_sha256"],
-        "composition_sha256": composition["output_sha256"], "human_approval_status": "not_approved", "editable": True}
+        "composition_sha256": composition["output_sha256"],
+        "approved_base_artwork_sha256": manifest.get("approved_base_artwork_sha256") if manifest else None,
+        "selected_font_option_id": font_approval.get("font_option_id") if font_approval else None,
+        "font_selection_approval_sha256": _hash(font_approval_path) if font_approval else None,
+        "style_manifest_sha256": font_approval.get("manifest_sha256") if font_approval else None,
+        "selected_composition_path": selected.get("composition_path") if selected else composition.get("output_path"),
+        "publish_status": "not_published", "order_status": "not_created", "provider_status": "not_ready",
+        "human_approval_status": "not_approved", "editable": True}
     _write_json(listing / "listing-package.json", package); return package
 
 
@@ -175,19 +330,24 @@ def approve_listing(listing_root: Path, *, approved_by: str, confirmed: bool) ->
 def upload_composition(job_id: str, composition_id: str, *, client: PrintifyClient, confirmed: bool) -> dict[str, Any]:
     if not confirmed: raise job_queue.JobQueueError("Composition upload requires explicit confirmation.")
     evidence = printify_product._approved_evidence(job_id); root = evidence["job_root"] / "commerce" / "product-compositions" / composition_id
-    record = json.loads((root / "composition.json").read_text(encoding="utf-8")); approval_path = root / "composition-approval.json"
-    if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved product composition is required before upload.")
-    approval = json.loads(approval_path.read_text(encoding="utf-8")); output = Path(record["output_path"])
-    if _hash(output) != record["output_sha256"] or approval["approved_output_sha256"] != record["output_sha256"]:
-        raise job_queue.JobQueueError("Approved composition SHA evidence is stale.")
+    if (root / "font-preview-runs").exists():
+        approval_path = root / "font-selection-approval.json"
+        if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved font composition is required before upload.")
+        approval = json.loads(approval_path.read_text(encoding="utf-8")); output = Path(approval["selected_composition_path"])
+        output_sha = approval["selected_composition_sha256"]
+    else:
+        record = json.loads((root / "composition.json").read_text(encoding="utf-8")); approval_path = root / "composition-approval.json"
+        if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved product composition is required before upload.")
+        approval = json.loads(approval_path.read_text(encoding="utf-8")); output = Path(record["output_path"]); output_sha = record["output_sha256"]
+    if _hash(output) != output_sha: raise job_queue.JobQueueError("Approved composition SHA evidence is stale.")
     upload_path = root / "printify" / "upload.json"
     if upload_path.exists():
         existing = json.loads(upload_path.read_text(encoding="utf-8")); remote = client.get_upload(existing["printify_image_id"])
         return {**existing, "remote": remote, "idempotent": True}
-    filename = f"jamesos-{job_id}-{composition_id}-{record['output_sha256'][:12]}.png"
+    filename = f"jamesos-{job_id}-{composition_id}-{output_sha[:12]}.png"
     remote = client.upload_image_contents(filename, base64.b64encode(output.read_bytes()).decode("ascii"))
     if remote.get("mime_type") != "image/png": raise job_queue.JobQueueError("Printify did not identify the composition as PNG.")
-    upload = {"job_id": job_id, "composition_id": composition_id, "composition_sha256": record["output_sha256"],
+    upload = {"job_id": job_id, "composition_id": composition_id, "composition_sha256": output_sha,
         "composition_approval_sha256": _hash(approval_path), "printify_image_id": remote.get("id"), "response": remote,
         "uploaded_at": remote.get("upload_time") or datetime.now().astimezone().isoformat(), "idempotent": False}
     _write_json(upload_path, upload, immutable=True); return upload

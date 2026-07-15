@@ -1,0 +1,40 @@
+{
+  "fonts": [
+    {
+      "font_id": "retro-rounded-01",
+      "display_name": "Retro Rounded",
+      "style_family": "retro_rounded",
+      "font_path": "/usr/share/fonts/opentype/urw-base35/URWGothic-Demi.otf",
+      "fallback_font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "source_note": "Local URW Gothic substitute; font bytes are not bundled with JamesOS.",
+      "defaults": {"fill_color": "#FFE66D", "outline_color": "#302A46", "outline_width": 30, "arch_strength": 150, "tracking_adjustment": 8, "size_scale": 1.0}
+    },
+    {
+      "font_id": "groovy-retro-01",
+      "display_name": "Groovy Retro",
+      "style_family": "groovy_retro",
+      "font_path": "/usr/share/fonts/opentype/urw-base35/URWBookman-Demi.otf",
+      "fallback_font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSerifCondensed-Bold.ttf",
+      "source_note": "Local URW Bookman substitute; font bytes are not bundled with JamesOS.",
+      "defaults": {"fill_color": "#FF8FB1", "outline_color": "#382A45", "outline_width": 34, "arch_strength": 190, "tracking_adjustment": 4, "size_scale": 0.94}
+    },
+    {
+      "font_id": "hand-lettered-bold-01",
+      "display_name": "Hand-Lettered Bold",
+      "style_family": "hand_lettered_bold",
+      "font_path": "/usr/share/fonts/opentype/urw-base35/URWBookman-DemiItalic.otf",
+      "fallback_font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+      "source_note": "Local bold italic substitute for a hand-lettered direction; not claimed to be custom lettering.",
+      "defaults": {"fill_color": "#78E0D0", "outline_color": "#242A3A", "outline_width": 32, "arch_strength": 135, "tracking_adjustment": 1, "size_scale": 0.9}
+    },
+    {
+      "font_id": "modern-rounded-01",
+      "display_name": "Modern Rounded",
+      "style_family": "modern_rounded",
+      "font_path": "/usr/share/fonts/truetype/roboto/unhinted/RobotoTTF/Roboto-Bold.ttf",
+      "fallback_font_path": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+      "source_note": "Local Roboto Bold substitute; font bytes are not bundled with JamesOS.",
+      "defaults": {"fill_color": "#F7F5EF", "outline_color": "#252535", "outline_width": 26, "arch_strength": 115, "tracking_adjustment": 10, "size_scale": 0.96}
+    }
+  ]
+}
