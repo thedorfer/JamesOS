@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 from PIL import Image
 
 from jamesos.integrations.printify_client import PrintifyAPIError, PrintifyClient, token_status
+from jamesos.core.errors import ArtifactIntegrityError
 from jamesos.services import job_queue, printify_product
 
 
@@ -99,7 +100,7 @@ class PrintifyTests(unittest.TestCase):
                 with self.assertRaises(job_queue.JobQueueError): printify_product.upload_approved_artwork(job["job_id"], confirmed=True, client=client)
             job["payload"]["final_artifact_approved"] = True; candidate.write_bytes(b"changed")
             with patch.object(job_queue, "get_job", return_value=job):
-                with self.assertRaisesRegex(job_queue.JobQueueError, "candidate SHA"): printify_product.upload_approved_artwork(job["job_id"], confirmed=True, client=client)
+                with self.assertRaisesRegex(ArtifactIntegrityError, "candidate SHA"): printify_product.upload_approved_artwork(job["job_id"], confirmed=True, client=client)
             client.upload_image_contents.assert_not_called()
 
     def test_plan_product_and_mockups_are_idempotent_and_unpublished(self):

@@ -1,0 +1,9 @@
+{
+  "treatments": [
+    {"treatment_id":"cream_magenta_shadow","fill":"#FFF1B8","inner":"#FFF1B8","shadow":"#D93686","outline":"#17233F","outline_width":34,"shadow_offset":[34,34]},
+    {"treatment_id":"pink_cream_dimension","fill":"#F36FA5","inner":"#FFF0C9","shadow":"#FFF0C9","outline":"#20213B","outline_width":32,"shadow_offset":[24,30]},
+    {"treatment_id":"rainbow_band","fill":"#F6D75A","inner":"#38BFC3","shadow":"#E85B86","outline":"#17233F","outline_width":36,"shadow_offset":[26,28]},
+    {"treatment_id":"white_pride_shadow","fill":"#FFFDF5","inner":"#FFFDF5","shadow":"#A947A8","outline":"#18233F","outline_width":34,"shadow_offset":[32,34]},
+    {"treatment_id":"teal_pink_retro","fill":"#3AC7BE","inner":"#F78DB1","shadow":"#F78DB1","outline":"#182C3D","outline_width":36,"shadow_offset":[30,30]}
+  ]
+}

@@ -1,11 +1,13 @@
 import json
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, Header, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from jamesos.config import VAULT
+from jamesos.core.errors import JamesOSError, StateConflictError
+from jamesos.services.error_handler import api_error, handle_error
 from jamesos.core.queue import enqueue_job
 from jamesos.services.search_service import search_notes_index
 from jamesos.services.status_report import generate_status_report
@@ -127,6 +129,13 @@ API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
 
 app = FastAPI(title="JamesOS API")
+
+
+@app.exception_handler(JamesOSError)
+async def jamesos_error_response(request: Request, exc: JamesOSError):
+    envelope = handle_error(exc, operation=exc.operation, request_id=request.headers.get("x-request-id"))
+    status, body = api_error(envelope)
+    return JSONResponse(status_code=status, content=body)
 
 
 def _printify_client() -> PrintifyClient:
@@ -946,14 +955,16 @@ def printify_product_route(job_id: str, x_jamesos_key: str | None = Header(defau
 def printify_upload_route(job_id: str, req: PrintifyUploadRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     try: return printify_product.upload_approved_artwork(job_id, confirmed=req.confirmed, client=_printify_client(), image_url=req.image_url)
-    except (JobQueueError, PrintifyAPIError) as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except JobQueueError as exc: raise StateConflictError("STATE_CONFLICT", diagnostic_message=str(exc), operation="printify.upload",
+        stage="validation", context={"job_id": job_id}, state={"external_write_attempted": False}) from exc
 
 
 @app.post("/commerce/printify/jobs/{job_id}/create-product-draft")
 def printify_create_draft_route(job_id: str, req: PrintifyCreateDraftRequest, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
     try: return printify_product.create_product_draft(job_id, confirmed=req.confirmed, client=_printify_client())
-    except (JobQueueError, PrintifyAPIError) as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except JobQueueError as exc: raise StateConflictError("STATE_CONFLICT", diagnostic_message=str(exc), operation="printify.create_product",
+        stage="validation", context={"job_id": job_id}, state={"external_write_attempted": False}) from exc
 
 
 @app.post("/image-worker/jobs/{job_id}/approve-production-artifact")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 import time
 from typing import Any
@@ -8,6 +7,7 @@ from typing import Any
 import requests
 
 from jamesos.config import VAULT
+from jamesos.core.errors import PrintifyError
 
 
 BASE_URL = "https://api.printify.com/v1"
@@ -15,16 +15,16 @@ TOKEN_PATH = VAULT / "JamesOS" / "Secrets" / "printify_api_token.txt"
 USER_AGENT = "JamesOS/1.0 PrintifyDraftIntegration"
 
 
-@dataclass
-class PrintifyAPIError(RuntimeError):
-    operation: str
-    http_status: int | None
-    error_code: str
-    safe_message: str
-    retryable: bool = False
-
-    def __str__(self) -> str:
-        return f"Printify {self.operation} failed ({self.http_status or 'network'}, {self.error_code}): {self.safe_message}"
+class PrintifyAPIError(PrintifyError):
+    def __init__(self, operation: str, http_status: int | None, error_code: str, safe_message: str, retryable: bool = False) -> None:
+        code = ({401: "HTTP_UNAUTHORIZED", 403: "HTTP_FORBIDDEN", 404: "HTTP_NOT_FOUND", 429: "HTTP_RATE_LIMITED"}.get(http_status)
+                or ("HTTP_SERVER_ERROR" if http_status is not None and http_status >= 500 else
+                    "PRINTIFY_PRODUCT_CREATE_FAILED" if operation == "create_product" else "PRINTIFY_UPLOAD_FAILED"))
+        self.http_status, self.error_code, self.safe_message = http_status, error_code, safe_message
+        super().__init__(code, diagnostic_message=f"Printify {operation} failed ({http_status or 'network'}, {error_code}): {safe_message}",
+            operation=f"printify.{operation}", stage="http_request", retryable=retryable,
+            context={"http_status": http_status, "provider_error_code": error_code},
+            suggested_action="Verify Printify configuration and use the error ID for diagnostics.")
 
 
 def token_status(path: Path = TOKEN_PATH) -> dict[str, Any]:

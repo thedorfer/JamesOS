@@ -282,7 +282,16 @@ def profile_store(client: PrintifyClient, shop_id: int, output_path: Path) -> di
 def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: bool) -> dict[str, Any]:
     if not confirmed: raise job_queue.JobQueueError("Listing generation requires explicit confirmation.")
     font_approval_path = composition_root / "font-selection-approval.json"
-    if (composition_root / "font-preview-runs").exists():
+    design_approval_path = composition_root / "design-selection-approval.json"
+    design_approval = None
+    if (composition_root / "design-runs").exists():
+        if not design_approval_path.is_file(): raise job_queue.JobQueueError("Approved v3 design concept is required before listing generation.")
+        design_approval = json.loads(design_approval_path.read_text(encoding="utf-8")); manifest_path = Path(design_approval["manifest_path"])
+        if _hash(manifest_path) != design_approval["concept_manifest_sha256"]: raise job_queue.JobQueueError("Approved design manifest SHA is stale.")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")); selected = next(item for item in manifest["concepts"] if item["concept_id"] == design_approval["concept_id"])
+        if _hash(Path(selected["png_path"])) != design_approval["selected_png_sha256"]: raise job_queue.JobQueueError("Approved design PNG SHA is stale.")
+        composition = {"composition_id": composition_root.name, "output_sha256": selected["png_sha256"]}; font_approval = None
+    elif (composition_root / "font-preview-runs").exists():
         if not font_approval_path.is_file(): raise job_queue.JobQueueError("Approved font/style selection is required before listing generation.")
         font_approval = json.loads(font_approval_path.read_text(encoding="utf-8")); manifest_path = Path(font_approval["manifest_path"])
         if _hash(manifest_path) != font_approval["manifest_sha256"]: raise job_queue.JobQueueError("Approved font manifest SHA is stale.")
@@ -292,7 +301,7 @@ def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: b
     else:
         composition_path = composition_root / "composition.json"; approval_path = composition_root / "composition-approval.json"
         if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved composition is required before listing generation.")
-        composition = json.loads(composition_path.read_text(encoding="utf-8")); font_approval = None; manifest = None; selected = None
+        composition = json.loads(composition_path.read_text(encoding="utf-8")); font_approval = None; design_approval = None; manifest = None; selected = None
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     listing = composition_root / "listing"; listing.mkdir(exist_ok=False)
     title = "Love Is Love Rainbow Heart Unisex Tee"
@@ -313,8 +322,10 @@ def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: b
         "approved_base_artwork_sha256": manifest.get("approved_base_artwork_sha256") if manifest else None,
         "selected_font_option_id": font_approval.get("font_option_id") if font_approval else None,
         "font_selection_approval_sha256": _hash(font_approval_path) if font_approval else None,
-        "style_manifest_sha256": font_approval.get("manifest_sha256") if font_approval else None,
-        "selected_composition_path": selected.get("composition_path") if selected else composition.get("output_path"),
+        "selected_design_concept_id": design_approval.get("concept_id") if design_approval else None,
+        "design_selection_approval_sha256": _hash(design_approval_path) if design_approval else None,
+        "style_manifest_sha256": (font_approval.get("manifest_sha256") if font_approval else design_approval.get("concept_manifest_sha256") if design_approval else None),
+        "selected_composition_path": (selected.get("composition_path") or selected.get("png_path")) if selected else composition.get("output_path"),
         "publish_status": "not_published", "order_status": "not_created", "provider_status": "not_ready",
         "human_approval_status": "not_approved", "editable": True}
     _write_json(listing / "listing-package.json", package); return package
@@ -330,7 +341,11 @@ def approve_listing(listing_root: Path, *, approved_by: str, confirmed: bool) ->
 def upload_composition(job_id: str, composition_id: str, *, client: PrintifyClient, confirmed: bool) -> dict[str, Any]:
     if not confirmed: raise job_queue.JobQueueError("Composition upload requires explicit confirmation.")
     evidence = printify_product._approved_evidence(job_id); root = evidence["job_root"] / "commerce" / "product-compositions" / composition_id
-    if (root / "font-preview-runs").exists():
+    if (root / "design-runs").exists():
+        approval_path = root / "design-selection-approval.json"
+        if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved v3 design concept is required before upload.")
+        approval = json.loads(approval_path.read_text(encoding="utf-8")); output = Path(approval["selected_png_path"]); output_sha = approval["selected_png_sha256"]
+    elif (root / "font-preview-runs").exists():
         approval_path = root / "font-selection-approval.json"
         if not approval_path.is_file(): raise job_queue.JobQueueError("Human-approved font composition is required before upload.")
         approval = json.loads(approval_path.read_text(encoding="utf-8")); output = Path(approval["selected_composition_path"])

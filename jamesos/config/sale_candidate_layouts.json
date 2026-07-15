@@ -1,0 +1,10 @@
+{
+  "layouts": [
+    {"concept_id":"top_bottom_badge","font_id":"coiny-regular","treatment_id":"cream_magenta_shadow","structure":"curved_top_and_bottom","heart_scale":0.91,"recommended":true},
+    {"concept_id":"stacked_groovy","font_id":"fredoka-semibold","treatment_id":"pink_cream_dimension","structure":"two_full_shaped_lines","heart_scale":0.82},
+    {"concept_id":"integrated_shadow","font_id":"lilita-one-regular","treatment_id":"white_pride_shadow","structure":"hierarchical_overlap","heart_scale":0.86},
+    {"concept_id":"circular_emblem","font_id":"bungee-regular","treatment_id":"rainbow_band","structure":"circular_tangent_text","heart_scale":0.72},
+    {"concept_id":"ribbon_caption","font_id":"chewy-regular","treatment_id":"teal_pink_retro","structure":"vector_ribbon_with_text","heart_scale":0.84},
+    {"concept_id":"minimal_editorial","font_id":"baloo2-extrabold","treatment_id":"cream_magenta_shadow","structure":"asymmetric_editorial","heart_scale":0.78}
+  ]
+}

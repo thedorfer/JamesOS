@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
 
 from jamesos.config import VAULT
 from jamesos.services import image_worker, job_queue, production_artifact, upscale_model_registry
+from jamesos.services.error_handler import cli_error, handle_error
 from jamesos.services.image_finisher import approve_concept_for_job, prepare_transparent_artifact_for_job
 from jamesos.services.image_postprocessor import inspect_generated_image
 
@@ -809,7 +810,8 @@ def main() -> int:
             args.report_path.parent.mkdir(parents=True, exist_ok=True)
             args.report_path.write_text(json.dumps(result, indent=2, sort_keys=True), encoding="utf-8")
     except Exception as exc:
-        print(json.dumps({"result": "failed", "error": str(exc), "report_path": str(args.report_path)}, indent=2))
+        envelope = handle_error(exc, operation="artwork_e2e_cli", context={"job_id": args.job_id, "report_path": str(args.report_path)})
+        print(json.dumps(cli_error(envelope), indent=2))
         return 1
     summary = {"result": result["result"], "test_job_id": result["test_job_id"], "report_path": str(args.report_path)}
     if args.mode == "live":

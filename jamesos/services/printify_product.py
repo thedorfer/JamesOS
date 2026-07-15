@@ -11,6 +11,7 @@ from typing import Any
 from PIL import Image
 
 from jamesos.integrations.printify_client import PrintifyClient, token_status
+from jamesos.core.errors import ArtifactIntegrityError
 from jamesos.services import job_queue, production_artifact
 
 
@@ -88,10 +89,10 @@ def _approved_evidence(job_id: str) -> dict[str, Any]:
     if approval != payload.get("final_artifact_approval") or approval.get("visual_review_result") != "passed":
         raise job_queue.JobQueueError("Final approval file and job state differ or visual review did not pass.")
     candidate_sha, metadata_sha, derivative_sha = _hash(candidate), _hash(metadata), _hash(derivative)
-    if candidate_sha != approval.get("approved_artifact_sha256"): raise job_queue.JobQueueError("Approved candidate SHA mismatch.")
-    if metadata_sha != approval.get("production_metadata_sha256"): raise job_queue.JobQueueError("Approved production metadata SHA mismatch.")
+    if candidate_sha != approval.get("approved_artifact_sha256"): raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH", diagnostic_message="Approved candidate SHA mismatch.", operation="printify.evidence", stage="candidate_sha", context={"job_id": job_id})
+    if metadata_sha != approval.get("production_metadata_sha256"): raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH", diagnostic_message="Approved production metadata SHA mismatch.", operation="printify.evidence", stage="metadata_sha", context={"job_id": job_id})
     derivative_evidence = approval.get("derivative_evidence") or {}
-    if derivative_sha != derivative_evidence.get("approved_artifact_sha256"): raise job_queue.JobQueueError("Approved derivative SHA mismatch.")
+    if derivative_sha != derivative_evidence.get("approved_artifact_sha256"): raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH", diagnostic_message="Approved derivative SHA mismatch.", operation="printify.evidence", stage="derivative_sha", context={"job_id": job_id})
     selected_strategy = production.get("selected_strategy") or "ai_upscale"
     strategy_evidence = approval.get("strategy_evidence")
     if strategy_evidence and strategy_evidence.get("selected_strategy") != selected_strategy:

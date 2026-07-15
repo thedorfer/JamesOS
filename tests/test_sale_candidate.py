@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from PIL import Image, ImageDraw
 
-from jamesos.services import job_queue, sale_candidate
+from jamesos.services import job_queue, sale_candidate, sale_candidate_vector
+from jamesos.core.errors import FontAcquisitionError, ValidationError
 
 
 class SaleCandidateTests(unittest.TestCase):
@@ -150,6 +151,116 @@ class SaleCandidateTests(unittest.TestCase):
             self.assertEqual(listing["composition_sha256"], first["selected_composition_sha256"])
             self.assertEqual(listing["style_manifest_sha256"], first["manifest_sha256"])
             self.assertEqual(listing["publish_status"], "not_published"); self.assertEqual(listing["order_status"], "not_created")
+
+    def test_font_acquisition_is_confirmed_restricted_and_records_license_sha(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaises(ValidationError) as denied:
+                sale_candidate_vector.acquire_fonts(confirmed=False, font_root=root / "fonts")
+            self.assertEqual(denied.exception.stage, "confirmation"); self.assertFalse(denied.exception.state["permanent_files_changed"])
+            config = {"approved_source_hosts": ["raw.githubusercontent.com"], "fonts": [{"font_id": "test-font",
+                "family": "Test Family", "style": "Regular", "license_type": "OFL-1.1", "license_display_name": "SIL Open Font License 1.1", "license_file_name": "OFL.txt",
+                "display": "Test Family Regular", "filename": "font.ttf", "source_repository": "test/fonts",
+                "approved_source_host": "raw.githubusercontent.com", "font_url": "http://unapproved.example/font.ttf",
+                "license_url": "https://raw.githubusercontent.com/OFL.txt"}]}
+            config_path = root / "fonts.json"; config_path.write_text(json.dumps(config), encoding="utf-8")
+            with self.assertRaises(FontAcquisitionError) as rejected:
+                sale_candidate_vector.acquire_fonts(confirmed=True, font_root=root / "bad", config_path=config_path, downloader=lambda _url: b"unused")
+            self.assertEqual(rejected.exception.stage, "preflight"); self.assertFalse((root / "bad").exists())
+            good = {**config, "fonts": [{**config["fonts"][0], "font_url": "https://raw.githubusercontent.com/font.ttf"}]}
+            config_path.write_text(json.dumps(good), encoding="utf-8")
+            fake_scan = Mock(stdout="Test Family|Regular")
+            def download(url): return b"SIL OPEN FONT LICENSE Version 1.1" if "OFL" in url else b"font-bytes"
+            with patch.object(sale_candidate_vector.subprocess, "run", return_value=fake_scan):
+                acquired = sale_candidate_vector.acquire_fonts(confirmed=True, font_root=root / "good", config_path=config_path, downloader=download)
+            record = acquired["fonts"][0]
+            self.assertEqual(record["font_sha256"], sha256(b"font-bytes").hexdigest())
+            self.assertEqual(record["license_sha256"], sha256(b"SIL OPEN FONT LICENSE Version 1.1").hexdigest())
+            self.assertTrue(Path(record["license_path"]).is_file())
+            manifest_path = Path(acquired["manifest_path"]); manifest_before = manifest_path.read_bytes()
+            unexpected = root / "good" / "operator-note.txt"; unexpected.write_text("retain", encoding="utf-8")
+            with patch.object(sale_candidate_vector.subprocess, "run", return_value=fake_scan):
+                repeated = sale_candidate_vector.acquire_fonts(confirmed=True, font_root=root / "good", config_path=config_path, downloader=download)
+            self.assertEqual(repeated["result"], "already_acquired"); self.assertTrue(repeated["idempotent"])
+            self.assertEqual(manifest_path.read_bytes(), manifest_before); self.assertEqual(unexpected.read_text(), "retain")
+            self.assertTrue(any("operator-note.txt" in warning for warning in repeated["warnings"]))
+            stale = json.loads(manifest_path.read_text(encoding="utf-8")); stale["fonts"][0]["font_sha256"] = "0" * 64
+            manifest_path.write_text(json.dumps(stale), encoding="utf-8")
+            with patch.object(sale_candidate_vector.subprocess, "run", return_value=fake_scan):
+                repaired = sale_candidate_vector.acquire_fonts(confirmed=True, font_root=root / "good", config_path=config_path, downloader=download)
+            self.assertEqual(repaired["result"], "acquired"); self.assertFalse(repaired["fonts"][0]["reused_existing_file"])
+            Path(repaired["fonts"][0]["license_path"]).unlink()
+            with patch.object(sale_candidate_vector.subprocess, "run", return_value=fake_scan):
+                relicensed = sale_candidate_vector.acquire_fonts(confirmed=True, font_root=root / "good", config_path=config_path, downloader=download)
+            self.assertEqual(relicensed["result"], "acquired"); self.assertFalse(relicensed["fonts"][0]["reused_existing_file"])
+
+    def test_font_config_has_per_font_licenses_and_correct_chewy_sources(self):
+        config = json.loads(sale_candidate_vector.FONT_CONFIG.read_text(encoding="utf-8"))
+        self.assertTrue(sale_candidate_vector.preflight_font_config()["valid"])
+        self.assertNotIn("license", config)
+        chewy = next(x for x in config["fonts"] if x["font_id"] == "chewy-regular")
+        self.assertEqual(chewy["license_type"], "Apache-2.0"); self.assertEqual(chewy["license_file_name"], "LICENSE.txt")
+        self.assertIn("/apache/chewy/", chewy["font_url"]); self.assertTrue(chewy["license_url"].endswith("/LICENSE.txt"))
+        self.assertEqual({x["license_type"] for x in config["fonts"] if x is not chewy}, {"OFL-1.1"})
+
+    def test_font_acquisition_failure_is_transactional_and_cleans_staging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); font_root = root / "fonts"; font_root.mkdir(); sentinel = font_root / "keep.txt"; sentinel.write_text("keep")
+            calls = 0
+            def failing(_url):
+                nonlocal calls; calls += 1
+                if calls == 7:
+                    response = Mock(status_code=404); error = __import__("requests").HTTPError("404"); error.response = response; raise error
+                return self.FONT.read_bytes() if calls % 2 else b"SIL OPEN FONT LICENSE Version 1.1"
+            with patch.object(sale_candidate_vector.subprocess, "run", return_value=Mock(stdout="Coiny Fredoka Lilita One|Regular SemiBold")):
+                with self.assertRaises(FontAcquisitionError) as raised:
+                    sale_candidate_vector.acquire_fonts(confirmed=True, font_root=font_root, downloader=failing)
+            result = raised.exception
+            self.assertEqual(result.code, "FONT_RESOURCE_NOT_FOUND"); self.assertEqual(result.context["http_status"], 404)
+            self.assertEqual(sentinel.read_text(), "keep"); self.assertFalse(list(font_root.glob(".font-acquisition-*")))
+            self.assertFalse((font_root / "acquired-fonts.json").exists()); self.assertFalse(result.state["permanent_files_changed"])
+
+    def test_v3_generates_six_structural_vector_concepts_and_design_approval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); evidence = self.fixture(root); before = evidence["candidate"].read_bytes(); font_root = root / "fonts"; font_root.mkdir()
+            font_config = json.loads(sale_candidate_vector.FONT_CONFIG.read_text(encoding="utf-8"))
+            records = [{**{key: value for key, value in item.items() if key not in ("variation_axes", "axis_order")}, "font_path": str(self.FONT), "font_sha256": sha256(self.FONT.read_bytes()).hexdigest(),
+                "license_path": str(root / "OFL.txt"), "license_sha256": "license", "verified_family": item["family"], "verified_style": item["style"]}
+                for item in font_config["fonts"]]
+            (font_root / "acquired-fonts.json").write_text(json.dumps({"fonts": records}), encoding="utf-8")
+            profile_path = root / "profile.json"; profile_path.write_text(json.dumps({"profile_sha256": "profile"}), encoding="utf-8")
+            with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
+                manifest = sale_candidate_vector.generate_design_concepts("job", "love-is-love-v3", phrase="LOVE IS LOVE",
+                    confirmed=True, font_root=font_root, run_id="design-001")
+                composition_root = evidence["job_root"] / "commerce" / "product-compositions" / "love-is-love-v3"
+                with self.assertRaisesRegex(job_queue.JobQueueError, "design concept"):
+                    sale_candidate.generate_listing(composition_root, profile_path, confirmed=True)
+                first = sale_candidate_vector.approve_design_concept("job", "love-is-love-v3", design_run_id="design-001",
+                    concept_id="top_bottom_badge", approved_by="James", confirmed=True)
+                repeat = sale_candidate_vector.approve_design_concept("job", "love-is-love-v3", design_run_id="design-001",
+                    concept_id="top_bottom_badge", approved_by="James", confirmed=True)
+                with self.assertRaisesRegex(job_queue.JobQueueError, "cannot be silently replaced"):
+                    sale_candidate_vector.approve_design_concept("job", "love-is-love-v3", design_run_id="design-001",
+                        concept_id="minimal_editorial", approved_by="James", confirmed=True)
+                listing = sale_candidate.generate_listing(composition_root, profile_path, confirmed=True)
+            self.assertEqual(evidence["candidate"].read_bytes(), before); self.assertEqual(len(manifest["concepts"]), 6)
+            self.assertEqual(len({item["layout_structure"] for item in manifest["concepts"]}), 6)
+            self.assertTrue(Path(manifest["design_comparison_sheet"]["path"]).is_file()); self.assertTrue(Path(manifest["garment_comparison_sheet"]["path"]).is_file())
+            for concept in manifest["concepts"]:
+                self.assertTrue(Path(concept["svg_path"]).is_file()); self.assertEqual(len(concept["svg_sha256"]), 64)
+                self.assertTrue(Path(concept["png_path"]).is_file()); self.assertEqual(len(concept["png_sha256"]), 64)
+                self.assertEqual(concept["phrase"], "LOVE IS LOVE"); self.assertEqual(concept["status"], "needs_human_design_selection")
+                self.assertTrue(Path(concept["thumbnail"]["path"]).is_file())
+                with Image.open(concept["png_path"]) as image: self.assertEqual(image.size, (4500, 5400)); self.assertEqual(image.mode, "RGBA")
+                self.assertEqual(set(concept["previews"]), {"black", "dark_heather", "white"})
+            straight = next(x for x in manifest["concepts"] if x["concept_id"] == "stacked_groovy")
+            curved = next(x for x in manifest["concepts"] if x["concept_id"] == "top_bottom_badge")
+            self.assertTrue(straight["full_line_text_shaping"]); self.assertTrue(curved["glyph_bounds"])
+            self.assertTrue(all("tangent_rotation_degrees" in glyph for glyph in curved["glyph_bounds"] if glyph.get("character") != " "))
+            self.assertTrue(repeat["idempotent"]); self.assertEqual(repeat["approved_at"], first["approved_at"])
+            self.assertEqual(listing["selected_design_concept_id"], "top_bottom_badge")
+            self.assertEqual(listing["composition_sha256"], first["selected_png_sha256"])
+            self.assertEqual(listing["publish_status"], "not_published")
 
 
 if __name__ == "__main__": unittest.main()
