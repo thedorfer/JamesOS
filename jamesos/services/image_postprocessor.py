@@ -7,6 +7,52 @@ from PIL import Image
 
 TARGET_WIDTH = 4500
 TARGET_HEIGHT = 5400
+EXTERIOR_WHITE_THRESHOLD = 240
+EXTERIOR_NEUTRAL_TOLERANCE = 15
+EXTERIOR_MIN_IMAGE_FRACTION = 0.10
+EXTERIOR_MIN_BORDER_FRACTION = 0.50
+
+
+def _connected_near_white_exterior(image: Image.Image) -> dict[str, Any]:
+    """Measure a likely removable background without treating enclosed white as exterior."""
+    rgb = image.convert("RGB")
+    rgb.thumbnail((512, 512), Image.Resampling.NEAREST)
+    width, height = rgb.size
+    pixels = rgb.load()
+
+    def eligible(x: int, y: int) -> bool:
+        red, green, blue = pixels[x, y]
+        return (
+            min(red, green, blue) >= EXTERIOR_WHITE_THRESHOLD
+            and max(red, green, blue) - min(red, green, blue) <= EXTERIOR_NEUTRAL_TOLERANCE
+        )
+
+    border = {(x, 0) for x in range(width)} | {(x, height - 1) for x in range(width)}
+    border |= {(0, y) for y in range(height)} | {(width - 1, y) for y in range(height)}
+    seeds = [point for point in border if eligible(*point)]
+    seen = set(seeds)
+    pending = list(seeds)
+    while pending:
+        x, y = pending.pop()
+        for neighbor in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+            nx, ny = neighbor
+            if 0 <= nx < width and 0 <= ny < height and neighbor not in seen and eligible(nx, ny):
+                seen.add(neighbor)
+                pending.append(neighbor)
+    image_fraction = len(seen) / max(1, width * height)
+    border_fraction = len(seeds) / max(1, len(border))
+    return {
+        "connected_near_white_pixel_count": len(seen),
+        "connected_near_white_image_fraction": image_fraction,
+        "near_white_border_fraction": border_fraction,
+        "near_white_threshold": EXTERIOR_WHITE_THRESHOLD,
+        "neutral_tolerance": EXTERIOR_NEUTRAL_TOLERANCE,
+        "sample_dimensions": [width, height],
+        "likely_connected_exterior_background": (
+            image_fraction >= EXTERIOR_MIN_IMAGE_FRACTION
+            and border_fraction >= EXTERIOR_MIN_BORDER_FRACTION
+        ),
+    }
 
 
 def inspect_generated_image(image_path: str | Path, transparency_required: bool = False) -> dict[str, Any]:
@@ -57,9 +103,12 @@ def inspect_generated_image(image_path: str | Path, transparency_required: bool 
             else:
                 fully_opaque = True
 
-            background_removal_required = False
-            if transparency_required:
-                background_removal_required = not meaningful_transparency_present and (not alpha_channel_present or fully_opaque)
+            exterior = _connected_near_white_exterior(image)
+            background_removal_required = (
+                not meaningful_transparency_present
+                and fully_opaque
+                and exterior["likely_connected_exterior_background"]
+            )
             production_canvas_required = width < TARGET_WIDTH or height < TARGET_HEIGHT
             visual_review_required = True
             readiness_statuses: list[str] = ["generated_concept"]
@@ -88,6 +137,7 @@ def inspect_generated_image(image_path: str | Path, transparency_required: bool 
                 "alpha_channel_present": alpha_channel_present,
                 "meaningful_transparency_present": meaningful_transparency_present,
                 "fully_opaque": fully_opaque,
+                "exterior_background_analysis": exterior,
                 "target_width": TARGET_WIDTH,
                 "target_height": TARGET_HEIGHT,
                 "background_removal_required": background_removal_required,

@@ -104,7 +104,8 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertFalse(analysis["meaningful_transparency_present"])
             self.assertTrue(analysis["fully_opaque"])
             self.assertTrue(analysis["production_canvas_required"])
-            self.assertFalse(analysis["background_removal_required"])
+            self.assertTrue(analysis["background_removal_required"])
+            self.assertTrue(analysis["exterior_background_analysis"]["likely_connected_exterior_background"])
             self.assertTrue(analysis["visual_review_required"])
             self.assertFalse(analysis["final_print_ready"])
             self.assertEqual(analysis["provider_status"], "not_ready")
@@ -120,7 +121,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertTrue(analysis["alpha_channel_present"])
             self.assertFalse(analysis["meaningful_transparency_present"])
             self.assertTrue(analysis["fully_opaque"])
-            self.assertFalse(analysis["background_removal_required"])
+            self.assertTrue(analysis["background_removal_required"])
 
     def test_rgb_image_with_transparency_required_requires_background_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,11 +147,23 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
             self.assertFalse(analysis["background_removal_required"])
 
-    def test_opaque_image_with_transparency_required_false_does_not_require_removal(self) -> None:
+    def test_opaque_image_without_likely_exterior_does_not_require_removal(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "opaque_required_false.png"
-            Image.new("RGBA", (1024, 1024), (255, 255, 255, 255)).save(path)
+            image = Image.new("RGBA", (1024, 1024), (20, 60, 100, 255))
+            image.save(path)
             analysis = image_postprocessor.inspect_generated_image(path, transparency_required=False)
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_enclosed_white_artwork_alone_does_not_require_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "enclosed-white.png"
+            image = Image.new("RGB", (256, 256), (20, 60, 100))
+            for x in range(96, 160):
+                for y in range(96, 160):
+                    image.putpixel((x, y), (255, 255, 255))
+            image.save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
             self.assertFalse(analysis["background_removal_required"])
 
     def test_inspect_generated_image_reports_real_transparency(self) -> None:
