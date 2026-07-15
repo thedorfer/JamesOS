@@ -1,0 +1,46 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "{{input_filename}}"
+    }
+  },
+  "2": {
+    "class_type": "UpscaleModelLoader",
+    "inputs": {
+      "model_name": "{{upscale_model_name}}"
+    }
+  },
+  "3": {
+    "class_type": "ImageUpscaleWithModel",
+    "inputs": {
+      "upscale_model": ["2", 0],
+      "image": ["1", 0]
+    }
+  },
+  "4": {
+    "class_type": "ResizeImageMaskNode",
+    "inputs": {
+      "input": ["1", 1],
+      "resize_type": "scale dimensions",
+      "resize_type.width": "{{output_width}}",
+      "resize_type.height": "{{output_height}}",
+      "resize_type.crop": "disabled",
+      "scale_method": "lanczos"
+    }
+  },
+  "5": {
+    "class_type": "JoinImageWithAlpha",
+    "inputs": {
+      "image": ["3", 0],
+      "alpha": ["4", 0]
+    }
+  },
+  "6": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["5", 0],
+      "filename_prefix": "JamesOS/upscale-model-validation"
+    }
+  }
+}

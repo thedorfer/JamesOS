@@ -83,6 +83,8 @@ from jamesos.services.design_variation_service import (
     score_design_run,
 )
 from jamesos.services.image_finisher import approve_concept_for_job, prepare_transparent_artifact_for_job
+from jamesos.services.upscale_model_registry import list_upscale_models
+from jamesos.services.upscale_validator import validate_upscale_model_for_job
 from jamesos.services.image_worker import (
     analyze_output_image_for_job,
     comfy_response_for_job,
@@ -231,6 +233,11 @@ class TestImageJobRequest(BaseModel):
 
 class ConceptApprovalRequest(BaseModel):
     approved_by: str = "api_user"
+
+
+class UpscaleValidationRequest(BaseModel):
+    confirmed: bool = False
+    upscale_model_name: str | None = None
 
 
 class PhoneEventRequest(BaseModel):
@@ -800,6 +807,36 @@ def image_worker_prepare_transparent_artifact_route(job_id: str, x_jamesos_key: 
         from jamesos.services.image_worker import structured_error
 
         return structured_error(exc, job_id=job_id)
+
+
+@app.post("/image-worker/jobs/{job_id}/validate-upscale-model")
+def image_worker_validate_upscale_model_route(
+    job_id: str,
+    req: UpscaleValidationRequest,
+    x_jamesos_key: str | None = Header(default=None),
+):
+    require_key(x_jamesos_key)
+    try:
+        return validate_upscale_model_for_job(
+            job_id,
+            upscale_model_name=req.upscale_model_name,
+            confirmed=req.confirmed,
+        )
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
+
+
+@app.get("/image-worker/upscale-models")
+def image_worker_upscale_models_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return list_upscale_models()
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc)
 
 
 @app.get("/image-worker/jobs/{job_id}/comfy-response")

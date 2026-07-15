@@ -1,0 +1,10 @@
+models:
+  RealESRGAN_x2plus.pth:
+    model_name: RealESRGAN_x2plus.pth
+    scale_factor: 2
+    model_family: Real-ESRGAN
+    intended_use: general artwork
+    enabled: true
+    validated: false
+    default: true
+    validation_output_filename: realesrgan-x2-validation.png
