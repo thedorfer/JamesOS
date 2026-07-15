@@ -9,6 +9,7 @@ from typing import Any
 from jamesos.config import VAULT
 from jamesos.services import asset_library, comfyui_client, model_registry, prompt_library, style_registry, workflow_manager
 from jamesos.services.brand_registry import get_brand, get_default_brand
+from jamesos.services.image_postprocessor import inspect_generated_image
 from jamesos.services.job_queue import (
     JobQueueError,
     append_job_log,
@@ -722,6 +723,25 @@ def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> Non
     path.write_text(json.dumps(data, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _transparency_required_from_payload(payload: dict[str, Any]) -> bool:
+    artifact = payload.get("design_artifact") if isinstance(payload.get("design_artifact"), dict) else {}
+    if isinstance(artifact, dict):
+        value = artifact.get("transparent_background_required")
+        if value is not None:
+            return bool(value)
+    plan = payload.get("image_plan") if isinstance(payload.get("image_plan"), dict) else {}
+    artifact = plan.get("design_artifact") if isinstance(plan.get("design_artifact"), dict) else {}
+    if isinstance(artifact, dict):
+        value = artifact.get("transparent_background_required")
+        if value is not None:
+            return bool(value)
+    creative_spec = payload.get("creative_spec") if isinstance(payload.get("creative_spec"), dict) else {}
+    value = creative_spec.get("transparent")
+    if value is not None:
+        return bool(value)
+    return False
+
+
 def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_paths: list[str]) -> dict[str, Any]:
     payload = dict(job_payload)
     artifact = payload.get("design_artifact") if isinstance(payload.get("design_artifact"), dict) else {}
@@ -729,6 +749,7 @@ def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_
     if not artifact and isinstance(plan.get("design_artifact"), dict):
         artifact = dict(plan["design_artifact"])
     provider = str(artifact.get("provider_target") or payload.get("pod_provider") or plan.get("pod_provider") or "printify").lower()
+    analysis = inspect_generated_image(image_path, transparency_required=_transparency_required_from_payload(payload))
     artifact = {
         **_design_artifact(
             provider=provider,
@@ -742,7 +763,7 @@ def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_
         **artifact,
         "source_image_path": image_path,
         "output_image_paths": image_paths,
-        "manual_upload_ready": True,
+        "manual_upload_ready": False,
         "provider_target": provider,
         "quality_stage": artifact.get("quality_stage") or "production_candidate",
         "output_status": artifact.get("output_status") or "production_candidate",
@@ -751,12 +772,15 @@ def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_
     payload["output_image_paths"] = image_paths
     payload["generated_assets"] = image_paths
     payload["generated_at"] = datetime.now().isoformat(timespec="seconds")
-    payload["image_status"] = "generated"
+    payload["image_status"] = "generated_concept"
+    payload["design_status"] = "needs_design_review"
     payload["status"] = "ready_for_pod_review"
-    payload["provider_status"] = "manual_upload_ready"
+    payload["provider_status"] = analysis["provider_status"]
+    payload["printify_status"] = analysis["printify_status"]
+    payload["final_print_ready"] = analysis["final_print_ready"]
+    payload["print_readiness_analysis"] = analysis
     payload["design_artifact"] = artifact
     payload["pod_provider"] = provider
-    payload["printify_status"] = "ready_for_printify_review" if provider == "printify" and image_path else "not_applicable"
     payload["comfyui_execution"] = False
     payload["printify_execution"] = False
     payload["etsy_execution"] = False
@@ -777,6 +801,56 @@ def _creative_stage_updates(job_payload: dict[str, Any], image_path: str, image_
         details["output_image_path"] = image_path
         details["generated_assets"] = image_paths
     return payload
+
+
+def analyze_output_image_for_job(job_id: str) -> dict[str, Any]:
+    job = get_job(job_id)
+    payload = _payload_details(job)
+    image_path = payload.get("output_image_path") or (payload.get("output_image_paths") or [None])[0]
+    analysis = inspect_generated_image(image_path or "", transparency_required=_transparency_required_from_payload(payload))
+    if isinstance(image_path, str) and image_path:
+        payload["output_image_path"] = image_path
+    if isinstance(payload.get("output_image_paths"), list):
+        payload["output_image_paths"] = payload["output_image_paths"]
+    payload["print_readiness_analysis"] = analysis
+    payload["image_status"] = "generated_concept"
+    payload["design_status"] = "needs_design_review"
+    payload["provider_status"] = analysis["provider_status"]
+    payload["printify_status"] = analysis["printify_status"]
+    payload["final_print_ready"] = analysis["final_print_ready"]
+    update_job_payload(job_id, payload)
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "image_path": image_path or "",
+        "provider_status": analysis["provider_status"],
+        "printify_status": analysis["printify_status"],
+        "final_print_ready": analysis["final_print_ready"],
+        "print_readiness_analysis": {
+            key: analysis[key]
+            for key in [
+                "image_path",
+                "exists",
+                "file_size_bytes",
+                "format",
+                "width",
+                "height",
+                "mode",
+                "alpha_channel_present",
+                "meaningful_transparency_present",
+                "fully_opaque",
+                "target_width",
+                "target_height",
+                "background_removal_required",
+                "production_canvas_required",
+                "visual_review_required",
+                "final_print_ready",
+                "readiness_statuses",
+                "provider_status",
+                "printify_status",
+            ]
+        },
+    }
 
 
 def execute_approved_image_job(job_id: str) -> dict[str, Any]:

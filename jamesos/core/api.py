@@ -83,6 +83,7 @@ from jamesos.services.design_variation_service import (
     score_design_run,
 )
 from jamesos.services.image_worker import (
+    analyze_output_image_for_job,
     comfy_response_for_job,
     create_test_image_job,
     execute_approved_image_job,
@@ -752,6 +753,17 @@ def image_worker_prepared_workflow_route(job_id: str, x_jamesos_key: str | None 
     require_key(x_jamesos_key)
     try:
         return prepared_workflow_for_job(job_id)
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
+
+
+@app.post("/image-worker/jobs/{job_id}/analyze-output")
+def image_worker_analyze_output_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try:
+        return analyze_output_image_for_job(job_id)
     except JobQueueError as exc:
         from jamesos.services.image_worker import structured_error
 

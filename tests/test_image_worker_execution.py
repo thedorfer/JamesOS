@@ -6,7 +6,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from PIL import Image
+
 from jamesos.services import comfyui_client, image_worker, job_queue, model_registry, pod_provider_registry, prompt_library, workflow_manager
+from jamesos.services import image_postprocessor
 
 
 class ImageWorkerExecutionTests(unittest.TestCase):
@@ -88,6 +91,111 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             "height": 512,
         }
 
+    def test_inspect_generated_image_reports_rgb_png(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rgb.png"
+            Image.new("RGB", (768, 768), color=(255, 255, 255)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path)
+            self.assertTrue(analysis["exists"])
+            self.assertEqual(analysis["width"], 768)
+            self.assertEqual(analysis["height"], 768)
+            self.assertEqual(analysis["mode"], "RGB")
+            self.assertFalse(analysis["alpha_channel_present"])
+            self.assertFalse(analysis["meaningful_transparency_present"])
+            self.assertTrue(analysis["fully_opaque"])
+            self.assertTrue(analysis["production_canvas_required"])
+            self.assertFalse(analysis["background_removal_required"])
+            self.assertTrue(analysis["visual_review_required"])
+            self.assertFalse(analysis["final_print_ready"])
+            self.assertEqual(analysis["provider_status"], "not_ready")
+            self.assertEqual(analysis["printify_status"], "not_ready")
+            self.assertIn("needs_production_canvas", analysis["readiness_statuses"])
+            self.assertIn("needs_design_review", analysis["readiness_statuses"])
+
+    def test_inspect_generated_image_reports_fully_opaque_rgba_png(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "opaque_rgba.png"
+            Image.new("RGBA", (1024, 1024), (255, 255, 255, 255)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path)
+            self.assertTrue(analysis["alpha_channel_present"])
+            self.assertFalse(analysis["meaningful_transparency_present"])
+            self.assertTrue(analysis["fully_opaque"])
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_rgb_image_with_transparency_required_requires_background_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rgb_required.png"
+            Image.new("RGB", (768, 768), color=(255, 255, 255)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertTrue(analysis["background_removal_required"])
+            self.assertIn("needs_background_removal", analysis["readiness_statuses"])
+
+    def test_fully_opaque_rgba_with_transparency_required_requires_background_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "opaque_rgba_required.png"
+            Image.new("RGBA", (1024, 1024), (255, 255, 255, 255)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertTrue(analysis["background_removal_required"])
+
+    def test_genuinely_transparent_rgba_with_transparency_required_does_not(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transparent_rgba_required.png"
+            image = Image.new("RGBA", (1024, 1024), (255, 255, 255, 0))
+            image.putpixel((0, 0), (255, 255, 255, 128))
+            image.save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_opaque_image_with_transparency_required_false_does_not_require_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "opaque_required_false.png"
+            Image.new("RGBA", (1024, 1024), (255, 255, 255, 255)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=False)
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_inspect_generated_image_reports_real_transparency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "transparent_rgba.png"
+            image = Image.new("RGBA", (1024, 1024), (255, 255, 255, 0))
+            image.putpixel((0, 0), (255, 255, 255, 128))
+            image.save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertTrue(analysis["alpha_channel_present"])
+            self.assertTrue(analysis["meaningful_transparency_present"])
+            self.assertFalse(analysis["fully_opaque"])
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_inspect_generated_image_reports_small_transparent_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "small_transparent.png"
+            Image.new("RGBA", (300, 300), (255, 255, 255, 0)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertTrue(analysis["production_canvas_required"])
+            self.assertFalse(analysis["background_removal_required"])
+
+    def test_inspect_generated_image_reports_target_size_transparent_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "target_transparent.png"
+            Image.new("RGBA", (4500, 5400), (255, 255, 255, 0)).save(path)
+            analysis = image_postprocessor.inspect_generated_image(path, transparency_required=True)
+            self.assertFalse(analysis["production_canvas_required"])
+            self.assertFalse(analysis["background_removal_required"])
+            self.assertFalse(analysis["final_print_ready"])
+
+    def test_inspect_generated_image_reports_missing_image(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            analysis = image_postprocessor.inspect_generated_image(Path(tmp) / "missing.png")
+            self.assertFalse(analysis["exists"])
+            self.assertEqual(analysis["provider_status"], "not_ready")
+            self.assertEqual(analysis["printify_status"], "not_ready")
+
+    def test_analyze_output_image_for_job_handles_job_without_output_image(self) -> None:
+        job = job_queue.create_job("image_generation", {"image_plan": {"prompt": "x"}})
+        result = image_worker.analyze_output_image_for_job(job["job_id"])
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["provider_status"], "not_ready")
+        self.assertFalse(result["final_print_ready"])
+
     def test_cannot_execute_unapproved_job(self) -> None:
         def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
             job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
@@ -136,19 +244,20 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertTrue((image_path.parent / "prepared_workflow.json").exists())
             processed = job_queue.get_job(job["job_id"])
             self.assertEqual(processed["status"], "processed")
-            self.assertEqual(processed["payload"]["image_status"], "generated")
-            self.assertEqual(processed["payload"]["status"], "ready_for_pod_review")
-            self.assertEqual(processed["payload"]["provider_status"], "manual_upload_ready")
+            self.assertEqual(processed["payload"]["image_status"], "generated_concept")
+            self.assertEqual(processed["payload"]["design_status"], "needs_design_review")
+            self.assertEqual(processed["payload"]["provider_status"], "not_ready")
+            self.assertEqual(processed["payload"]["printify_status"], "not_ready")
             self.assertIn("output_image_paths", processed["payload"])
             artifact = processed["payload"]["design_artifact"]
             self.assertEqual(artifact["source_image_path"], result["image_path"])
             self.assertEqual(artifact["quality_stage"], "production_candidate")
-            self.assertTrue(artifact["manual_upload_ready"])
-            self.assertTrue(artifact["background_removal_required"])
+            self.assertFalse(artifact["manual_upload_ready"])
             self.assertTrue(processed["payload"]["generated_at"])
             self.assertFalse(result["printify_execution_enabled"])
             self.assertFalse(result["etsy_execution_enabled"])
             self.assertEqual(result["workflow_path"], str(root / "WorkflowTemplates" / "print_design_basic.api.json"))
+            self.assertIn("print_readiness_analysis", processed["payload"])
 
         self.run_with_worker(scenario)
 
