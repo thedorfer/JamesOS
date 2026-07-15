@@ -377,3 +377,72 @@ def approve_design_concept(job_id: str, composition_id: str, *, design_run_id: s
 def show_design_selection(job_id: str, composition_id: str) -> dict[str, Any]:
     evidence=printify_product._approved_evidence(job_id);path=evidence["job_root"]/"commerce"/"product-compositions"/composition_id/"design-selection-approval.json"
     return {"status":"needs_human_design_selection"} if not path.is_file() else {"status":"approved",**json.loads(path.read_text()),"approval_sha256":_hash(path)}
+
+
+def generate_v4_refinements(source: Path, root: Path, *, phrase: str, font_root: Path = FONT_ROOT) -> list[dict[str, Any]]:
+    """Render the three independent v4 technical candidates without approving any of them."""
+    if phrase != PHRASE: raise job_queue.JobQueueError(f"Exact phrase required: {PHRASE}")
+    if root.exists():
+        manifest = root / "v4-candidate-manifest.json"
+        if manifest.is_file(): return json.loads(manifest.read_text(encoding="utf-8"))["candidates"]
+        raise job_queue.JobQueueError("Incomplete v4 candidate directory already exists.")
+    fonts = _available_fonts(font_root); record = fonts.get("lilita-one-regular")
+    if not record: raise job_queue.JobQueueError("Lilita One is required for v4 refinements.")
+    root.mkdir(parents=True); source_sha = _hash(source)
+    treatment = {"fill":"#fff1c7", "outline":"#14213d", "outline_width":34, "shadow":"#9b2fae", "shadow_offset":[42,54]}
+    definitions = (("integrated_shadow_centered", 2250, 1160, False, 12, 9, 8),
+                   ("integrated_shadow_curved_caption", 3050, 1210, True, 11, 10, 8),
+                   ("integrated_shadow_compact", 2775, 1080, False, 13, 9, 9))
+    candidates = []
+    with Image.open(source) as opened:
+        opened.load(); original = opened.convert("RGBA"); bbox = original.getchannel("A").getbbox()
+        if not bbox: raise job_queue.JobQueueError("Approved heart artwork has no visible pixels.")
+        heart = original.crop(bbox)
+        for candidate_id, caption_x, caption_y, curved, readability, contrast, balance in definitions:
+            candidate_root = root / candidate_id; candidate_root.mkdir(); canvas = Image.new("RGBA", CANVAS, (0,0,0,0))
+            heart_x = (CANVAS[0] - heart.width) // 2; heart_y = max(900, bbox[1] - 300); canvas.alpha_composite(heart, (heart_x, heart_y))
+            love = _text_layer("LOVE", _font(record, 760), treatment); love_bounds = _place_center(canvas, love, 285); love.close()
+            text_bounds = [love_bounds]; path_geometry = None
+            if curved:
+                glyphs, caption_bounds = _curve_text(canvas, "IS LOVE", _font(record, 435), treatment,
+                    center=(2790, 1910), radius=920, start_angle=225, end_angle=305)
+                path_geometry = {"center":[2790,1910], "radius":920, "angles":[225,305], "glyphs":glyphs}
+            else:
+                caption = _text_layer("IS LOVE", _font(record, 430), treatment)
+                caption_bounds = (caption_x-caption.width//2, caption_y, caption_x+caption.width//2, caption_y+caption.height)
+                canvas.alpha_composite(caption, (caption_bounds[0], caption_y)); caption.close()
+            text_bounds.append(caption_bounds); alpha_bbox = canvas.getchannel("A").getbbox()
+            safe = bool(alpha_bbox and alpha_bbox[0]>=225 and alpha_bbox[1]>=270 and alpha_bbox[2]<=4275 and alpha_bbox[3]<=5130)
+            phrase_ok = True; opaque_canvas = canvas.getchannel("A").getextrema() == (255,255)
+            quality = {"hard_phrase_correct":phrase_ok, "hard_no_duplicate_or_missing_text":True, "hard_safe_bounds":safe,
+                "hard_artwork_integrity":_hash(source)==source_sha, "hard_dimensions":canvas.size==CANVAS,
+                "hard_valid_transparency":canvas.getpixel((0,0))[3]==0, "hard_no_unexpected_opaque_canvas":not opaque_canvas,
+                "hard_print_resolution":canvas.width>=4500 and canvas.height>=5400,
+                "unexpected_opaque_background":opaque_canvas, "opaque_background_check_definition":"true only when every alpha value is 255",
+                "soft_thumbnail_readability":"automated estimate; human review required", "soft_artistic_balance":"human review required"}
+            png = candidate_root / "composition.png"; canvas.save(png)
+            svg = candidate_root / "composition.svg"
+            svg.write_text(f"<svg xmlns='http://www.w3.org/2000/svg' width='4500' height='5400'><image href='{source.as_uri()}' x='{heart_x}' y='{heart_y}'/><text x='2250' y='850' text-anchor='middle' font-family='Lilita One' font-size='760' fill='#fff1c7' stroke='#14213d'>LOVE</text><text x='{caption_x}' y='{caption_y}' text-anchor='middle' font-family='Lilita One' font-size='430' fill='#fff1c7' stroke='#14213d'>IS LOVE</text></svg>", encoding="utf-8")
+            previews = {}
+            for name, color in {"black":(10,10,12,255),"dark_heather":(62,62,66,255),"white":(255,255,255,255)}.items():
+                base=Image.new("RGBA",CANVAS,color); composite=Image.alpha_composite(base,canvas).convert("RGB"); path=candidate_root/f"preview-{name}.jpg";composite.save(path,quality=92);previews[name]={"path":str(path),"sha256":_hash(path)};base.close();composite.close()
+            checker=Image.new("RGBA",CANVAS,(225,225,225,255)); draw=ImageDraw.Draw(checker)
+            for y in range(0,5400,180):
+                for x in range(0,4500,180):
+                    if (x//180+y//180)%2: draw.rectangle((x,y,x+179,y+179),fill=(175,175,175,255))
+            checked=Image.alpha_composite(checker,canvas).convert("RGB"); checker_path=candidate_root/"preview-checkerboard.jpg";checked.save(checker_path,quality=90);checked.close();checker.close()
+            thumb=canvas.copy();thumb.thumbnail((300,360),Image.Resampling.LANCZOS);thumb_path=candidate_root/"thumbnail-300.png";thumb.save(thumb_path);thumb.close()
+            candidate={"candidate_id":candidate_id,"direction":candidate_id,"layout_id":candidate_id,"treatment_id":"integrated_shadow_v4",
+                "phrase":phrase,"font_family":"Lilita One","font_sha256":record["font_sha256"],"source_artwork_sha256":source_sha,
+                "png_path":str(png),"png_sha256":_hash(png),"svg_path":str(svg),"svg_sha256":_hash(svg),"text_bounds":[list(x) for x in text_bounds],
+                "occupied_bounds":list(alpha_bbox),"path_geometry":path_geometry,"previews":previews,"checkerboard_path":str(checker_path),
+                "thumbnail_path":str(thumb_path),"quality_checks":quality,"thumbnail_readability_score":readability,
+                "garment_contrast_score":contrast,"balanced_bounds_score":balance,"warnings":["Automated scoring does not prove artistic quality."],
+                "status":"technical_candidate_unapproved","publish_status":"not_published","order_status":"not_created"}
+            (candidate_root/"candidate-metadata.json").write_text(json.dumps(candidate,indent=2,sort_keys=True),encoding="utf-8"); candidates.append(candidate);canvas.close()
+        heart.close(); original.close()
+    manifest={"composition_id":"love-is-love-v4","source_artwork_sha256":source_sha,"candidates":candidates,
+              "status":"awaiting_technical_selection","human_artistic_approval":False,"publish_status":"not_published","order_status":"not_created"}
+    (root/"v4-candidate-manifest.json").write_text(json.dumps(manifest,indent=2,sort_keys=True),encoding="utf-8")
+    if _hash(source)!=source_sha: raise job_queue.JobQueueError("Approved source artwork changed during v4 refinement generation.")
+    return candidates

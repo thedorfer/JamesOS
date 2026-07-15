@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+from hashlib import sha256
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import Mock, patch
+
+from PIL import Image, ImageDraw
+
+from jamesos.core.errors import ValidationError
+from jamesos.services import error_handler, product_orchestrator, sale_candidate_vector
+
+
+class ProductOrchestratorTests(unittest.TestCase):
+    FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+
+    def fixture(self, root: Path):
+        source = root / "approved.png"; image = Image.new("RGBA", (4500, 5400), (0,0,0,0))
+        ImageDraw.Draw(image).ellipse((1300,1200,3200,3600), fill=(235,50,120,255)); image.save(source); image.close()
+        return {"candidate":source,"candidate_sha":sha256(source.read_bytes()).hexdigest(),"approval_sha":"approval",
+                "production":{"canvas_dimensions":[4500,5400]}}
+
+    @staticmethod
+    def candidates(evidence, root: Path, _brief):
+        root.mkdir(parents=True, exist_ok=True); result=[]
+        for index, name in enumerate(("integrated_shadow_centered","integrated_shadow_curved_caption","integrated_shadow_compact")):
+            path=root/f"{name}.png";path.write_bytes(evidence["candidate"].read_bytes())
+            checks={"hard_phrase_correct":True,"hard_no_duplicate_or_missing_text":True,"hard_safe_bounds":True,
+                    "hard_artwork_integrity":True,"hard_dimensions":True,"hard_valid_transparency":True,
+                    "hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"soft_warning":"human review"}
+            result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":sha256(path.read_bytes()).hexdigest(),
+                "svg_path":str(path.with_suffix('.svg')),"svg_sha256":str(index)*64,"source_artwork_sha256":evidence["candidate_sha"],
+                "font_sha256":"f"*64,"layout_id":name,"treatment_id":"integrated_shadow_v4","quality_checks":checks,
+                "thumbnail_path":str(path),"thumbnail_readability_score":10+index,"garment_contrast_score":9,"balanced_bounds_score":8,
+                "warnings":["Automated scoring does not prove artistic quality."]})
+        return result
+
+    def orchestrator(self, root: Path, evidence, client=None):
+        adapters=product_orchestrator.Adapters(evidence=lambda _job:evidence,candidates=self.candidates,client_factory=lambda:client)
+        return product_orchestrator.ProductOrchestrator(root/root.name,adapters)
+
+    def test_prompt_normalization_and_listing_defaults(self):
+        brief=product_orchestrator.normalize_prompt('Create a playful LOVE IS LOVE retro shirt on black and white. Price it at $24.99.')
+        self.assertEqual(brief["exact_text"],"LOVE IS LOVE");self.assertEqual(brief["price_cents"],2499)
+        self.assertEqual(brief["blank"],"Bella+Canvas 3001");self.assertIn("Black",brief["garment_colors"])
+
+    def test_three_real_v4_refinements_and_correct_opaque_check(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);font_root=root/"fonts";font_root.mkdir()
+            manifest={"fonts":[{"font_id":"lilita-one-regular","family":"Lilita One","style":"Regular","font_path":str(self.FONT),
+                "font_sha256":sha256(self.FONT.read_bytes()).hexdigest(),"license_path":str(self.FONT),"license_sha256":"x"*64}]}
+            (font_root/"acquired-fonts.json").write_text(json.dumps(manifest))
+            candidates=sale_candidate_vector.generate_v4_refinements(evidence["candidate"],root/"v4",phrase="LOVE IS LOVE",font_root=font_root)
+            self.assertEqual({x["candidate_id"] for x in candidates},{"integrated_shadow_centered","integrated_shadow_curved_caption","integrated_shadow_compact"})
+            self.assertTrue(all(not x["quality_checks"]["unexpected_opaque_background"] for x in candidates))
+            self.assertEqual(sha256(evidence["candidate"].read_bytes()).hexdigest(),evidence["candidate_sha"])
+            self.assertTrue(all(set(x["previews"])=={"black","dark_heather","white"} for x in candidates))
+
+    def test_local_stages_persist_then_confirmation_failure_is_resumable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);orchestrator=self.orchestrator(root,evidence)
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
+                state=orchestrator.create(prompt="LOVE IS LOVE retro shirt",source_job_id="source",shop_id=9437076,job_id="job")
+            self.assertEqual(state["stage"],"failed");self.assertIn("error_id",state["last_error"])
+            self.assertIn("listing_ready",{x["stage"] for x in state["transitions"]});self.assertEqual(state["brief"],orchestrator.load("job")["brief"])
+            approval=state["evidence"]["selection"]["approval"]
+            self.assertEqual(approval["approved_by"],"JamesOS automated quality gate");self.assertFalse(approval["human_artistic_approval"])
+            self.assertEqual(state["evidence"]["listing"]["selected_design_sha256"],state["evidence"]["selection"]["selected"]["png_sha256"])
+
+    def test_hard_blocker_stops_before_printify_and_soft_warning_is_retained(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);client=Mock()
+            def blocked(ev,path,brief):
+                values=self.candidates(ev,path,brief)
+                for value in values:value["quality_checks"]["hard_safe_bounds"]=False
+                return values
+            adapters=product_orchestrator.Adapters(evidence=lambda _:evidence,candidates=blocked,client_factory=lambda:client)
+            orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
+                state=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="blocked")
+            self.assertEqual(state["stage"],"failed");client.upload_image_contents.assert_not_called()
+            self.assertEqual(state["evidence"]["candidates"][0]["quality_checks"]["soft_warning"],"human review")
+
+    def test_confirmed_draft_resume_reuses_remote_ids_and_never_publishes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);client=Mock()
+            client.upload_image_contents.return_value={"id":"upload-1"}
+            client.get_variants.return_value=[{"id":101,"options":{"size":"S","color":"Black"}}]
+            client.create_product.return_value={"id":"draft-1","images":[{"src":"https://mock/image.jpg","variant_ids":[101]}]}
+            client.get_product.return_value={"id":"draft-1","images":[{"src":"https://mock/image.jpg","variant_ids":[101]}]}
+            client.timeout=(1,1);client.session.get.return_value=Mock(content=b"mockup");client.session.get.return_value.raise_for_status.return_value=None
+            orchestrator=self.orchestrator(root,evidence,client)
+            state=orchestrator.create(prompt="LOVE IS LOVE black shirt size S",source_job_id="source",shop_id=9437076,
+                garment_colors=["Black"],sizes=["S"],confirm_printify_draft=True,job_id="live-mocked")
+            self.assertEqual(state["stage"],"awaiting_human_approval");self.assertEqual(state["publish_status"],"not_published");self.assertEqual(state["order_status"],"not_created")
+            transitions=len(state["transitions"]);resumed=orchestrator.resume("live-mocked",confirm_printify_draft=True)
+            self.assertEqual(len(resumed["transitions"]),transitions);self.assertEqual(client.upload_image_contents.call_count,1);self.assertEqual(client.create_product.call_count,1)
+            self.assertNotEqual(resumed["evidence"]["draft"]["printify_product_id"],product_orchestrator.PROTECTED_PRODUCT_ID)
+            report=orchestrator.report("live-mocked");text=report.read_text();self.assertIn("DRAFT · NOT PUBLISHED · NO ORDER CREATED",text);self.assertIn("LOVE IS LOVE",text)
+
+
+if __name__ == "__main__":unittest.main()
