@@ -1,0 +1,10 @@
+production_target:
+  canvas_width: 4500
+  canvas_height: 5400
+  safe_margin_percent: 5
+  horizontal_alignment: center
+  vertical_alignment: center
+  output_mode: RGBA
+  transparent_background: true
+  target_authority: jamesos_default_not_provider_verified
+  placement_resize_method: lanczos

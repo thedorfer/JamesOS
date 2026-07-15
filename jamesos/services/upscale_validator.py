@@ -8,7 +8,7 @@ import tempfile
 import time
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter
 
 from jamesos.config import VAULT
 from jamesos.services import comfyui_client
@@ -75,37 +75,36 @@ def _validate_halo_settings(bleed_iterations: int, alpha_threshold: int, alpha_r
 def prepare_halo_safe_rgb(
     source: Image.Image, *, bleed_iterations: int = DEFAULT_BLEED_ITERATIONS, alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD
 ) -> Image.Image:
-    """Return RGB with a bounded, deterministic 8-neighbor color bleed under alpha."""
+    """Return RGB with bounded deterministic 8-neighbor color propagation under alpha.
+
+    Pillow-native 3x3 dilation keeps memory bounded for production-size stages. Channel
+    maxima are used only for newly reached hidden pixels; reliable artwork is untouched.
+    """
     _validate_halo_settings(bleed_iterations, alpha_threshold, DEFAULT_ALPHA_RESIZE_METHOD)
     rgba = source.convert("RGBA")
-    width, height = rgba.size
-    pixels = list(rgba.get_flattened_data())
-    reliable = bytearray(1 if pixel[3] >= alpha_threshold else 0 for pixel in pixels)
-    colors = [(pixel[0], pixel[1], pixel[2]) if reliable[index] else (0, 0, 0) for index, pixel in enumerate(pixels)]
-
+    alpha = rgba.getchannel("A")
+    reliable = alpha.point(lambda value: 255 if value >= alpha_threshold else 0, mode="L")
+    source_rgb = rgba.convert("RGB")
+    prepared = Image.new("RGB", rgba.size, (0, 0, 0))
+    prepared.paste(source_rgb, mask=reliable)
+    source_rgb.close()
+    alpha.close()
+    rgba.close()
+    dilation = ImageFilter.MaxFilter(3)
     for _ in range(bleed_iterations):
-        additions: list[tuple[int, tuple[int, int, int]]] = []
-        for index in range(width * height):
-            if reliable[index]:
-                continue
-            x, y = index % width, index // width
-            neighbors: list[tuple[int, int, int]] = []
-            for ny in range(max(0, y - 1), min(height, y + 2)):
-                for nx in range(max(0, x - 1), min(width, x + 2)):
-                    neighbor = ny * width + nx
-                    if neighbor != index and reliable[neighbor]:
-                        neighbors.append(colors[neighbor])
-            if neighbors:
-                count = len(neighbors)
-                additions.append((index, tuple(sum(color[channel] for color in neighbors) // count for channel in range(3))))
-        if not additions:
+        expanded = reliable.filter(dilation)
+        frontier = ImageChops.subtract(expanded, reliable)
+        if frontier.getbbox() is None:
+            frontier.close()
+            expanded.close()
             break
-        for index, color in additions:
-            colors[index] = color
-            reliable[index] = 1
-
-    prepared = Image.new("RGB", rgba.size)
-    prepared.putdata(colors)
+        propagated = prepared.filter(dilation)
+        prepared.paste(propagated, mask=frontier)
+        propagated.close()
+        frontier.close()
+        reliable.close()
+        reliable = expanded
+    reliable.close()
     return prepared
 
 

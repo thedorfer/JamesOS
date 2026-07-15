@@ -85,6 +85,7 @@ from jamesos.services.design_variation_service import (
 from jamesos.services.image_finisher import approve_concept_for_job, prepare_transparent_artifact_for_job
 from jamesos.services.upscale_model_registry import list_upscale_models
 from jamesos.services.upscale_validator import validate_upscale_model_for_job
+from jamesos.services.production_artifact import approve_transparent_artifact_for_job, prepare_production_artifact_for_job
 from jamesos.services.image_worker import (
     analyze_output_image_for_job,
     comfy_response_for_job,
@@ -241,6 +242,16 @@ class UpscaleValidationRequest(BaseModel):
     bleed_iterations: int | None = None
     alpha_threshold: int | None = None
     alpha_resize_method: str | None = None
+
+
+class TransparentArtifactApprovalRequest(BaseModel):
+    approved_by: str = "api_user"
+
+
+class ProductionArtifactRequest(BaseModel):
+    confirmed: bool = False
+    upscale_model_name: str | None = None
+    target_overrides: dict[str, Any] | None = None
 
 
 class PhoneEventRequest(BaseModel):
@@ -806,6 +817,42 @@ def image_worker_prepare_transparent_artifact_route(job_id: str, x_jamesos_key: 
     require_key(x_jamesos_key)
     try:
         return prepare_transparent_artifact_for_job(job_id)
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
+
+
+@app.post("/image-worker/jobs/{job_id}/approve-transparent-artifact")
+def image_worker_approve_transparent_artifact_route(
+    job_id: str,
+    req: TransparentArtifactApprovalRequest | None = None,
+    x_jamesos_key: str | None = Header(default=None),
+):
+    require_key(x_jamesos_key)
+    try:
+        approved_by = (req.approved_by if req else "api_user").strip() or "api_user"
+        return approve_transparent_artifact_for_job(job_id, approved_by=approved_by)
+    except JobQueueError as exc:
+        from jamesos.services.image_worker import structured_error
+
+        return structured_error(exc, job_id=job_id)
+
+
+@app.post("/image-worker/jobs/{job_id}/prepare-production-artifact")
+def image_worker_prepare_production_artifact_route(
+    job_id: str,
+    req: ProductionArtifactRequest,
+    x_jamesos_key: str | None = Header(default=None),
+):
+    require_key(x_jamesos_key)
+    try:
+        return prepare_production_artifact_for_job(
+            job_id,
+            upscale_model_name=req.upscale_model_name,
+            confirmed=req.confirmed,
+            target_overrides=req.target_overrides,
+        )
     except JobQueueError as exc:
         from jamesos.services.image_worker import structured_error
 
