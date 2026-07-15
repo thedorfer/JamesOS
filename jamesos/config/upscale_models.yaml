@@ -5,6 +5,13 @@ models:
     model_family: Real-ESRGAN
     intended_use: general artwork
     enabled: true
-    validated: false
+    validated: true
+    validated_model_sha256: 49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb
+    validation_job_id: 20260714-212815-f6c92984
+    validation_output_sha256: 98c04855cef3eda22809bb3ac35429f4747073b679823f2a5a3fc6a9763e7bd2
+    validated_at: "2026-07-15T09:46:10-05:00"
+    preferred_alpha_resize_method: lanczos
+    preferred_edge_bleed_iterations: 16
+    preferred_edge_bleed_alpha_threshold: 128
     default: true
     validation_output_filename: realesrgan-x2-validation.png

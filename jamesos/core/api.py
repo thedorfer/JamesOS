@@ -238,9 +238,9 @@ class ConceptApprovalRequest(BaseModel):
 class UpscaleValidationRequest(BaseModel):
     confirmed: bool = False
     upscale_model_name: str | None = None
-    bleed_iterations: int = 16
-    alpha_threshold: int = 128
-    alpha_resize_method: str = "lanczos"
+    bleed_iterations: int | None = None
+    alpha_threshold: int | None = None
+    alpha_resize_method: str | None = None
 
 
 class PhoneEventRequest(BaseModel):

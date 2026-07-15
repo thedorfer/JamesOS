@@ -100,6 +100,24 @@ def list_upscale_models(
     models: list[dict[str, Any]] = []
     for name, config in configured.items():
         discovered = installed_by_name.get(name, {})
+        configured_validated = bool(config.get("validated", False))
+        validated_model_sha256 = str(config.get("validated_model_sha256") or "")
+        installed_sha256 = str(discovered.get("sha256", ""))
+        if not configured_validated:
+            effective_validated = False
+            validation_reason = "not_validated"
+        elif not validated_model_sha256:
+            effective_validated = False
+            validation_reason = "validated_hash_missing"
+        elif not discovered.get("exists", False):
+            effective_validated = False
+            validation_reason = "model_missing"
+        elif installed_sha256 != validated_model_sha256:
+            effective_validated = False
+            validation_reason = "model_hash_mismatch"
+        else:
+            effective_validated = True
+            validation_reason = "model_hash_match"
         models.append({
             "model_name": str(config.get("model_name") or name),
             "file_path": discovered.get("file_path", ""),
@@ -110,7 +128,17 @@ def list_upscale_models(
             "model_family": str(config.get("model_family") or "unknown"),
             "intended_use": str(config.get("intended_use") or "manual review"),
             "enabled": bool(config.get("enabled", False)),
-            "validated": bool(config.get("validated", False)),
+            "validated": effective_validated,
+            "configured_validated": configured_validated,
+            "production_approved": effective_validated,
+            "validation_reason": validation_reason,
+            "validated_model_sha256": validated_model_sha256,
+            "validation_job_id": str(config.get("validation_job_id") or ""),
+            "validation_output_sha256": str(config.get("validation_output_sha256") or ""),
+            "validated_at": str(config.get("validated_at") or ""),
+            "preferred_alpha_resize_method": str(config.get("preferred_alpha_resize_method") or "lanczos"),
+            "preferred_edge_bleed_iterations": config.get("preferred_edge_bleed_iterations", 16),
+            "preferred_edge_bleed_alpha_threshold": config.get("preferred_edge_bleed_alpha_threshold", 128),
             "default": bool(config.get("default", False)),
             "validation_output_filename": str(config.get("validation_output_filename") or "upscale-model-validation.png"),
             "configured": True,
@@ -126,6 +154,16 @@ def list_upscale_models(
             "intended_use": "unconfigured; manual review required",
             "enabled": False,
             "validated": False,
+            "configured_validated": False,
+            "production_approved": False,
+            "validation_reason": "not_configured",
+            "validated_model_sha256": "",
+            "validation_job_id": "",
+            "validation_output_sha256": "",
+            "validated_at": "",
+            "preferred_alpha_resize_method": "lanczos",
+            "preferred_edge_bleed_iterations": 16,
+            "preferred_edge_bleed_alpha_threshold": 128,
             "default": False,
             "validation_output_filename": "upscale-model-validation.png",
             "configured": False,

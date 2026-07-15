@@ -183,14 +183,22 @@ def _write_managed_workflow(workflow: dict[str, Any]) -> Path:
 
 def validate_upscale_model_for_job(
     job_id: str, *, upscale_model_name: str | None = None, confirmed: bool = False,
-    bleed_iterations: int = DEFAULT_BLEED_ITERATIONS, alpha_threshold: int = DEFAULT_ALPHA_THRESHOLD,
-    alpha_resize_method: str = DEFAULT_ALPHA_RESIZE_METHOD,
+    bleed_iterations: int | None = None, alpha_threshold: int | None = None,
+    alpha_resize_method: str | None = None,
 ) -> dict[str, Any]:
     if not confirmed:
         raise JobQueueError("Upscale-model validation requires explicit confirmation.")
-    _validate_halo_settings(bleed_iterations, alpha_threshold, alpha_resize_method)
     source_path = _source_for_job(job_id)
     selected_model = upscale_model_registry.select_upscale_model(upscale_model_name)
+    preferred_settings = {
+        "alpha_resize_method": selected_model["preferred_alpha_resize_method"],
+        "edge_bleed_iterations": selected_model["preferred_edge_bleed_iterations"],
+        "edge_bleed_alpha_threshold": selected_model["preferred_edge_bleed_alpha_threshold"],
+    }
+    bleed_iterations = preferred_settings["edge_bleed_iterations"] if bleed_iterations is None else bleed_iterations
+    alpha_threshold = preferred_settings["edge_bleed_alpha_threshold"] if alpha_threshold is None else alpha_threshold
+    alpha_resize_method = preferred_settings["alpha_resize_method"] if alpha_resize_method is None else alpha_resize_method
+    _validate_halo_settings(bleed_iterations, alpha_threshold, alpha_resize_method)
     scale_factor = selected_model["scale_factor"]
     input_content = source_path.read_bytes()
     input_sha256 = _hash_bytes(input_content)
@@ -283,6 +291,12 @@ def validate_upscale_model_for_job(
             "model_intended_use": selected_model["intended_use"], "model_validated": False,
             "edge_bleed_iterations": bleed_iterations, "edge_bleed_alpha_threshold": alpha_threshold,
             "alpha_resize_method": alpha_resize_method, **halo_diagnostics(rgba_output),
+            "configured_preferred_settings": preferred_settings,
+            "actual_validation_settings": {
+                "alpha_resize_method": alpha_resize_method,
+                "edge_bleed_iterations": bleed_iterations,
+                "edge_bleed_alpha_threshold": alpha_threshold,
+            },
             "execution_time_seconds": time.perf_counter() - started, "comfyui_prompt_id": prompt_id,
             "workflow_path": str(MANAGED_WORKFLOW_PATH), "provider_status": "not_ready",
             "printify_status": "not_ready", "final_print_ready": False,

@@ -49,6 +49,13 @@ class UpscaleValidatorTests(unittest.TestCase):
                     "model_name": self.ALTERNATE_MODEL, "scale_factor": 2, "model_family": "test family",
                     "intended_use": "artwork testing", "enabled": True, "validated": True, "default": False,
                     "validation_output_filename": "alternate-x2-validation.png",
+                    "validated_model_sha256": sha256(b"alternate model").hexdigest(),
+                    "validation_job_id": "approved-job",
+                    "validation_output_sha256": "abc123",
+                    "validated_at": "2026-07-15T09:46:10-05:00",
+                    "preferred_alpha_resize_method": "nearest-exact",
+                    "preferred_edge_bleed_iterations": 3,
+                    "preferred_edge_bleed_alpha_threshold": 200,
                 },
                 self.FOUR_X_MODEL: {
                     "model_name": self.FOUR_X_MODEL, "scale_factor": 4, "model_family": "future family",
@@ -231,6 +238,85 @@ class UpscaleValidatorTests(unittest.TestCase):
             self.assertTrue(selected["validated"])
         self.run_in_sandbox(scenario)
 
+    def test_matching_validated_model_hash_reports_production_approved(self) -> None:
+        def scenario(root, generated):
+            selected = upscale_model_registry.select_upscale_model(self.ALTERNATE_MODEL)
+            self.assertTrue(selected["validated"])
+            self.assertTrue(selected["production_approved"])
+            self.assertEqual(selected["validation_reason"], "model_hash_match")
+            self.assertEqual(selected["validated_model_sha256"], selected["sha256"])
+        self.run_in_sandbox(scenario)
+
+    def test_changed_validated_model_hash_reports_mismatch_and_not_approved(self) -> None:
+        def scenario(root, generated):
+            model_path = root / "ComfyUI" / "models" / "upscale_models" / self.ALTERNATE_MODEL
+            model_path.write_bytes(b"changed model")
+            inventory = upscale_model_registry.list_upscale_models()
+            selected = next(item for item in inventory["models"] if item["model_name"] == self.ALTERNATE_MODEL)
+            self.assertFalse(selected["validated"])
+            self.assertFalse(selected["production_approved"])
+            self.assertEqual(selected["validation_reason"], "model_hash_mismatch")
+            self.assertNotEqual(selected["sha256"], selected["validated_model_sha256"])
+        self.run_in_sandbox(scenario)
+
+    def test_preferred_model_settings_become_validator_defaults(self) -> None:
+        def scenario(root, generated):
+            _, result, _ = self.run_validation(generated, upscale_model_name=self.ALTERNATE_MODEL)
+            expected = {
+                "alpha_resize_method": "nearest-exact",
+                "edge_bleed_iterations": 3,
+                "edge_bleed_alpha_threshold": 200,
+            }
+            self.assertEqual(result["configured_preferred_settings"], expected)
+            self.assertEqual(result["actual_validation_settings"], expected)
+            self.assertEqual(result["alpha_resize_method"], "nearest-exact")
+            self.assertEqual(result["edge_bleed_iterations"], 3)
+            self.assertEqual(result["edge_bleed_alpha_threshold"], 200)
+        self.run_in_sandbox(scenario)
+
+    def test_explicit_validation_settings_override_model_preferences(self) -> None:
+        def scenario(root, generated):
+            _, result, _ = self.run_validation(
+                generated,
+                upscale_model_name=self.ALTERNATE_MODEL,
+                alpha_resize_method="lanczos",
+                bleed_iterations=7,
+                alpha_threshold=111,
+            )
+            self.assertEqual(result["configured_preferred_settings"], {
+                "alpha_resize_method": "nearest-exact",
+                "edge_bleed_iterations": 3,
+                "edge_bleed_alpha_threshold": 200,
+            })
+            self.assertEqual(result["actual_validation_settings"], {
+                "alpha_resize_method": "lanczos",
+                "edge_bleed_iterations": 7,
+                "edge_bleed_alpha_threshold": 111,
+            })
+        self.run_in_sandbox(scenario)
+
+    def test_inventory_exposes_validation_evidence_and_preferred_settings(self) -> None:
+        def scenario(root, generated):
+            inventory = upscale_model_registry.list_upscale_models()
+            model = next(item for item in inventory["configured_models"] if item["model_name"] == self.ALTERNATE_MODEL)
+            self.assertEqual(model["validation_job_id"], "approved-job")
+            self.assertEqual(model["validation_output_sha256"], "abc123")
+            self.assertEqual(model["validated_at"], "2026-07-15T09:46:10-05:00")
+            self.assertEqual(model["preferred_alpha_resize_method"], "nearest-exact")
+            self.assertEqual(model["preferred_edge_bleed_iterations"], 3)
+            self.assertEqual(model["preferred_edge_bleed_alpha_threshold"], 200)
+        self.run_in_sandbox(scenario)
+
+    def test_unvalidated_and_unknown_models_are_not_production_approved(self) -> None:
+        def scenario(root, generated):
+            default = upscale_model_registry.select_upscale_model(self.MODEL)
+            self.assertFalse(default["validated"])
+            self.assertFalse(default["production_approved"])
+            self.assertEqual(default["validation_reason"], "not_validated")
+            with self.assertRaises(job_queue.JobQueueError):
+                upscale_model_registry.select_upscale_model("UnknownProductionModel.pth")
+        self.run_in_sandbox(scenario)
+
     def test_registry_rejects_unknown_paths_missing_and_disabled_models(self) -> None:
         def scenario(root, generated):
             rejected = (
@@ -329,7 +415,7 @@ class UpscaleValidatorTests(unittest.TestCase):
             persisted = json.loads(Path(result["output_path"]).with_suffix(".json").read_text(encoding="utf-8"))
             self.assertEqual(persisted["model_name"], self.ALTERNATE_MODEL)
             self.assertEqual(persisted["model_sha256"], result["model_sha256"])
-            submitted = source.parent / "upscale-tests" / "submitted-upscale-workflow-halo-safe-lanczos-bleed-16-threshold-128.json"
+            submitted = source.parent / "upscale-tests" / "submitted-upscale-workflow-halo-safe-nearest-exact-bleed-3-threshold-200.json"
             self.assertEqual(json.loads(submitted.read_text(encoding="utf-8"))["2"]["inputs"]["model_name"], self.ALTERNATE_MODEL)
         self.run_in_sandbox(scenario)
 

@@ -18,9 +18,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run one confirmed configurable upscale-model validation pass through local ComfyUI.")
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--upscale-model-name", default=None, help="Configured model name; defaults to the registry default.")
-    parser.add_argument("--bleed-iterations", type=int, default=16)
-    parser.add_argument("--alpha-threshold", type=int, default=128)
-    parser.add_argument("--alpha-resize-method", choices=("nearest-exact", "lanczos"), default="lanczos")
+    parser.add_argument("--bleed-iterations", type=int, default=None, help="Override the selected model's preferred setting.")
+    parser.add_argument("--alpha-threshold", type=int, default=None, help="Override the selected model's preferred setting.")
+    parser.add_argument("--alpha-resize-method", choices=("nearest-exact", "lanczos"), default=None, help="Override the selected model's preferred setting.")
     parser.add_argument("--confirm", action="store_true", help="Required acknowledgement that this queues one local validation pass.")
     args = parser.parse_args()
     try:
