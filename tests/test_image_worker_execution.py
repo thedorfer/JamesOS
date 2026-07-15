@@ -9,7 +9,7 @@ from unittest.mock import patch
 from PIL import Image
 
 from jamesos.services import comfyui_client, image_worker, job_queue, model_registry, pod_provider_registry, prompt_library, workflow_manager
-from jamesos.services import image_postprocessor
+from jamesos.services import image_finisher, image_postprocessor
 
 
 class ImageWorkerExecutionTests(unittest.TestCase):
@@ -258,6 +258,207 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertFalse(result["etsy_execution_enabled"])
             self.assertEqual(result["workflow_path"], str(root / "WorkflowTemplates" / "print_design_basic.api.json"))
             self.assertIn("print_readiness_analysis", processed["payload"])
+
+    def test_prepare_transparent_artifact_creates_derivative_without_touching_source(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job(
+                "image_generation",
+                {"image_plan": self.image_plan(workflow, checkpoint), "design_artifact": {"transparent_background_required": True}},
+            )
+            source_path = root / "source.png"
+            image = Image.new("RGBA", (256, 256), (255, 255, 255, 255))
+            image.putpixel((0, 0), (255, 255, 255, 255))
+            image.putpixel((120, 120), (10, 20, 30, 255))
+            image.putpixel((20, 20), (255, 255, 255, 255))
+            image.save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path), "output_image_paths": [str(source_path)]})
+
+            source_bytes_before = source_path.read_bytes()
+
+            with self.assertRaises(job_queue.JobQueueError):
+                image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+            self.assertEqual(job_queue.get_job(job["job_id"])["payload"].get("concept_approved"), None)
+
+            image_finisher.approve_concept_for_job(job["job_id"], approved_by="tester")
+            self.assertFalse(job_queue.get_job(job["job_id"])["approved"])
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+
+            self.assertEqual(result["status"], "ok")
+            artifact_path = Path(result["artifact_path"])
+            self.assertTrue(artifact_path.exists())
+            self.assertEqual(artifact_path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(artifact_path.parent, image_worker._job_output_folder(job["job_id"]))
+            self.assertEqual(source_path.read_bytes(), source_bytes_before)
+            with Image.open(artifact_path) as artifact:
+                self.assertEqual(artifact.size, image.size)
+                self.assertEqual(artifact.getpixel((0, 0))[3], 0)
+                self.assertEqual(artifact.getpixel((120, 120)), (10, 20, 30, 255))
+            processed = job_queue.get_job(job["job_id"])
+            payload = processed["payload"]
+            self.assertTrue(payload["concept_approved"])
+            self.assertEqual(payload["design_artifact"]["transparent_artifact_path"], str(artifact_path))
+            self.assertEqual(payload["design_artifact"]["source_image_path"], str(source_path))
+            self.assertFalse(payload["final_print_ready"])
+            self.assertEqual(payload["provider_status"], "not_ready")
+            self.assertEqual(payload["printify_status"], "not_ready")
+
+        self.run_with_worker(scenario)
+
+    def test_transparent_finishing_preserves_enclosed_white_detail(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "enclosed-white.png"
+            image = Image.new("RGBA", (9, 9), (255, 255, 255, 255))
+            for y in range(2, 7):
+                for x in range(2, 7):
+                    image.putpixel((x, y), (20, 30, 40, 255))
+            image.putpixel((4, 4), (255, 255, 255, 255))
+            image.save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+
+            with Image.open(result["artifact_path"]) as artifact:
+                self.assertEqual(artifact.getpixel((0, 0))[3], 0)
+                self.assertEqual(artifact.getpixel((4, 4)), (255, 255, 255, 255))
+
+        self.run_with_worker(scenario)
+
+    def test_transparent_finishing_refuses_opaque_result_without_persisting_success(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "opaque.png"
+            Image.new("RGB", (8, 8), (10, 20, 30)).save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+            artifact_path = image_worker._job_output_folder(job["job_id"]) / "transparent_artifact.png"
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            artifact_path.write_bytes(b"stale derivative")
+            image_worker.update_job_payload(job["job_id"], {
+                "transparent_artifact_path": str(artifact_path),
+                "finishing_metadata": {"status": "stale success"},
+            })
+
+            with self.assertRaises(job_queue.JobQueueError):
+                image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+
+            payload = job_queue.get_job(job["job_id"])["payload"]
+            self.assertNotIn("transparent_artifact_path", payload)
+            self.assertNotIn("finishing_metadata", payload)
+            self.assertFalse(artifact_path.exists())
+
+        self.run_with_worker(scenario)
+
+    def test_concept_approval_records_approver_and_timestamp(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+
+            result = image_finisher.approve_concept_for_job(job["job_id"], approved_by="phase2-reviewer")
+
+            payload = job_queue.get_job(job["job_id"])["payload"]
+            self.assertTrue(payload["concept_approved"])
+            self.assertEqual(payload["concept_approved_by"], "phase2-reviewer")
+            self.assertTrue(payload["concept_approved_at"])
+            self.assertEqual(result["approved_by"], "phase2-reviewer")
+            self.assertEqual(result["approved_at"], payload["concept_approved_at"])
+
+        self.run_with_worker(scenario)
+
+    def test_transparent_finishing_preserves_colored_artwork_touching_edge(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "edge-art.png"
+            image = Image.new("RGB", (8, 8), (255, 255, 255))
+            image.putpixel((0, 3), (220, 20, 30))
+            image.putpixel((1, 3), (220, 20, 30))
+            image.save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+
+            with Image.open(result["artifact_path"]) as artifact:
+                self.assertEqual(artifact.getpixel((0, 3)), (220, 20, 30, 255))
+                self.assertEqual(artifact.getpixel((0, 0))[3], 0)
+
+        self.run_with_worker(scenario)
+
+    def test_already_transparent_interior_does_not_seed_unrelated_white_removal(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "already-transparent.png"
+            image = Image.new("RGBA", (7, 7), (20, 30, 40, 255))
+            image.putpixel((3, 3), (20, 30, 40, 0))
+            image.putpixel((3, 2), (255, 255, 255, 255))
+            image.save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"])
+
+            with Image.open(result["artifact_path"]) as artifact:
+                self.assertEqual(artifact.getpixel((3, 3))[3], 0)
+                self.assertEqual(artifact.getpixel((3, 2)), (255, 255, 255, 255))
+            self.assertEqual(result["finishing_metadata"]["removed_background_pixel_count"], 0)
+
+        self.run_with_worker(scenario)
+
+    def test_finishing_validates_threshold_and_neutral_tolerance(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+            with self.assertRaises(job_queue.JobQueueError):
+                image_finisher.prepare_transparent_artifact_for_job(job["job_id"], white_threshold=256)
+            with self.assertRaises(job_queue.JobQueueError):
+                image_finisher.prepare_transparent_artifact_for_job(job["job_id"], neutral_tolerance=-1)
+
+        self.run_with_worker(scenario)
+
+    def test_configurable_white_threshold_changes_candidate_behavior(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "threshold.png"
+            Image.new("RGB", (8, 8), (230, 230, 230)).save(source_path)
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+
+            with self.assertRaises(job_queue.JobQueueError):
+                image_finisher.prepare_transparent_artifact_for_job(job["job_id"], white_threshold=240)
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"], white_threshold=220)
+
+            self.assertEqual(result["finishing_metadata"]["white_threshold"], 220)
+            self.assertEqual(result["finishing_metadata"]["removed_background_pixel_count"], 64)
+
+        self.run_with_worker(scenario)
+
+    def test_finishing_metadata_contains_hashes_pixel_counts_and_required_fields(self) -> None:
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            source_path = root / "metadata.png"
+            image = Image.new("RGB", (6, 5), (255, 255, 255))
+            image.putpixel((3, 2), (10, 20, 30))
+            image.save(source_path)
+            source_bytes = source_path.read_bytes()
+            image_worker.update_job_payload(job["job_id"], {"output_image_path": str(source_path)})
+            image_finisher.approve_concept_for_job(job["job_id"])
+
+            result = image_finisher.prepare_transparent_artifact_for_job(job["job_id"], neutral_tolerance=8)
+
+            metadata = result["finishing_metadata"]
+            required = {
+                "source_image_path", "derived_image_path", "source_unchanged", "source_sha256_before",
+                "source_sha256_after", "width", "height", "output_mode", "alpha_channel_present",
+                "meaningful_transparency_present", "transparent_pixel_count", "opaque_pixel_count",
+                "removed_background_pixel_count", "processing_method", "white_threshold",
+                "neutral_tolerance", "visual_review_required", "final_print_ready",
+            }
+            self.assertTrue(required.issubset(metadata))
+            self.assertEqual(metadata["source_sha256_before"], metadata["source_sha256_after"])
+            self.assertEqual(metadata["transparent_pixel_count"] + metadata["opaque_pixel_count"], 30)
+            self.assertTrue(metadata["source_unchanged"])
+            self.assertEqual(source_path.read_bytes(), source_bytes)
+            self.assertEqual(job_queue.get_job(job["job_id"])["payload"]["finishing_metadata"], metadata)
 
         self.run_with_worker(scenario)
 
@@ -621,12 +822,58 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             raise
         paths = {route.path for route in api.app.routes}
         self.assertIn("/image-worker/jobs/{job_id}/execute-approved", paths)
+        self.assertIn("/image-worker/jobs/{job_id}/approve-concept", paths)
+        self.assertIn("/image-worker/jobs/{job_id}/prepare-transparent-artifact", paths)
         self.assertIn("/image-worker/jobs/{job_id}/prepared-workflow", paths)
         self.assertIn("/image-worker/jobs/{job_id}/comfy-response", paths)
         health = image_worker.health()
         self.assertIn("POST /image-worker/jobs/{job_id}/execute-approved", health["routes"])
+        self.assertIn("POST /image-worker/jobs/{job_id}/approve-concept", health["routes"])
+        self.assertIn("POST /image-worker/jobs/{job_id}/prepare-transparent-artifact", health["routes"])
         self.assertIn("GET /image-worker/jobs/{job_id}/prepared-workflow", health["routes"])
         self.assertIn("GET /image-worker/jobs/{job_id}/comfy-response", health["routes"])
+
+    def test_approve_concept_api_route_accepts_approver_and_defaults_safely(self) -> None:
+        try:
+            from jamesos.core import api
+        except ModuleNotFoundError as exc:
+            if exc.name in {"fastapi", "pydantic"}:
+                self.skipTest("fastapi/pydantic are not installed in this Python environment")
+            raise
+
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            named_job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            default_job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            with patch.object(api, "require_key", return_value=None):
+                named = api.image_worker_approve_concept_route(
+                    named_job["job_id"], api.ConceptApprovalRequest(approved_by="api-reviewer"), None
+                )
+                defaulted = api.image_worker_approve_concept_route(default_job["job_id"], None, None)
+
+            self.assertEqual(named["approved_by"], "api-reviewer")
+            self.assertEqual(defaulted["approved_by"], "api_user")
+            self.assertEqual(job_queue.get_job(default_job["job_id"])["payload"]["concept_approved_by"], "api_user")
+
+        self.run_with_worker(scenario)
+
+    def test_prepare_transparent_artifact_api_refuses_without_concept_approval(self) -> None:
+        try:
+            from jamesos.core import api
+        except ModuleNotFoundError as exc:
+            if exc.name in {"fastapi", "pydantic"}:
+                self.skipTest("fastapi/pydantic are not installed in this Python environment")
+            raise
+
+        def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
+            job = job_queue.create_job("image_generation", {"image_plan": self.image_plan(workflow, checkpoint)})
+            with patch.object(api, "require_key", return_value=None):
+                result = api.image_worker_prepare_transparent_artifact_route(job["job_id"], None)
+
+            self.assertEqual(result["status"], "error")
+            self.assertEqual(result["job_id"], job["job_id"])
+            self.assertFalse((image_worker._job_output_folder(job["job_id"]) / "transparent_artifact.png").exists())
+
+        self.run_with_worker(scenario)
 
     def test_create_test_image_job_script_adds_project_root_to_syspath(self) -> None:
         source = Path("scripts/create_test_image_job.py").read_text(encoding="utf-8")

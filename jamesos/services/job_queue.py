@@ -242,6 +242,24 @@ def update_job_payload(job_id: str, payload_updates: dict[str, Any]) -> dict[str
     return job
 
 
+def remove_job_payload_keys(job_id: str, keys: list[str] | tuple[str, ...]) -> dict[str, Any]:
+    path = _find_job_path(job_id)
+    if path is None:
+        raise JobQueueError(f"Job not found: {job_id}")
+    job = _read_job(path)
+    timestamp = now_timestamp()
+    payload = job.setdefault("payload", {})
+    for key in keys:
+        payload.pop(key, None)
+    job["updated_at"] = timestamp
+    job.setdefault("logs", []).append({
+        "created_at": timestamp,
+        "message": "Job payload finishing metadata cleared",
+    })
+    _write_job(job)
+    return job
+
+
 def approve_job(job_id: str, approved_by: str = "James") -> dict[str, Any]:
     path = _find_job_path(job_id)
     if path is None:

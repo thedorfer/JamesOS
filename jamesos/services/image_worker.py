@@ -117,6 +117,8 @@ def health() -> dict[str, Any]:
             "POST /image-worker/plan",
             "POST /image-worker/create-test-job",
             "POST /image-worker/jobs/{job_id}/execute-approved",
+            "POST /image-worker/jobs/{job_id}/approve-concept",
+            "POST /image-worker/jobs/{job_id}/prepare-transparent-artifact",
             "GET /image-worker/jobs/{job_id}/prepared-workflow",
             "GET /image-worker/jobs/{job_id}/comfy-response",
         ],
