@@ -6,6 +6,7 @@ from contextlib import ExitStack
 from datetime import datetime
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import random
 import shutil
@@ -503,24 +504,31 @@ def approve_live(report_path: Path, *, job_id: str, approved_by: str, confirmed:
     payload = job.get("payload") or {}
     if not payload.get("e2e_test_job"):
         raise E2EHarnessError("Approval is restricted to isolated E2E artwork jobs.")
-    evidence = validate_live_evidence(job_id, job)
+    payload = job.get("payload") or {}
+    already_approved = bool(payload.get("final_artifact_approved") or payload.get("final_artifact_approval"))
+    evidence = (validate_existing_approval_evidence(job_id, approved_by.strip(), job)
+                if already_approved else validate_candidate_ready_evidence(job_id, job))
     production = evidence["production"]
     derivative, candidate, metadata = evidence["derivative_path"], evidence["candidate_path"], evidence["metadata_path"]
     candidate_before, metadata_before = evidence["candidate"]["sha256"], evidence["production_metadata"]["sha256"]
     model = evidence["model"]
-    api_key = (VAULT / "JamesOS" / "Secrets" / "api_key.txt").read_text(encoding="utf-8").strip()
-    route = f"/image-worker/jobs/{job_id}/approve-production-artifact"
-    body = {"confirmed": True, "approved_by": approved_by.strip()}
-    first = _api_post(base_url, api_key, route, body)
+    _preflight_live_report_path(report_path, candidate.parents[2])
     approval_path = candidate.parent / "final-artifact-approval.json"
-    _assert(approval_path.is_file(), "Approval service did not create separate approval evidence")
-    approval_sha, approval = hash_file(approval_path), json.loads(approval_path.read_text(encoding="utf-8"))
-    approved_at = approval["approved_at"]
-    _assert(hash_file(candidate) == candidate_before and hash_file(metadata) == metadata_before, "Approval changed immutable production files")
-    repeat = _api_post(base_url, api_key, route, body)
-    _assert(hash_file(approval_path) == approval_sha, "Idempotent repeat rewrote approval evidence")
-    _assert(json.loads(approval_path.read_text(encoding="utf-8"))["approved_at"] == approved_at, "Idempotent repeat changed approved_at")
-    refreshed = job_queue.get_job(job_id)["payload"]
+    api_responses = []
+    if already_approved:
+        approval, approval_sha = evidence["final_approval"], evidence["final_approval_sha256"]
+        approved_at = approval["approved_at"]
+        refreshed = payload
+    else:
+        api_key = (VAULT / "JamesOS" / "Secrets" / "api_key.txt").read_text(encoding="utf-8").strip()
+        route = f"/image-worker/jobs/{job_id}/approve-production-artifact"
+        body = {"confirmed": True, "approved_by": approved_by.strip()}
+        api_responses.append(_api_post(base_url, api_key, route, body))
+        _assert(approval_path.is_file(), "Approval service did not create separate approval evidence")
+        approval_sha, approval = hash_file(approval_path), json.loads(approval_path.read_text(encoding="utf-8"))
+        approved_at = approval["approved_at"]
+        _assert(hash_file(candidate) == candidate_before and hash_file(metadata) == metadata_before, "Approval changed immutable production files")
+        refreshed = job_queue.get_job(job_id)["payload"]
     assertions = _status_assertions(refreshed)
     report = {
         "test_job_id": job_id, "mode": "approve-live", "result": "approved_after_human_visual_review",
@@ -531,12 +539,20 @@ def approve_live(report_path: Path, *, job_id: str, approved_by: str, confirmed:
         "production_metadata": {"path": str(metadata), "before_sha256": metadata_before, "after_sha256": hash_file(metadata)},
         "derivative": _image_facts(derivative), "model": {"model_name": model["model_name"], "sha256": model["sha256"]},
         "final_approval": {"path": str(approval_path), "sha256": approval_sha, "approved_at": approved_at, "content": approval},
-        "idempotent_repeat": True, "status_assertions": assertions, "api_responses": [first, repeat],
+        "idempotent": already_approved, "status_assertions": assertions, "api_responses": api_responses,
         "retained_artifact_directory": str(candidate.parents[2]), "retention_status": "retained_until_explicit_cleanup",
         "total_runtime_seconds": time.perf_counter() - started,
     }
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    try:
+        report_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    except OSError as exc:
+        return {
+            "test_job_id": job_id, "mode": "approve-live", "result": "approval_completed_report_write_failed",
+            "approval_side_effect_completed": True, "report_write_failed": True,
+            "approval_path": str(approval_path), "approval_sha256": approval_sha,
+            "approved_at": approved_at, "idempotent": already_approved,
+            "diagnostic": {"type": type(exc).__name__, "message": str(exc)},
+        }
     return report
 
 
@@ -547,7 +563,7 @@ def _evidence_error(evidence_type: str, expected: Any, actual: Any, path: Path |
     )
 
 
-def validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> dict[str, Any]:
+def _validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> dict[str, Any]:
     """Validate an existing candidate without trusting or modifying an E2E report."""
     validate_test_job_id(job_id)
     job = job or job_queue.get_job(job_id)
@@ -565,8 +581,6 @@ def validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> di
                                 ("production_metadata", metadata)):
         if not path.is_file():
             _evidence_error(evidence_type, "file-present", "file-missing", path)
-    if approval_path.exists() or payload.get("final_artifact_approved") or payload.get("final_artifact_approval"):
-        raise E2EHarnessError("Existing final approval evidence is not candidate-ready recovery state.")
     try:
         file_metadata = json.loads(metadata.read_text(encoding="utf-8"))
     except Exception as exc:
@@ -627,12 +641,78 @@ def validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> di
         "intermediates": intermediates, "candidate": _image_facts(candidate), "previews": previews,
         "production_metadata": {"path": str(metadata), "sha256": hash_file(metadata), "content": production},
         "model": model, "derivative_path": derivative, "candidate_path": candidate, "metadata_path": metadata,
+        "approval_path": approval_path,
     }
+
+
+def validate_candidate_ready_evidence(job_id: str, job: dict[str, Any] | None = None) -> dict[str, Any]:
+    evidence = _validate_live_evidence(job_id, job)
+    payload, approval_path = evidence["payload"], evidence["approval_path"]
+    if approval_path.exists() or payload.get("final_artifact_approved") or payload.get("final_artifact_approval"):
+        raise E2EHarnessError("Existing final approval evidence is not candidate-ready recovery state.")
+    return evidence
+
+
+def validate_existing_approval_evidence(
+    job_id: str, requested_reviewer: str, job: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    evidence = _validate_live_evidence(job_id, job)
+    payload, approval_path = evidence["payload"], evidence["approval_path"]
+    recorded = payload.get("final_artifact_approval")
+    if not payload.get("final_artifact_approved") or not isinstance(recorded, dict) or not approval_path.is_file():
+        raise E2EHarnessError("Partial or contradictory final approval evidence is present.")
+    try:
+        file_approval = json.loads(approval_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise E2EHarnessError(f"Final approval evidence is unreadable: {exc}") from exc
+    if file_approval != recorded:
+        raise E2EHarnessError(f"Authoritative evidence mismatch: evidence_type=final_approval_content; "
+                              f"expected_sha=job-state-content; actual_sha=file-content; authoritative_source_path={approval_path}")
+    approval_sha = hash_file(approval_path)
+    if approval_sha != payload.get("final_artifact_approval_record_sha256"):
+        _evidence_error("final_approval_record", payload.get("final_artifact_approval_record_sha256"), approval_sha, approval_path)
+    checks = {
+        "approved_artifact_sha256": evidence["candidate"]["sha256"],
+        "production_metadata_sha256": evidence["production_metadata"]["sha256"],
+    }
+    for key, actual in checks.items():
+        if recorded.get(key) != actual:
+            _evidence_error(f"final_approval_{key}", recorded.get(key), actual, approval_path)
+    derivative_evidence = recorded.get("derivative_evidence") or {}
+    if derivative_evidence.get("approved_artifact_sha256") != evidence["derivative"]["sha256"]:
+        _evidence_error("final_approval_derivative", derivative_evidence.get("approved_artifact_sha256"),
+                        evidence["derivative"]["sha256"], approval_path)
+    model_evidence = recorded.get("model_evidence") or {}
+    if model_evidence.get("model_sha256") != evidence["model"].get("sha256"):
+        _evidence_error("final_approval_model", model_evidence.get("model_sha256"), evidence["model"].get("sha256"), approval_path)
+    existing_reviewer = str(recorded.get("approved_by") or "")
+    if existing_reviewer != requested_reviewer:
+        raise E2EHarnessError(f"Existing approval reviewer differs: existing_reviewer={existing_reviewer}; "
+                              f"requested_reviewer={requested_reviewer}")
+    evidence.update({"final_approval": file_approval, "final_approval_sha256": approval_sha})
+    return evidence
+
+
+def _preflight_live_report_path(report_path: Path, job_root: Path) -> None:
+    if str(report_path) in ("", "."):
+        raise E2EHarnessError("approve-live requires a non-empty report file path.")
+    raw = report_path.expanduser()
+    if raw.exists() and raw.is_dir():
+        raise E2EHarnessError(f"approve-live report path is an existing directory: {raw}")
+    parent = raw.parent.resolve()
+    root = job_root.resolve()
+    if not parent.is_relative_to(root):
+        raise E2EHarnessError(f"approve-live report path must be confined to the E2E job directory: {root}")
+    parent.mkdir(parents=True, exist_ok=True)
+    if not parent.is_dir() or not os.access(parent, os.W_OK):
+        raise E2EHarnessError(f"approve-live report parent is not writable: {parent}")
+    if raw.exists() and (raw.is_symlink() or not raw.is_file() or not os.access(raw, os.W_OK)):
+        raise E2EHarnessError(f"approve-live report destination is not a writable regular file: {raw}")
 
 
 def resume_live(report_path: Path, *, job_id: str) -> dict[str, Any]:
     started = time.perf_counter()
-    evidence = validate_live_evidence(job_id)
+    evidence = validate_candidate_ready_evidence(job_id)
     payload, production = evidence["payload"], evidence["production"]
     status_payload = dict(payload)
     status_payload.update({"final_artifact_approved": False, "final_artifact_status": "needs_final_review"})
