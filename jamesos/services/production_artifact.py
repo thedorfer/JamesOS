@@ -30,6 +30,7 @@ TARGET_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "productio
 COMFYUI_OUTPUT_ROOT = Path.home() / "AI" / "ComfyUI" / "output"
 STAGE_SIZES = ((768, 768), (1536, 1536), (3072, 3072), (6144, 6144))
 PREVIEW_BACKGROUNDS = {"white": (255, 255, 255, 255), "dark": (24, 24, 24, 255)}
+PRODUCTION_STRATEGIES = {"ai_upscale", "precision_resize", "auto"}
 
 
 def _hash_file(path: Path) -> str:
@@ -93,6 +94,44 @@ def load_production_target(path: Path | None = None) -> dict[str, Any]:
     if target.get("placement_resize_method") != "lanczos":
         raise JobQueueError("Production placement resize method must be lanczos.")
     return target
+
+
+def recommend_production_strategy(path: Path, artwork_category: str | None = None) -> dict[str, Any]:
+    """Return a conservative, explainable recommendation; never claim visual certainty."""
+    category = str(artwork_category or "").strip().lower().replace("-", "_").replace(" ", "_")
+    precision_categories = {"logo", "typography", "silhouette", "cricut", "line_art", "icon", "flat_geometric"}
+    ai_categories = {"painterly", "textured_raster", "photographic", "photo"}
+    if category in precision_categories:
+        return {"status": "recommended", "selected_strategy": "precision_resize",
+                "strategy_reason": f"Explicit artwork category '{category}' is edge/color-preserving artwork."}
+    if category in ai_categories:
+        return {"status": "recommended", "selected_strategy": "ai_upscale",
+                "strategy_reason": f"Explicit artwork category '{category}' is detail-oriented raster artwork."}
+    with Image.open(path) as image:
+        sample = image.convert("RGBA")
+        sample.thumbnail((256, 256), Image.Resampling.LANCZOS)
+        rgb = sample.convert("RGB")
+        quantized = rgb.quantize(colors=256)
+        color_count = len(quantized.getcolors(maxcolors=256) or [])
+        pixels = list(rgb.get_flattened_data())
+        neighbors = 0
+        strong_edges = 0
+        width, height = rgb.size
+        for y in range(height):
+            for x in range(width - 1):
+                left, right = pixels[y * width + x], pixels[y * width + x + 1]
+                neighbors += 1
+                strong_edges += max(abs(left[i] - right[i]) for i in range(3)) >= 48
+        edge_density = strong_edges / max(1, neighbors)
+        sample.close(); rgb.close(); quantized.close()
+    if color_count <= 32 and edge_density >= 0.025:
+        return {"status": "recommended", "selected_strategy": "precision_resize",
+                "strategy_reason": f"Rule-based sample has low color complexity ({color_count}) and clear edges ({edge_density:.3f}); recommendation is not a certain classification."}
+    if color_count >= 192 and edge_density >= 0.12:
+        return {"status": "recommended", "selected_strategy": "ai_upscale",
+                "strategy_reason": f"Rule-based sample has high color complexity ({color_count}) and texture ({edge_density:.3f}); recommendation is not a certain classification."}
+    return {"status": "needs_strategy_selection", "selected_strategy": None,
+            "strategy_reason": f"Rule-based evidence is inconclusive (colors={color_count}, edge_density={edge_density:.3f}); explicit selection is required."}
 
 
 def approve_transparent_artifact_for_job(job_id: str, approved_by: str = "James") -> dict[str, Any]:
@@ -263,16 +302,23 @@ def approve_production_artifact_for_job(
     if str(production.get("approved_source_sha256") or "") != approved_derivative_sha:
         refuse("Production metadata does not match the approved transparent derivative.")
 
+    selected_strategy = str(production.get("selected_strategy") or "ai_upscale")
+    ai_model_required = production.get("ai_model_required", selected_strategy == "ai_upscale") is True
     model_name = str(production.get("model_name") or "")
-    try:
-        selected = upscale_model_registry.select_upscale_model(model_name)
-    except JobQueueError as exc:
-        refuse(f"Approved production model is unavailable: {exc}")
-    if not selected.get("validated") or not selected.get("production_approved"):
-        refuse(f"Approved production model is not SHA-validated: {selected.get('validation_reason')}")
-    model_sha = str(selected.get("sha256") or "")
-    if model_sha != str(production.get("model_sha256") or ""):
-        refuse("Installed production model SHA differs from production metadata.")
+    selected: dict[str, Any] | None = None
+    model_sha = ""
+    if ai_model_required:
+        try:
+            selected = upscale_model_registry.select_upscale_model(model_name)
+        except JobQueueError as exc:
+            refuse(f"Approved production model is unavailable: {exc}")
+        if not selected.get("validated") or not selected.get("production_approved"):
+            refuse(f"Approved production model is not SHA-validated: {selected.get('validation_reason')}")
+        model_sha = str(selected.get("sha256") or "")
+        if model_sha != str(production.get("model_sha256") or ""):
+            refuse("Installed production model SHA differs from production metadata.")
+    elif production.get("model_name") or production.get("model_sha256"):
+        refuse("Non-AI production metadata must not contain AI model evidence.")
 
     evidence = {
         "job_id": job_id,
@@ -289,13 +335,21 @@ def approve_production_artifact_for_job(
             "approved_by": derivative_approval.get("approved_by"),
             "approved_at": derivative_approval.get("approved_at"),
         },
-        "model_evidence": {
+        "model_evidence": ({
             "model_name": model_name,
             "model_sha256": model_sha,
             "validated_model_sha256": selected.get("validated_model_sha256"),
             "validation_reason": selected.get("validation_reason"),
-        },
+        } if selected else None),
     }
+    if "selected_strategy" in production:
+        evidence["strategy_evidence"] = {
+            "requested_strategy": production.get("requested_strategy"),
+            "selected_strategy": selected_strategy, "strategy_reason": production.get("strategy_reason"),
+            "strategy_selected_by": production.get("strategy_selected_by"),
+            "strategy_override_used": production.get("strategy_override_used"),
+            "ai_model_required": ai_model_required,
+        }
     prior: dict[str, Any] | None = None
     if approval_path.exists():
         if approval_path.is_symlink():
@@ -326,14 +380,14 @@ def approve_production_artifact_for_job(
     approval_file_sha = _hash_file(approval_path)
 
     # Re-read every immutable input and the installed model immediately after record publication.
-    revalidated_model = upscale_model_registry.select_upscale_model(model_name)
+    revalidated_model = upscale_model_registry.select_upscale_model(model_name) if ai_model_required else None
     if (
         _hash_file(candidate_path) != candidate_sha
         or _hash_file(metadata_path) != metadata_sha
         or _hash_file(derivative) != approved_derivative_sha
-        or not revalidated_model.get("validated")
+        or (ai_model_required and (not revalidated_model.get("validated")
         or not revalidated_model.get("production_approved")
-        or str(revalidated_model.get("sha256") or "") != model_sha
+        or str(revalidated_model.get("sha256") or "") != model_sha))
     ):
         approval_path.unlink(missing_ok=True)
         raise JobQueueError("Approval evidence changed during immediate post-approval revalidation.")
@@ -364,14 +418,14 @@ def approve_production_artifact_for_job(
         except Exception:
             pass
         raise JobQueueError(f"Final approval job-state persistence failed: {exc}") from exc
-    post_persist_model = upscale_model_registry.select_upscale_model(model_name)
+    post_persist_model = upscale_model_registry.select_upscale_model(model_name) if ai_model_required else None
     if (
         _hash_file(candidate_path) != candidate_sha
         or _hash_file(metadata_path) != metadata_sha
         or _hash_file(derivative) != approved_derivative_sha
-        or not post_persist_model.get("validated")
+        or (ai_model_required and (not post_persist_model.get("validated")
         or not post_persist_model.get("production_approved")
-        or str(post_persist_model.get("sha256") or "") != model_sha
+        or str(post_persist_model.get("sha256") or "") != model_sha))
     ):
         _invalidate_final_artifact_approval(
             job_id, payload, "Approval evidence changed during post-persistence revalidation.", approval_path
@@ -532,7 +586,8 @@ def _run_stage(
 
 def prepare_production_artifact_for_job(
     job_id: str, *, upscale_model_name: str | None = None, confirmed: bool = False,
-    target_overrides: dict[str, Any] | None = None,
+    target_overrides: dict[str, Any] | None = None, production_strategy: str = "ai_upscale",
+    artwork_category: str | None = None, strategy_selected_by: str = "api_request",
 ) -> dict[str, Any]:
     if not confirmed:
         raise JobQueueError("Production-artifact processing requires explicit confirmation.")
@@ -548,16 +603,33 @@ def prepare_production_artifact_for_job(
     approved_sha = str(approval.get("approved_artifact_sha256") or "")
     if not approved_sha or _hash_file(derivative) != approved_sha:
         raise JobQueueError("Approved transparent derivative SHA has changed.")
-    selected = upscale_model_registry.select_upscale_model(upscale_model_name)
-    if not selected.get("validated") or not selected.get("production_approved"):
-        raise JobQueueError(f"Upscale model is not SHA-validated: {selected.get('validation_reason')}")
-    if selected.get("scale_factor") != 2:
-        raise JobQueueError("Production artifact requires a configured 2x upscale model.")
-    settings = {
-        "alpha_resize_method": selected["preferred_alpha_resize_method"],
-        "edge_bleed_iterations": selected["preferred_edge_bleed_iterations"],
-        "edge_bleed_alpha_threshold": selected["preferred_edge_bleed_alpha_threshold"],
-    }
+    requested_strategy = str(production_strategy or "").strip().lower()
+    if requested_strategy not in PRODUCTION_STRATEGIES:
+        raise JobQueueError(f"Unknown production strategy: {requested_strategy}")
+    recommendation = recommend_production_strategy(derivative, artwork_category)
+    if requested_strategy == "auto":
+        if recommendation["status"] == "needs_strategy_selection":
+            raise JobQueueError(f"needs_strategy_selection: {recommendation['strategy_reason']}")
+        selected_strategy = recommendation["selected_strategy"]
+        selected_by = "jamesos_rule_based_recommendation"
+    else:
+        selected_strategy = requested_strategy
+        selected_by = strategy_selected_by
+    strategy_reason = (recommendation["strategy_reason"] if requested_strategy == "auto" else
+                       f"Explicit {selected_strategy} strategy requested; automatic recommendation was {recommendation.get('selected_strategy') or 'inconclusive' }.")
+    strategy_override_used = bool(requested_strategy != "auto" and recommendation.get("selected_strategy") and
+                                  recommendation["selected_strategy"] != selected_strategy)
+    selected = None
+    settings = {"alpha_resize_method": "lanczos"}
+    if selected_strategy == "ai_upscale":
+        selected = upscale_model_registry.select_upscale_model(upscale_model_name)
+        if not selected.get("validated") or not selected.get("production_approved"):
+            raise JobQueueError(f"Upscale model is not SHA-validated: {selected.get('validation_reason')}")
+        if selected.get("scale_factor") != 2:
+            raise JobQueueError("Production artifact requires a configured 2x upscale model.")
+        settings = {"alpha_resize_method": selected["preferred_alpha_resize_method"],
+                    "edge_bleed_iterations": selected["preferred_edge_bleed_iterations"],
+                    "edge_bleed_alpha_threshold": selected["preferred_edge_bleed_alpha_threshold"]}
     target = load_production_target()
     if target_overrides:
         target = {**target, **target_overrides}
@@ -581,17 +653,35 @@ def prepare_production_artifact_for_job(
         staging_path = Path(tempfile.mkdtemp(prefix=".production-run-", dir=root))
         intermediates = staging_path / "intermediates"
         stage_records = []
-        stage_source = derivative
-        for stage_number, (expected_input, expected_output) in enumerate(zip(STAGE_SIZES, STAGE_SIZES[1:]), start=1):
-            output = intermediates / f"stage-{stage_number}-{expected_output[0]}x{expected_output[1]}.png"
-            record = _run_stage(
-                job_id=job_id, stage_number=stage_number, source_path=stage_source, output_path=output,
-                debug_folder=debug_folder, selected_model=selected, settings=settings,
-                expected_input=expected_input, expected_output=expected_output,
-            )
-            stage_records.append(record)
-            stage_source = output
-        final_upscale = _verified_rgba(stage_source, STAGE_SIZES[-1])
+        if selected_strategy == "ai_upscale":
+            stage_source = derivative
+            for stage_number, (expected_input, expected_output) in enumerate(zip(STAGE_SIZES, STAGE_SIZES[1:]), start=1):
+                output = intermediates / f"stage-{stage_number}-{expected_output[0]}x{expected_output[1]}.png"
+                record = _run_stage(job_id=job_id, stage_number=stage_number, source_path=stage_source, output_path=output,
+                                    debug_folder=debug_folder, selected_model=selected, settings=settings,
+                                    expected_input=expected_input, expected_output=expected_output)
+                stage_records.append(record); stage_source = output
+            final_upscale = _verified_rgba(stage_source, STAGE_SIZES[-1])
+        else:
+            with Image.open(derivative) as source_image:
+                source_image.load()
+                source_rgba = source_image.convert("RGBA")
+            margin_x = round(target["canvas_width"] * target["safe_margin_percent"] / 100)
+            margin_y = round(target["canvas_height"] * target["safe_margin_percent"] / 100)
+            available = (target["canvas_width"] - 2 * margin_x, target["canvas_height"] - 2 * margin_y)
+            precision_scale = min(available[0] / source_rgba.width, available[1] / source_rgba.height)
+            output_size = (max(1, round(source_rgba.width * precision_scale)),
+                           max(1, round(source_rgba.height * precision_scale)))
+            resized_path = intermediates / f"precision-resize-{output_size[0]}x{output_size[1]}.png"
+            resized = source_rgba.resize(output_size, Image.Resampling.LANCZOS)
+            resized_path.parent.mkdir(parents=True, exist_ok=True); resized.save(resized_path, format="PNG")
+            stage_records.append({"stage": 1, "processing_method": "deterministic_precision_resize",
+                                  "resize_method": "lanczos", "input_path": str(derivative),
+                                  "input_dimensions": list(source_rgba.size), "input_sha256": derivative_hash_before,
+                                  "output_path": str(resized_path), "output_dimensions": list(output_size),
+                                  "output_sha256": _hash_file(resized_path), "alpha_extrema": list(resized.getchannel("A").getextrema())})
+            source_rgba.close(); resized.close()
+            final_upscale = _verified_rgba(resized_path, output_size)
         try:
             canvas, placement = place_artwork_on_canvas(final_upscale, target)
         finally:
@@ -641,8 +731,19 @@ def prepare_production_artifact_for_job(
             "checkerboard_preview_sha256": _hash_file(previews["checkerboard_preview_path"]),
             "canvas_dimensions": [target["canvas_width"], target["canvas_height"]],
             **placement, "production_target": target,
-            "model_name": selected["model_name"], "model_sha256": selected["sha256"],
-            "actual_upscale_settings": settings, "alpha_extrema": list(canvas.getchannel("A").getextrema()),
+            "requested_strategy": requested_strategy, "selected_strategy": selected_strategy,
+            "strategy_reason": strategy_reason, "strategy_selected_by": selected_by,
+            "strategy_override_used": strategy_override_used, "ai_model_required": selected_strategy == "ai_upscale",
+            "visual_review_required": True,
+            "processing_input_dimensions": stage_records[0]["input_dimensions"],
+            "processing_output_dimensions": stage_records[-1]["output_dimensions"],
+            "processing_input_sha256": stage_records[0]["input_sha256"],
+            "processing_output_sha256": stage_records[-1]["output_sha256"],
+            "processing_stages": stage_records,
+            "model_name": selected["model_name"] if selected else None,
+            "model_sha256": selected["sha256"] if selected else None,
+            "resize_method": "staged_realesrgan_with_lanczos_alpha" if selected else "lanczos",
+            "actual_upscale_settings": settings if selected else None, "alpha_extrema": list(canvas.getchannel("A").getextrema()),
             "alpha_diagnostics": halo_diagnostics(canvas), "placement_resize_method": "lanczos",
             "total_execution_time_seconds": time.perf_counter() - started,
             "production_artifact_status": "needs_final_review", "design_status": "needs_final_review",

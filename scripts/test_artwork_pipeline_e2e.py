@@ -210,7 +210,8 @@ def _status_assertions(payload: dict[str, Any], *, approved: bool = True) -> dic
     return assertions
 
 
-def _run_service_flow(job_id: str, source_path: Path, output_root: Path, mode: str, *, approve_final: bool = True) -> dict[str, Any]:
+def _run_service_flow(job_id: str, source_path: Path, output_root: Path, mode: str, *, approve_final: bool = True,
+                      production_strategy: str = "ai_upscale") -> dict[str, Any]:
     started = time.perf_counter()
     transitions: list[dict[str, Any]] = []
     source_before = hash_file(source_path)
@@ -247,19 +248,29 @@ def _run_service_flow(job_id: str, source_path: Path, output_root: Path, mode: s
         _assert(derivative_approval["approved_artifact_sha256"] == derivative["sha256"], "Derivative approval SHA mismatch")
         transitions.append({"stage": "transparent_artifact_approved", "approval": derivative_approval})
 
-        selected = upscale_model_registry.select_upscale_model()
-        _assert(selected["model_name"] == DEFAULT_MODEL, "Default model is not RealESRGAN_x2plus.pth")
-        _assert(selected["validated"] and selected["production_approved"], "Default model is not effectively SHA-approved")
-        _assert(selected["sha256"] == selected["validated_model_sha256"], "Installed model SHA differs from registry approval")
-        transitions.append({"stage": "model_verified", "model": {key: selected[key] for key in (
-            "model_name", "sha256", "validated_model_sha256", "validated", "production_approved", "validation_reason"
-        )}})
+        model_evidence = None
+        if production_strategy == "ai_upscale":
+            selected = upscale_model_registry.select_upscale_model()
+            _assert(selected["model_name"] == DEFAULT_MODEL, "Default model is not RealESRGAN_x2plus.pth")
+            _assert(selected["validated"] and selected["production_approved"], "Default model is not effectively SHA-approved")
+            _assert(selected["sha256"] == selected["validated_model_sha256"], "Installed model SHA differs from registry approval")
+            model_evidence = {key: selected[key] for key in (
+                "model_name", "sha256", "validated_model_sha256", "validated", "production_approved", "validation_reason")}
+            transitions.append({"stage": "model_verified", "model": model_evidence})
 
-        production = production_artifact.prepare_production_artifact_for_job(job_id, confirmed=True)
+        production = production_artifact.prepare_production_artifact_for_job(
+            job_id, confirmed=True, production_strategy=production_strategy,
+            artwork_category="flat_geometric" if production_strategy == "precision_resize" else "painterly",
+            strategy_selected_by="test_harness",
+        )
         stages = production["intermediate_stages"]
-        _assert([stage["input_dimensions"] for stage in stages] == [list(size) for size in LOGICAL_STAGE_SIZES[:-1]], "Stage input dimensions are wrong")
-        _assert([stage["output_dimensions"] for stage in stages] == [list(size) for size in LOGICAL_STAGE_SIZES[1:]], "Stage output dimensions are wrong")
-        _assert(stages[1]["input_sha256"] == stages[0]["output_sha256"] and stages[2]["input_sha256"] == stages[1]["output_sha256"], "Stage hashes are not chained")
+        if production_strategy == "ai_upscale":
+            _assert([stage["input_dimensions"] for stage in stages] == [list(size) for size in LOGICAL_STAGE_SIZES[:-1]], "Stage input dimensions are wrong")
+            _assert([stage["output_dimensions"] for stage in stages] == [list(size) for size in LOGICAL_STAGE_SIZES[1:]], "Stage output dimensions are wrong")
+            _assert(stages[1]["input_sha256"] == stages[0]["output_sha256"] and stages[2]["input_sha256"] == stages[1]["output_sha256"], "Stage hashes are not chained")
+        else:
+            _assert(len(stages) == 1 and stages[0]["processing_method"] == "deterministic_precision_resize", "Precision evidence is not truthful")
+            _assert(production["model_name"] is None and not production["ai_model_required"], "Precision path recorded AI evidence")
         for stage in stages:
             facts = _image_facts(Path(stage["output_path"]))
             _assert(facts["mode"] == "RGBA" and facts["alpha_extrema"][0] == 0, f"Stage {stage['stage']} lost transparency")
@@ -306,7 +317,7 @@ def _run_service_flow(job_id: str, source_path: Path, output_root: Path, mode: s
                 "path": str(metadata_path), "before_sha256": metadata_before,
                 "after_sha256": hash_file(metadata_path), "content": production,
             },
-            "model": transitions[4]["model"],
+            "model": model_evidence,
             "final_approval": {"path": str(approval_path), "sha256": approval_sha, **approval["approval"]},
             "status_assertions": status_assertions,
             "retained_artifact_directory": str(output_root),
@@ -352,7 +363,8 @@ def cleanup_e2e_job(job_id: str, artifact_directory: Path, *, confirmed: bool = 
     return {"job_id": job_id, "removed_artifact_directory": str(resolved), "removed_paths": removed, "removed_queue_records": queue_records}
 
 
-def run_mocked(report_path: Path, *, model_hash_mismatch: bool = False) -> dict[str, Any]:
+def run_mocked(report_path: Path, *, model_hash_mismatch: bool = False,
+               production_strategy: str = "ai_upscale") -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="jamesos-e2e-mocked-") as temporary:
         sandbox = Path(temporary)
         queue_root = sandbox / "Queue"
@@ -396,7 +408,7 @@ def run_mocked(report_path: Path, *, model_hash_mismatch: bool = False) -> dict[
             if model_hash_mismatch:
                 model_path.write_bytes(b"mismatched model bytes")
             try:
-                report = _run_service_flow(job_id, source_path, output_root, "mocked")
+                report = _run_service_flow(job_id, source_path, output_root, "mocked", production_strategy=production_strategy)
                 report["mocked_workflows"] = workflows
                 report["mocked_comfyui_responses"] = responses
             except E2EHarnessFailure as exc:
@@ -537,7 +549,8 @@ def approve_live(report_path: Path, *, job_id: str, approved_by: str, confirmed:
         "provider_status": "not_ready", "printify_status": "not_ready", "final_print_ready": False,
         "candidate": {**_image_facts(candidate), "before_sha256": candidate_before, "after_sha256": hash_file(candidate)},
         "production_metadata": {"path": str(metadata), "before_sha256": metadata_before, "after_sha256": hash_file(metadata)},
-        "derivative": _image_facts(derivative), "model": {"model_name": model["model_name"], "sha256": model["sha256"]},
+        "derivative": _image_facts(derivative),
+        "model": ({"model_name": model["model_name"], "sha256": model["sha256"]} if model else None),
         "final_approval": {"path": str(approval_path), "sha256": approval_sha, "approved_at": approved_at, "content": approval},
         "idempotent": already_approved, "status_assertions": assertions, "api_responses": api_responses,
         "retained_artifact_directory": str(candidate.parents[2]), "retention_status": "retained_until_explicit_cleanup",
@@ -612,8 +625,10 @@ def _validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> d
     if source_sha != finishing.get("source_sha256_before") or source_sha != finishing.get("source_sha256_after"):
         _evidence_error("generated_source", finishing.get("source_sha256_before"), source_sha, source)
     stages = production.get("intermediate_stages")
-    if not isinstance(stages, list) or len(stages) != 3:
-        raise E2EHarnessError("Authoritative production stage evidence must contain exactly three stages.")
+    selected_strategy = production.get("selected_strategy") or "ai_upscale"
+    expected_stage_count = 3 if selected_strategy == "ai_upscale" else 1
+    if not isinstance(stages, list) or len(stages) != expected_stage_count:
+        raise E2EHarnessError(f"Authoritative {selected_strategy} evidence must contain exactly {expected_stage_count} processing stage(s).")
     intermediates = []
     expected_input_sha = approved_sha
     for index, stage in enumerate(stages, 1):
@@ -632,9 +647,13 @@ def _validate_live_evidence(job_id: str, job: dict[str, Any] | None = None) -> d
         if actual != production.get(f"{name}_preview_sha256"):
             _evidence_error(f"{name}_preview", production.get(f"{name}_preview_sha256"), actual, path)
         previews[name] = _image_facts(path)
-    model = upscale_model_registry.select_upscale_model(production.get("model_name"))
-    if not model.get("validated") or not model.get("production_approved") or model.get("sha256") != production.get("model_sha256"):
-        _evidence_error("installed_validated_model", production.get("model_sha256"), model.get("sha256"), model.get("path", production.get("model_name")))
+    model = None
+    if selected_strategy == "ai_upscale":
+        model = upscale_model_registry.select_upscale_model(production.get("model_name"))
+        if not model.get("validated") or not model.get("production_approved") or model.get("sha256") != production.get("model_sha256"):
+            _evidence_error("installed_validated_model", production.get("model_sha256"), model.get("sha256"), model.get("path", production.get("model_name")))
+    elif production.get("model_name") or production.get("model_sha256") or production.get("ai_model_required") is not False:
+        raise E2EHarnessError("Precision-resize evidence must not require or identify an AI model.")
     return {
         "payload": payload, "production": production, "source": _image_facts(source),
         "derivative": _image_facts(derivative), "derivative_approval": dict(derivative_approval),
@@ -683,7 +702,7 @@ def validate_existing_approval_evidence(
         _evidence_error("final_approval_derivative", derivative_evidence.get("approved_artifact_sha256"),
                         evidence["derivative"]["sha256"], approval_path)
     model_evidence = recorded.get("model_evidence") or {}
-    if model_evidence.get("model_sha256") != evidence["model"].get("sha256"):
+    if evidence["model"] is not None and model_evidence.get("model_sha256") != evidence["model"].get("sha256"):
         _evidence_error("final_approval_model", model_evidence.get("model_sha256"), evidence["model"].get("sha256"), approval_path)
     existing_reviewer = str(recorded.get("approved_by") or "")
     if existing_reviewer != requested_reviewer:
@@ -756,10 +775,11 @@ def main() -> int:
     parser.add_argument("--cleanup", action="store_true")
     parser.add_argument("--confirm-cleanup", action="store_true")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--production-strategy", choices=("ai_upscale", "precision_resize"), default="ai_upscale")
     args = parser.parse_args()
     try:
         if args.mode == "mocked":
-            result = run_mocked(args.report_path)
+            result = run_mocked(args.report_path, production_strategy=args.production_strategy)
         elif args.mode == "live":
             if args.cleanup or args.confirm_cleanup or args.confirm_visual_review or args.approved_by:
                 raise E2EHarnessError("Live candidate creation cannot approve or clean up in the same command.")

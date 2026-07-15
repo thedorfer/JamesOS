@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any
 from fastapi import FastAPI, Header, HTTPException, UploadFile, File
@@ -90,6 +91,8 @@ from jamesos.services.production_artifact import (
     approve_transparent_artifact_for_job,
     prepare_production_artifact_for_job,
 )
+from jamesos.integrations.printify_client import PrintifyClient, PrintifyAPIError
+from jamesos.services import printify_product
 from jamesos.services.image_worker import (
     analyze_output_image_for_job,
     comfy_response_for_job,
@@ -124,6 +127,10 @@ API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
 
 app = FastAPI(title="JamesOS API")
+
+
+def _printify_client() -> PrintifyClient:
+    return PrintifyClient()
 
 
 class IntakeRequest(BaseModel):
@@ -256,10 +263,22 @@ class ProductionArtifactRequest(BaseModel):
     confirmed: bool = False
     upscale_model_name: str | None = None
     target_overrides: dict[str, Any] | None = None
+    production_strategy: str = "ai_upscale"
+    artwork_category: str | None = None
+    strategy_selected_by: str = "api_request"
 
 
 class ProductionArtifactApprovalRequest(BaseModel):
     approved_by: str
+    confirmed: bool = False
+
+
+class PrintifyUploadRequest(BaseModel):
+    confirmed: bool = False
+    image_url: str | None = None
+
+
+class PrintifyCreateDraftRequest(BaseModel):
     confirmed: bool = False
 
 
@@ -861,11 +880,80 @@ def image_worker_prepare_production_artifact_route(
             upscale_model_name=req.upscale_model_name,
             confirmed=req.confirmed,
             target_overrides=req.target_overrides,
+            production_strategy=req.production_strategy,
+            artwork_category=req.artwork_category,
+            strategy_selected_by=req.strategy_selected_by,
         )
     except JobQueueError as exc:
         from jamesos.services.image_worker import structured_error
 
         return structured_error(exc, job_id=job_id)
+
+
+@app.get("/commerce/printify/status")
+def printify_status_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return printify_product.status()
+
+
+@app.get("/commerce/printify/shops")
+def printify_shops_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return {"shops": printify_product.normalize_shops(_printify_client().list_shops())}
+
+
+@app.get("/commerce/printify/catalog/blueprints")
+def printify_blueprints_route(x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return _printify_client().list_blueprints()
+
+
+@app.get("/commerce/printify/catalog/blueprints/{blueprint_id}")
+def printify_blueprint_route(blueprint_id: int, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return _printify_client().get_blueprint(blueprint_id)
+
+
+@app.get("/commerce/printify/catalog/blueprints/{blueprint_id}/providers")
+def printify_providers_route(blueprint_id: int, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return _printify_client().list_print_providers_for_blueprint(blueprint_id)
+
+
+@app.get("/commerce/printify/catalog/blueprints/{blueprint_id}/providers/{provider_id}/variants")
+def printify_variants_route(blueprint_id: int, provider_id: int, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return _printify_client().get_variants(blueprint_id, provider_id)
+
+
+@app.get("/commerce/printify/catalog/blueprints/{blueprint_id}/providers/{provider_id}/shipping")
+def printify_shipping_route(blueprint_id: int, provider_id: int, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); return _printify_client().get_shipping(blueprint_id, provider_id)
+
+
+@app.get("/commerce/printify/jobs/{job_id}/draft-plan")
+def printify_draft_plan_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); evidence = printify_product._approved_evidence(job_id)
+    path = evidence["job_root"] / "commerce" / "printify" / "product-draft-plan.json"
+    if not path.is_file(): raise HTTPException(status_code=404, detail="Printify draft plan not found.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/commerce/printify/jobs/{job_id}/product")
+def printify_product_route(job_id: str, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key); evidence = printify_product._approved_evidence(job_id)
+    path = evidence["job_root"] / "commerce" / "printify" / "product-draft.json"
+    if not path.is_file(): raise HTTPException(status_code=404, detail="Printify product draft not found.")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    return _printify_client().get_product(record["shop_id"], record["printify_product_id"])
+
+
+@app.post("/commerce/printify/jobs/{job_id}/upload-approved-artwork")
+def printify_upload_route(job_id: str, req: PrintifyUploadRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try: return printify_product.upload_approved_artwork(job_id, confirmed=req.confirmed, client=_printify_client(), image_url=req.image_url)
+    except (JobQueueError, PrintifyAPIError) as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/commerce/printify/jobs/{job_id}/create-product-draft")
+def printify_create_draft_route(job_id: str, req: PrintifyCreateDraftRequest, x_jamesos_key: str | None = Header(default=None)):
+    require_key(x_jamesos_key)
+    try: return printify_product.create_product_draft(job_id, confirmed=req.confirmed, client=_printify_client())
+    except (JobQueueError, PrintifyAPIError) as exc: raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/image-worker/jobs/{job_id}/approve-production-artifact")

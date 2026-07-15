@@ -272,6 +272,20 @@ class ArtworkPipelineE2ETests(unittest.TestCase):
         for forbidden in ("upload(", "publish(", "order(", "create_listing", "submit_order", "provider_client"):
             self.assertNotIn(forbidden, source)
 
+    def test_mocked_precision_strategy_uses_no_ai_workflow_or_model(self) -> None:
+        report_path = self.root / "precision-report.json"
+        report = harness.run_mocked(report_path, production_strategy="precision_resize")
+        metadata = report["production_metadata"]["content"]
+        self.assertEqual(metadata["selected_strategy"], "precision_resize")
+        self.assertEqual(metadata["strategy_selected_by"], "test_harness")
+        self.assertFalse(metadata["ai_model_required"])
+        self.assertIsNone(metadata["model_name"]); self.assertIsNone(report["model"])
+        self.assertEqual(report["mocked_workflows"], [])
+        self.assertEqual(report["mocked_comfyui_responses"], [])
+        self.assertEqual(len(metadata["intermediate_stages"]), 1)
+        self.assertEqual(report["candidate"]["dimensions"], [4500, 5400])
+        self.assertEqual(report["candidate"]["mode"], "RGBA")
+
     def test_resume_reconstructs_from_authoritative_state_without_processing_or_approval(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

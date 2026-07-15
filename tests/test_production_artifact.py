@@ -328,7 +328,63 @@ class ProductionArtifactTests(unittest.TestCase):
             self.assertEqual(api.image_worker_prepare_production_artifact_route("job", api.ProductionArtifactRequest(confirmed=True, upscale_model_name=self.MODEL), None), prepared)
         self.assertEqual(authenticated.call_count, 2)
         approve.assert_called_once_with("job", approved_by="reviewer")
-        prepare.assert_called_once_with("job", upscale_model_name=self.MODEL, confirmed=True, target_overrides=None)
+        prepare.assert_called_once_with(
+            "job", upscale_model_name=self.MODEL, confirmed=True, target_overrides=None,
+            production_strategy="ai_upscale", artwork_category=None, strategy_selected_by="api_request",
+        )
+
+    def test_precision_resize_is_deterministic_non_ai_and_strategy_bound(self) -> None:
+        def scenario(root, job_id, original, derivative):
+            self.approve(job_id)
+            with patch.object(production_artifact.comfyui_client, "queue_prompt") as queue, \
+                    patch.object(upscale_model_registry, "select_upscale_model", side_effect=AssertionError("model must not load")):
+                result = production_artifact.prepare_production_artifact_for_job(
+                    job_id, confirmed=True, production_strategy="precision_resize", artwork_category="logo",
+                    strategy_selected_by="user",
+                )
+            queue.assert_not_called()
+            self.assertEqual(result["selected_strategy"], "precision_resize")
+            self.assertEqual(result["requested_strategy"], "precision_resize")
+            self.assertEqual(result["strategy_selected_by"], "user")
+            self.assertFalse(result["ai_model_required"])
+            self.assertIsNone(result["model_name"]); self.assertIsNone(result["model_sha256"])
+            self.assertEqual(len(result["intermediate_stages"]), 1)
+            stage = result["intermediate_stages"][0]
+            self.assertEqual(stage["processing_method"], "deterministic_precision_resize")
+            self.assertNotIn("comfyui_prompt_id", stage); self.assertNotIn("model_name", stage)
+            with Image.open(result["production_candidate_path"]) as candidate:
+                self.assertEqual(candidate.size, (10, 12)); self.assertEqual(candidate.mode, "RGBA")
+                self.assertLess(candidate.getchannel("A").getextrema()[0], 255)
+            approved = production_artifact.approve_production_artifact_for_job(
+                job_id, approved_by="final-reviewer", confirmed=True
+            )["approval"]
+            self.assertEqual(approved["strategy_evidence"]["selected_strategy"], "precision_resize")
+            self.assertFalse(approved["strategy_evidence"]["ai_model_required"])
+            self.assertIsNone(approved["model_evidence"])
+        self.sandbox(scenario)
+
+    def test_auto_is_conservative_and_explicit_override_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            uncertain = Path(temporary) / "uncertain.png"
+            Image.new("RGBA", (16, 16), (120, 120, 120, 128)).save(uncertain)
+            recommendation = production_artifact.recommend_production_strategy(uncertain)
+            self.assertEqual(recommendation["status"], "needs_strategy_selection")
+            self.assertEqual(production_artifact.recommend_production_strategy(uncertain, "flat_geometric")["selected_strategy"], "precision_resize")
+            self.assertEqual(production_artifact.recommend_production_strategy(uncertain, "painterly")["selected_strategy"], "ai_upscale")
+
+        def scenario(root, job_id, original, derivative):
+            self.approve(job_id)
+            state, patches = self.mocked_pipeline(job_id)
+            with patches[0], patches[1], patches[2], patches[3]:
+                result = production_artifact.prepare_production_artifact_for_job(
+                    job_id, confirmed=True, production_strategy="ai_upscale", artwork_category="logo",
+                    strategy_selected_by="user",
+                )
+            self.assertEqual(state["queue_count"], 3)
+            self.assertTrue(result["strategy_override_used"])
+            self.assertTrue(result["ai_model_required"])
+            self.assertEqual(result["selected_strategy"], "ai_upscale")
+        self.sandbox(scenario)
 
     def test_final_approval_requires_explicit_confirmation(self) -> None:
         def scenario(root, job_id, original, derivative):
