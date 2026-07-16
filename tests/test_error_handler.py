@@ -81,8 +81,23 @@ class ErrorHandlerTests(unittest.TestCase):
     def test_printify_status_mapping_and_write_has_one_attempt(self):
         unauthorized = PrintifyAPIError("list_shops", 401, "bad_token", "provider detail")
         limited = PrintifyAPIError("list_shops", 429, "limited", "later", True)
+        authentication = PrintifyAPIError("authentication", None, "not_configured", "token unavailable")
+        upload = PrintifyAPIError("upload_image", 400, "bad_image", "validation failed")
+        create = PrintifyAPIError("create_product", 400, "bad_product", "validation failed")
+        update = PrintifyAPIError("update_product", 400, "8150", "Validation failed.")
+        generic = PrintifyAPIError("get_product", 200, "invalid_json", "Response was not valid JSON.")
+
         self.assertEqual(unauthorized.code, "HTTP_UNAUTHORIZED"); self.assertNotIn("provider detail", unauthorized.user_message)
         self.assertEqual(limited.code, "HTTP_RATE_LIMITED"); self.assertTrue(limited.retryable)
+        self.assertEqual(authentication.code, "PRINTIFY_AUTHENTICATION_FAILED")
+        self.assertEqual(upload.code, "PRINTIFY_UPLOAD_FAILED")
+        self.assertEqual(create.code, "PRINTIFY_PRODUCT_CREATE_FAILED")
+        self.assertEqual(update.code, "PRINTIFY_PRODUCT_UPDATE_FAILED")
+        self.assertEqual(update.user_message, "The Printify product draft could not be updated.")
+        self.assertNotIn("upload", update.user_message.lower())
+        self.assertIn("draft-update payload", update.suggested_action)
+        self.assertEqual(generic.code, "PRINTIFY_REQUEST_FAILED")
+
         with tempfile.TemporaryDirectory() as temporary:
             token = Path(temporary) / "token"; token.write_text("secret"); token.chmod(0o600)
             response = Mock(status_code=500, headers={}); response.json.return_value = {"message": "failed"}
