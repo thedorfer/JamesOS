@@ -213,7 +213,8 @@ class ProductOrchestratorTests(unittest.TestCase):
         black=list(range(18100,18106));dark=list(range(18148,18154));white=list(range(18540,18546));sizes=product_orchestrator.DEFAULT_SIZES
         def rows(ids,color):return [{"id":item,"title":f"{color} / {size}","is_available":True,"is_enabled":True,"price":2499} for item,size in zip(ids,sizes)]
         current_rows=rows(black,"Black")+rows(white,"White");desired_rows=rows(black,"Black")+rows(dark,"Dark Grey Heather")+rows(white,"White")
-        placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0}
+        placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0,"src":"https://example.invalid/image.png",
+            "imageId":image_id,"layerType":"image","name":"response-only","type":"image","width":4500,"height":5400,"flipX":False,"flipY":False}
         current={"id":product_id,"shop_id":9437076,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
             "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[{"position":"front","variant_ids":black+white,"images":[placement]}]}]}
         verified=copy.deepcopy(current);verified["variants"]=desired_rows;verified["print_areas"][0]["variant_ids"]=black+dark+white;verified["print_areas"][0]["placeholders"][0]["variant_ids"]=black+dark+white
@@ -241,7 +242,9 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.get_product.side_effect=[current,verified]
             result=orchestrator.reconcile_draft("reconcile-job",confirmed=True);client.update_product.assert_called_once()
             payload=client.update_product.call_args.args[2];self.assertEqual(len(payload["variants"]),18);self.assertEqual({x["price"] for x in payload["variants"]},{2499})
-            self.assertEqual(payload["print_areas"][0]["placeholders"][0]["images"][0]["scale"],.85)
+            placeholder=payload["print_areas"][0]["placeholders"][0];image=placeholder["images"][0]
+            self.assertEqual(image,{"id":"upload-owned","x":.5,"y":.46,"scale":.85,"angle":0})
+            self.assertNotIn("variant_ids",placeholder);self.assertEqual(payload["print_areas"][0]["variant_ids"],[item["id"] for item in payload["variants"]])
             self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
             client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
             saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)

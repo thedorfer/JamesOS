@@ -299,11 +299,19 @@ class ProductOrchestrator:
             "placement_change_included":False,"publish_status":"not_published","order_status":"not_created","draft_marker":marker,
             "publication_assessment":publication}
         if not confirmed: return {"result":"draft_reconciliation_plan","write_performed":False,"plan":plan}
+        print_areas=[]
+        for remote_area in remote.get("print_areas") or []:
+            placeholders=[]
+            for remote_placeholder in remote_area.get("placeholders") or []:
+                images=[{key:image[key] for key in ("id","x","y","scale","angle") if key in image}
+                    for image in remote_placeholder.get("images") or []]
+                placeholder={"position":remote_placeholder.get("position"),"images":images}
+                if remote_placeholder.get("decoration_method") is not None:
+                    placeholder["decoration_method"]=remote_placeholder["decoration_method"]
+                placeholders.append(placeholder)
+            print_areas.append({"variant_ids":desired_ids,"placeholders":placeholders})
         payload={"title":remote.get("title"),"description":remote.get("description"),"tags":remote.get("tags") or [],"blueprint_id":12,"print_provider_id":29,
-            "variants":[{"id":item,"price":plan["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":copy.deepcopy(remote.get("print_areas") or [])}
-        for area in payload["print_areas"]:
-            area["variant_ids"]=desired_ids
-            for placeholder in area.get("placeholders") or []: placeholder["variant_ids"]=desired_ids
+            "variants":[{"id":item,"price":plan["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":print_areas}
         write_performed=bool(add or remove)
         if write_performed: client.update_product(state["shop_id"],product_id,payload)
         verified=client.get_product(state["shop_id"],product_id)
