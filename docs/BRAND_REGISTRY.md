@@ -1,6 +1,6 @@
 # Brand Registry
 
-The Brand Registry centralizes shop/brand rules for JamesOS creative commerce.
+The Brand Registry centralizes shop and brand rules for JamesOS creative commerce.
 
 Config:
 
@@ -14,54 +14,47 @@ Report:
 ~/JamesOSData/JamesOS/Reports/Brand Registry.md
 ```
 
-Default brands:
+Public repository code provides the registry schema and validation behavior. Deployment-specific brand names, shop identities, provider accounts, protected resources, pricing rules, and product policies belong in private local configuration outside Git.
 
-- `unitystitches` — enabled default brand for inclusive Etsy/POD apparel and gifts
-- `bagholder_supply_co` — enabled foundation profile for Bagholder Supply Co market-chaos shirts
-- `cheeky_peach_prints` — enabled foundation profile for Cheeky Peach Prints playful seasonal underwear
-- `degen_market_chaos` — disabled placeholder for future market-chaos/meme products
+The registry stores:
 
-The registry stores brand voice, allowed niches, blocked niches, product lists, blocked product/niche pairs, product mix, preferred POD provider, provider rules, design preferences, SEO preferences, pricing/mockup preferences, trademark notes, approval rules, and integration safety flags.
+- brand voice
+- allowed and blocked niches
+- allowed and blocked products
+- blocked product/niche pairs
+- preferred product mix
+- preferred POD provider
+- provider rules
+- design preferences
+- SEO preferences
+- pricing and mockup preferences
+- trademark notes
+- approval rules
+- integration safety flags
 
-UnityStitches defaults:
+Image Worker and Creative Intelligence use brand ID, brand name, and brand voice from the private local registry when preparing creative plans.
 
-- preferred POD provider: `printify`
-- fallback POD provider: `inkedjoy_manual_future`
-- women's underwear, panties, and thongs prefer Printify for now
+## Product/Niche Compatibility
 
-Bagholder Supply Co defaults:
+Compatibility rules are data-driven. A private brand can block unsafe or inappropriate product/niche combinations without hard-coding its identity into public source code or documentation.
 
-- preferred POD provider: `printify`
-- niche: `market_chaos_degen_tshirts`
-- product focus: shirts
-- daily design target: 3 to 5
-- stage default: `print_design_basic`
-
-Cheeky Peach Prints defaults:
-
-- preferred POD provider: `printify`
-- fallback POD provider: `inkedjoy_manual_future`
-- niche: `womens_underwear_playful_seasonal`
-- product focus: women's underwear, panties, and thongs
-- daily design target: 3 to 5
-- stage default: `print_design_basic`
-
-Image Worker and Creative Intelligence use brand ID, brand name, and brand voice from this registry when preparing local creative plans.
+For example, education- or child-related niches can be restricted to non-intimate products, while intimate apparel can be limited to explicitly approved adult-safe niches.
 
 ## Safety
 
-All default brands require approval for external actions.
+All brands require approval for consequential external actions unless a private deployment profile explicitly enables a supported guarded workflow.
 
-Current defaults:
+Public-safe defaults remain:
 
-- Etsy writes disabled
-- InkedJoy/Printify provider writes disabled
-- Printify writes disabled
-- ComfyUI execution disabled
-- no publishing
-- no uploading
+- marketplace writes disabled until configured
+- provider writes disabled until configured
+- local image execution approval-gated
+- no hidden publishing
+- no automatic uploading
 - no ordering
-- no sending
+- no sending to production
+
+Secrets and identifying deployment values must never be stored in the public registry schema, reports committed to Git, tests, or examples.
 
 ## API
 
@@ -73,4 +66,4 @@ GET /brands/{brand_id}
 POST /brands/{brand_id}/validate
 ```
 
-Validation checks product/niche compatibility for the selected brand. UnityStitches blocks teacher, school, classroom, education, GCU, kids, student, back-to-school, special education, speech therapy, occupational therapy, and child-related niches from pairing with women's underwear, panties, thongs, lingerie, or intimate apparel.
+Validation checks product/niche compatibility for the selected private brand profile.
