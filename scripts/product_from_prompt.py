@@ -73,6 +73,8 @@ def _main() -> int:
     reconcile = commands.add_parser("reconcile-draft"); reconcile.add_argument("--job-id", required=True)
     reconcile.add_argument("--confirm-printify-draft-update", action="store_true")
     review = commands.add_parser("review-draft"); review.add_argument("--job-id", required=True)
+    design_review=commands.add_parser("review-design");design_review.add_argument("--job-id",required=True)
+    approve_design=commands.add_parser("approve-design");approve_design.add_argument("--job-id",required=True);approve_design.add_argument("--candidate-id",required=True);approve_design.add_argument("--confirm-design-approval",action="store_true")
     recover = commands.add_parser("recover-draft"); recover.add_argument("--job-id", required=True)
     recover.add_argument("--confirm-printify-draft-recovery", action="store_true")
     prepare = commands.add_parser("prepare-listing"); prepare.add_argument("--job-id", required=True)
@@ -92,6 +94,10 @@ def _main() -> int:
         result=orchestrator.reconcile_draft(args.job_id,confirmed=args.confirm_printify_draft_update);print(json.dumps(result,indent=2));return 0
     elif args.command == "review-draft":
         result=orchestrator.review_draft(args.job_id);print(json.dumps(result,indent=2));return 0
+    elif args.command == "review-design":
+        result=orchestrator.review_design(args.job_id);print(json.dumps(result,indent=2));return 0
+    elif args.command == "approve-design":
+        result=orchestrator.approve_design(args.job_id,args.candidate_id,confirmed=args.confirm_design_approval);print(json.dumps(result,indent=2));return 0
     elif args.command == "recover-draft":
         result=orchestrator.recover_draft(args.job_id,confirmed=args.confirm_printify_draft_recovery);print(json.dumps(result,indent=2));return 0
     elif args.command == "prepare-listing":

@@ -72,6 +72,33 @@ class ProductOrchestratorTests(unittest.TestCase):
         payload["tags"]=[""]
         with self.assertRaisesRegex(ValidationError,"tags"):product_orchestrator.validate_create_payload(payload,requested)
 
+    def test_independent_candidates_are_distinct_safe_complete_and_require_human_approval(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client_factory=Mock(side_effect=AssertionError("remote client must be blocked before approval"));orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=client_factory))
+            prompt="Create a design featuring the exact phrase YOU ARE SAFE WITH ME. Include a rainbow heart and use a centered front design."
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                state=orchestrator.create(prompt=prompt,shop_id=9437076,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="design-gate")
+            candidates=state["evidence"]["candidates"];self.assertEqual(state["brief"]["exact_text"],"YOU ARE SAFE WITH ME");self.assertEqual(len({item["png_sha256"] for item in candidates}),3)
+            for item in candidates:
+                self.assertEqual(item["rendered_text_lines"],["YOU ARE","SAFE","WITH ME"]);self.assertEqual(item["rendered_phrase"],"YOU ARE SAFE WITH ME");self.assertEqual(item["motif_evidence"]["motif"],"rainbow_heart")
+                left,top,right,bottom=item["visible_alpha_bounds"];self.assertGreaterEqual(left,360);self.assertGreaterEqual(top,432);self.assertLessEqual(right,4140);self.assertLessEqual(bottom,4968);self.assertTrue(item["quality_checks"]["hard_safe_bounds"])
+            self.assertFalse(state["evidence"]["selection"]["approval"]["human_artistic_approval"]);self.assertEqual(state["stage"],"failed");client_factory.assert_not_called();self.assertTrue((root/"jobs/design-gate/design-review/design-review-sheet.png").is_file())
+            product_orchestrator.validate_candidate_uniqueness(candidates)
+            with self.assertRaisesRegex(ValidationError,"distinct image hashes"):product_orchestrator.validate_candidate_uniqueness([candidates[0],{**candidates[1],"png_sha256":candidates[0]["png_sha256"]}])
+
+    def test_review_and_approval_are_local_and_hash_bound(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client_factory=Mock(side_effect=AssertionError("no remote call"));orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=client_factory));prompt="Shirt featuring the exact phrase YOU ARE SAFE WITH ME. Add a rainbow heart."
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                orchestrator.create(prompt=prompt,shop_id=9437076,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="approval")
+            review=orchestrator.review_design("approval");self.assertFalse(review["write_performed"]);self.assertFalse(review["external_call_performed"]);client_factory.assert_not_called()
+            plan=orchestrator.approve_design("approval","prompt_balanced");self.assertFalse(plan["write_performed"]);approved=orchestrator.approve_design("approval","prompt_balanced",confirmed=True);self.assertTrue(approved["human_artistic_approval"]);client_factory.assert_not_called()
+            state=orchestrator.load("approval");candidate=state["evidence"]["selection"]["selected"];self.assertEqual(state["evidence"]["human_design_approval"]["candidate_sha256"],candidate["png_sha256"])
+            Path(candidate["png_path"]).write_bytes(Path(candidate["png_path"]).read_bytes()+b"changed")
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                resumed=orchestrator.resume("approval",confirm_printify_draft=True)
+            self.assertEqual(resumed["stage"],"failed");client_factory.assert_not_called();self.assertNotIn("secret",json.dumps(review).lower())
+
     def test_new_create_without_source_never_queries_job_queue_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);evidence=self.fixture(root);source_lookup=Mock(side_effect=AssertionError("source JobQueue lookup must not run"));independent=Mock(return_value={**evidence,"origin":"independent_prompt"})
@@ -721,13 +748,14 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.create_product.assert_not_called();client.update_product.assert_not_called()
             client.upload_image_contents.assert_not_called();client.upload_image_url.assert_not_called()
 
-    def independent_recovery_fixture(self,root,*,upload=True):
+    def independent_recovery_fixture(self,root,*,upload=True,approved=False):
         selected_path=root/"selected.png";Image.new("RGBA",(4500,5400),(0,0,0,0)).save(selected_path);selected_sha=sha256(selected_path.read_bytes()).hexdigest();ids=list(range(1,19))
         state={"job_id":"independent","shop_id":9437076,"stage":"failed","source_job_id":None,"original_prompt":"Create a design featuring the exact phrase YOU ARE SAFE WITH ME. Use a centered front design.",
             "brief":{"price_cents":2499,"garment_colors":product_orchestrator.DEFAULT_COLORS,"sizes":product_orchestrator.DEFAULT_SIZES},"publish_status":"not_published","order_status":"not_created","transitions":[],
             "last_error":{"error_id":"err-original","code":"PRINTIFY_PRODUCT_CREATE_FAILED","diagnostic_path":"/protected/original.json"},"evidence":{"selection":{"selected":{"candidate_id":"prompt_centered","png_path":str(selected_path),"png_sha256":selected_sha}},
                 "variant_selection":{"selected_variant_ids":ids},"draft_marker":"marker-independent"}}
         if upload:state["evidence"]["upload"]={"printify_image_id":"upload-existing","selected_design_sha256":selected_sha}
+        if approved:state["evidence"]["human_design_approval"]={"approved":True,"candidate_id":"prompt_centered","candidate_sha256":selected_sha}
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("dry run must not acquire client"))))
         product_orchestrator._atomic_json(orchestrator._path("independent"),state);return orchestrator,state,ids
 
@@ -735,12 +763,15 @@ class ProductOrchestratorTests(unittest.TestCase):
         for reusable in (True,False):
             with self.subTest(reusable=reusable),tempfile.TemporaryDirectory() as temporary:
                 orchestrator,state,ids=self.independent_recovery_fixture(Path(temporary),upload=reusable);before=orchestrator._path("independent").read_bytes();plan=orchestrator.recover_draft("independent")
-                self.assertEqual(plan["reusable_upload_exists"],reusable);self.assertEqual(plan["new_upload_required"],not reusable);self.assertTrue(plan["new_product_would_be_created"]);self.assertEqual(plan["enabled_variant_count"],18)
+                self.assertEqual(plan["reusable_upload_exists"],reusable);self.assertEqual(plan["new_upload_required"],not reusable);self.assertTrue(plan["new_product_would_be_created"]);self.assertEqual(plan["enabled_variant_count"],18);self.assertFalse(plan["safe_to_recover"]);self.assertTrue(plan["human_design_approval_required"])
                 self.assertEqual(plan["title"],"You Are Safe With Me Unisex Tee");self.assertTrue(all(tag.strip() for tag in plan["tags"]));self.assertEqual(plan["selected_design_candidate"],"prompt_centered");self.assertEqual(orchestrator._path("independent").read_bytes(),before)
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator,state,ids=self.independent_recovery_fixture(Path(temporary),upload=False);state["evidence"]["rejected_uploads"]=[{"printify_image_id":"old-rejected","status":"rejected_unusable"}];product_orchestrator._atomic_json(orchestrator._path("independent"),state);plan=orchestrator.recover_draft("independent")
+            self.assertTrue(plan["previous_upload_rejected"]);self.assertFalse(plan["reusable_upload_exists"]);self.assertTrue(plan["new_upload_required"])
 
     def test_independent_recovery_reuses_upload_and_creates_front_only_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary);orchestrator,state,ids=self.independent_recovery_fixture(root,upload=True);client=Mock();catalog={"variants":[]}
+            root=Path(temporary);orchestrator,state,ids=self.independent_recovery_fixture(root,upload=True,approved=True);client=Mock();catalog={"variants":[]}
             for index,item in enumerate(ids):catalog["variants"].append({"id":item,"title":f"{product_orchestrator.DEFAULT_COLORS[index//6]} / {product_orchestrator.DEFAULT_SIZES[index%6]}","is_available":True})
             catalog["variants"].append({"id":99,"title":"Navy / S","is_available":True});client.get_variants.return_value=catalog;client.list_products.return_value={"data":[]};client.get_upload.return_value={"id":"upload-existing"};client.create_product.return_value={"id":"recovered-draft"}
             client.get_product.return_value={"id":"recovered-draft","variants":[{"id":item,"is_enabled":item in ids} for item in ids+[99]],"print_areas":[{"placeholders":[{"position":"front","images":[{"id":"upload-existing"}]}]}]};orchestrator.adapters.client_factory=lambda:client

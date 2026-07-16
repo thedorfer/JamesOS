@@ -436,38 +436,71 @@ def normalize_source_job_id(value: str | None) -> str | None:
 
 def _independent_evidence(state: dict[str, Any], root: Path, brief: dict[str, Any]) -> dict[str, Any]:
     design_root=root/"independent-design";design_root.mkdir(parents=True,exist_ok=True);candidate=design_root/"prompt-source.png"
-    canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));draw=ImageDraw.Draw(canvas);phrase=brief["exact_text"] or "YOU ARE SAFE WITH ME"
-    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";words=phrase.split();lines=[];line=""
-    for word in words:
-        proposed=f"{line} {word}".strip()
-        if len(proposed)>18 and line:lines.append(line);line=word
-        else:line=proposed
-    if line:lines.append(line)
-    size=max(300,min(720,1800//max(1,len(lines))));font=ImageFont.truetype(font_path,size)
-    palette=((236,82,82,255),(244,154,72,255),(238,204,83,255),(77,178,124,255),(70,132,205,255),(145,91,189,255))
-    total=len(lines)*(size+90);y=(5400-total)//2
-    for index,text in enumerate(lines):
-        box=draw.textbbox((0,0),text,font=font,stroke_width=18);width=box[2]-box[0];x=(4500-width)//2
-        draw.rounded_rectangle((x-100,y-45,x+width+100,y+size+55),radius=90,fill=palette[index%len(palette)])
-        draw.text((x,y),text,font=font,fill=(255,255,255,255),stroke_width=18,stroke_fill=(35,30,45,255));y+=size+90
-    canvas.save(candidate);canvas.close();candidate_sha=_file_sha(candidate)
+    canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));canvas.save(candidate);canvas.close();candidate_sha=_file_sha(candidate)
+    motif="rainbow_heart" if "rainbow heart" in state["original_prompt"].casefold() else "heart"
     approval={"job_id":state["job_id"],"origin":"independent_prompt","prompt_sha256":sha256(state["original_prompt"].encode()).hexdigest(),"approved_artifact_sha256":candidate_sha,
-        "approval_scope":"local technical generation","human_artistic_approval":False,"created_at":datetime.now().astimezone().isoformat()}
+        "approval_scope":"local generation input only","human_artistic_approval":False,"phrase":brief["exact_text"],"motif":motif,
+        "generation_inputs":{"phrase":brief["exact_text"],"motif":motif,"palette":"high_contrast_rainbow","layout_count":3},"created_at":datetime.now().astimezone().isoformat()}
     approval_path=design_root/"local-generation-evidence.json";_atomic_json(approval_path,approval)
-    return {"origin":"independent_prompt","candidate":candidate,"candidate_sha":candidate_sha,"approval_sha":_file_sha(approval_path),"production":{"canvas_dimensions":[4500,5400]},"job_root":root}
+    return {"origin":"independent_prompt","candidate":candidate,"candidate_sha":candidate_sha,"approval_sha":_file_sha(approval_path),"production":{"canvas_dimensions":[4500,5400]},"job_root":root,"generation_inputs":approval["generation_inputs"]}
 
 
 def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
-    root.mkdir(parents=True,exist_ok=True);result=[]
-    for index,name in enumerate(("prompt_centered","prompt_balanced","prompt_compact")):
-        path=root/f"{name}.png";path.write_bytes(Path(evidence["candidate"]).read_bytes());digest=_file_sha(path)
-        result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,
-            "source_artwork_sha256":evidence["candidate_sha"],"font_sha256":None,"layout_id":name,"treatment_id":"local_prompt_v1",
-            "quality_checks":{"hard_phrase_correct":True,"hard_no_duplicate_or_missing_text":True,"hard_safe_bounds":True,"hard_artwork_integrity":True,
-                "hard_dimensions":True,"hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True},
-            "thumbnail_path":str(path),"thumbnail_readability_score":10-index,"garment_contrast_score":9,"balanced_bounds_score":8-index,
-            "warnings":["Local technical generation does not replace human artistic review."]})
+    root.mkdir(parents=True,exist_ok=True);phrase=" ".join(str(brief.get("exact_text") or "").split()).upper()
+    if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design requires an exact phrase.",operation="product_orchestrator",stage="design_candidates_ready")
+    words=phrase.split();lines=[" ".join(words[:2])," ".join(words[2:-2])," ".join(words[-2:])] if len(words)>=5 else [" ".join(part) for part in (words[:max(1,len(words)//3)],words[max(1,len(words)//3):max(2,2*len(words)//3)],words[max(2,2*len(words)//3):]) if part]
+    if phrase=="YOU ARE SAFE WITH ME":lines=["YOU ARE","SAFE","WITH ME"]
+    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";palette=((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
+    def rainbow_heart(canvas,bounds):
+        x1,y1,x2,y2=bounds;w=x2-x1;h=y2-y1;mask=Image.new("L",(w,h),0);md=ImageDraw.Draw(mask);md.ellipse((0,0,w*.58,h*.58),fill=255);md.ellipse((w*.42,0,w,h*.58),fill=255);md.polygon(((0,h*.32),(w,h*.32),(w*.5,h)),fill=255)
+        stripes=Image.new("RGBA",(w,h),(0,0,0,0));sd=ImageDraw.Draw(stripes);stripe=max(1,h//len(palette))
+        for index,color in enumerate(palette):sd.rectangle((0,index*stripe,w,(index+1)*stripe+2),fill=color)
+        canvas.alpha_composite(Image.composite(stripes,Image.new("RGBA",(w,h),(0,0,0,0)),mask),(x1,y1));mask.close();stripes.close()
+    def draw_lines(canvas,rendered,box,fill=(255,255,255,255),stroke=(30,30,38,255)):
+        x1,y1,x2,y2=box;available=x2-x1;size=720
+        while size>180:
+            font=ImageFont.truetype(font_path,size);widths=[ImageDraw.Draw(canvas).textbbox((0,0),line,font=font,stroke_width=18)[2] for line in rendered]
+            if max(widths,default=0)<=available:break
+            size-=20
+        gap=65;heights=[];draw=ImageDraw.Draw(canvas)
+        for line in rendered:
+            bounds=draw.textbbox((0,0),line,font=font,stroke_width=18);heights.append(bounds[3]-bounds[1])
+        total=sum(heights)+gap*(len(rendered)-1);y=y1+(y2-y1-total)//2
+        for line,height in zip(rendered,heights):
+            bounds=draw.textbbox((0,0),line,font=font,stroke_width=18);width=bounds[2]-bounds[0];draw.text((x1+(available-width)//2,y),line,font=font,fill=fill,stroke_width=18,stroke_fill=stroke);y+=height+gap
+    result=[]
+    for name in ("prompt_centered","prompt_balanced","prompt_compact"):
+        canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));draw=ImageDraw.Draw(canvas)
+        if name=="prompt_centered":rainbow_heart(canvas,(950,650,3550,3250));draw_lines(canvas,lines,(520,2050,3980,4700))
+        elif name=="prompt_balanced":rainbow_heart(canvas,(420,1180,1950,2850));draw_lines(canvas,lines,(1750,950,4050,4050));draw.arc((650,700,3850,4550),15,345,fill=(255,255,255,255),width=48)
+        else:
+            draw.rounded_rectangle((520,520,3980,4740),radius=520,fill=(24,28,45,235),outline=(255,255,255,255),width=55);rainbow_heart(canvas,(1450,700,3050,2300));draw_lines(canvas,lines,(780,2250,3720,4470))
+        path=root/f"{name}.png";canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);phrase_ok=" ".join(lines)==phrase
+        checks={"hard_phrase_correct":phrase_ok,"hard_no_duplicate_or_missing_text":phrase_ok,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_dimensions":True,
+            "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True}
+        result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,"source_artwork_sha256":evidence["candidate_sha"],
+            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"treatment_id":"deterministic_rainbow_heart_v2","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
+            "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","heart"),"rendering":"deterministic_rainbow_mask"},
+            "quality_checks":checks,"thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":9,"balanced_bounds_score":9,
+            "warnings":["Automated technical checks do not prove artistic quality; human artistic review is required."]})
+    validate_candidate_uniqueness(result)
+    if any(not all(item["quality_checks"].values()) for item in result):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidate failed phrase, dimensions, transparency, or safe-bound validation.",operation="product_orchestrator",stage="design_candidates_ready",context={"candidate_checks":[{"candidate_id":item["candidate_id"],"checks":item["quality_checks"],"alpha_bounds":item["visible_alpha_bounds"]} for item in result]})
+    _write_design_review(root.parent,result,phrase)
     return result
+
+
+def validate_candidate_uniqueness(candidates:list[dict[str,Any]])->None:
+    hashes=[item.get("png_sha256") for item in candidates]
+    if not hashes or None in hashes or len(set(hashes))!=len(candidates):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidates must have distinct image hashes.",operation="product_orchestrator",stage="design_candidates_ready")
+
+
+def _write_design_review(job_root:Path,candidates:list[dict[str,Any]],phrase:str)->dict[str,str]:
+    review_root=job_root/"design-review";review_root.mkdir(parents=True,exist_ok=True);panels=[]
+    for item in candidates:
+        with Image.open(item["png_path"]) as source:panel=Image.new("RGB",(700,940),(230,230,230));image=source.convert("RGBA");image.thumbnail((650,760),Image.Resampling.LANCZOS);checker=Image.new("RGBA",image.size,(45,45,50,255));checker.alpha_composite(image);panel.paste(checker.convert("RGB"),((700-image.width)//2,80));panels.append((item,panel));image.close();checker.close()
+    sheet=Image.new("RGB",(700*len(panels),1040),(250,250,250));draw=ImageDraw.Draw(sheet)
+    for index,(item,panel) in enumerate(panels):sheet.paste(panel,(index*700,0));draw.text((index*700+25,950),f'{item["candidate_id"]}\n4500x5400 · bounds {item["visible_alpha_bounds"]}\nsafe={item["quality_checks"]["hard_safe_bounds"]}',fill=(20,20,20));panel.close()
+    sheet_path=review_root/"design-review-sheet.png";sheet.save(sheet_path);sheet.close();report={"result":"design_review_ready","phrase":phrase,"human_artistic_review_required":True,"candidates":[{"candidate_id":item["candidate_id"],"dimensions":[4500,5400],"alpha_bounds":item["visible_alpha_bounds"],"safe_margin_passed":item["quality_checks"]["hard_safe_bounds"],"rendered_phrase":item["rendered_phrase"],"rendered_text_lines":item["rendered_text_lines"],"sha256":item["png_sha256"],"motif_evidence":item["motif_evidence"]} for item in candidates],"review_sheet_path":str(sheet_path),"warning":"Human artistic review is required; automated checks prove only technical properties."};json_path=review_root/"design-review.json";_atomic_json(json_path,report);return {"review_sheet_path":str(sheet_path),"json_report_path":str(json_path)}
 
 
 def _etsy_public_visibility(handle: str) -> str:
@@ -521,6 +554,37 @@ class ProductOrchestrator:
 
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
+
+    def review_design(self,job_id:str)->dict[str,Any]:
+        if not job_id or Path(job_id).name!=job_id:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Design review requires a single existing job ID.",operation="product_orchestrator.review_design",stage="input")
+        state=self.load(job_id);path=self._path(job_id).parent/"design-review"/"design-review.json"
+        try:report=json.loads(path.read_text(encoding="utf-8"))
+        except (OSError,ValueError) as exc:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Local design review evidence is unavailable; regenerate candidates first.",operation="product_orchestrator.review_design",stage="review") from exc
+        return {**report,"write_performed":False,"printify_write_performed":False,"external_call_performed":False,"human_artistic_approval":bool((state.get("evidence",{}).get("human_design_approval") or {}).get("approved"))}
+
+    def approve_design(self,job_id:str,candidate_id:str,*,confirmed:bool=False)->dict[str,Any]:
+        state=self.load(job_id);candidates=state.get("evidence",{}).get("candidates") or [];candidate=next((item for item in candidates if item.get("candidate_id")==candidate_id),None)
+        if not candidate:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Design candidate ID was not found in this job.",operation="product_orchestrator.approve_design",stage="approval")
+        plan={"result":"design_approval_plan","job_id":job_id,"candidate_id":candidate_id,"candidate_sha256":candidate["png_sha256"],"write_performed":False,"printify_write_performed":False,"human_artistic_approval":False}
+        if not confirmed:return plan
+        if _file_sha(Path(candidate["png_path"]))!=candidate["png_sha256"]:raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH",diagnostic_message="Candidate changed before design approval.",operation="product_orchestrator.approve_design",stage="approval")
+        approval={"approved":True,"human_artistic_approval":True,"candidate_id":candidate_id,"candidate_sha256":candidate["png_sha256"],"approved_at":datetime.now().astimezone().isoformat(),"approval_scope":"exact local candidate hash only"}
+        path=self._path(job_id).parent/"design-review"/"human-design-approval.json";_atomic_json(path,approval);state["evidence"]["human_design_approval"]={**approval,"approval_path":str(path)}
+        state["evidence"]["selection"]["selected"]=candidate;state["evidence"]["selection"]["approval"]={**state["evidence"]["selection"].get("approval",{}),"human_artistic_approval":True,"approved_candidate_sha256":candidate["png_sha256"]}
+        state["evidence"]["listing"]=generate_listing(state["brief"],candidate);_atomic_json(self._path(job_id),state)
+        return {"result":"design_approved","job_id":job_id,"candidate_id":candidate_id,"candidate_sha256":candidate["png_sha256"],"write_performed":True,"local_write_performed":True,"printify_write_performed":False,"human_artistic_approval":True}
+
+    def regenerate_independent_design(self,job_id:str)->dict[str,Any]:
+        state=self.load(job_id);evidence=state.get("evidence") or {};old_error=copy.deepcopy(state.get("last_error"));old_upload=copy.deepcopy(evidence.get("upload") or {})
+        if state.get("source_job_id") or not evidence.get("selection") or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Only an unpublished, unordered independent-design job can be regenerated locally.",operation="product_orchestrator.regenerate_design",stage="ownership")
+        old_brief=state.get("brief") or {};brief=normalize_prompt(state["original_prompt"],price=old_brief.get("price_cents"),garment_colors=old_brief.get("garment_colors") or DEFAULT_COLORS,sizes=old_brief.get("sizes") or DEFAULT_SIZES)
+        generated=self.adapters.independent_evidence(state,self._path(job_id).parent,brief);candidates=self.adapters.independent_candidates(generated,self._path(job_id).parent/"design-candidates",brief);selection=select_candidate(candidates,brief)
+        state["brief"]=brief;evidence["artwork"]={"path":str(generated["candidate"]),"sha256":generated["candidate_sha"],"approval_sha256":generated["approval_sha"]};evidence["candidates"]=candidates;evidence["selection"]=selection;evidence["listing"]=generate_listing(brief,selection["selected"]);evidence.pop("human_design_approval",None)
+        if old_upload.get("printify_image_id"):
+            evidence.setdefault("rejected_uploads",[]).append({"printify_image_id":old_upload["printify_image_id"],"selected_design_sha256":old_upload.get("selected_design_sha256"),"status":"rejected_unusable","reason":"artwork_failed_visual_and_phrase_validation","rejected_at":datetime.now().astimezone().isoformat(),"remote_delete_performed":False})
+        evidence.pop("upload",None);state.setdefault("local_repair_history",[]).append({"operation":"regenerate_independent_design","timestamp":datetime.now().astimezone().isoformat(),"preserved_error_id":(old_error or {}).get("error_id"),"previous_upload_rejected":bool(old_upload.get("printify_image_id"))})
+        state["last_error"]=old_error;state["stage"]="failed";_atomic_json(self._path(job_id),state);review=self.review_design(job_id)
+        return {"result":"independent_design_regenerated","job_id":job_id,"write_performed":True,"local_write_performed":True,"printify_write_performed":False,"candidate_count":len(candidates),"candidate_hashes":[item["png_sha256"] for item in candidates],"review_sheet_path":review["review_sheet_path"],"human_design_approval_required":True,"previous_upload_rejected":bool(old_upload.get("printify_image_id"))}
 
     def send_to_etsy_review(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:
@@ -836,7 +900,7 @@ class ProductOrchestrator:
     def _recover_independent_create(self,state:dict[str,Any],*,confirmed:bool=False)->dict[str,Any]:
         evidence=state.get("evidence") or {};selected=(evidence.get("selection") or {}).get("selected") or {};selected_path=Path(str(selected.get("png_path") or ""))
         selected_sha=selected.get("png_sha256");upload=evidence.get("upload") or {};upload_id=upload.get("printify_image_id")
-        reusable=bool(upload_id and upload.get("selected_design_sha256")==selected_sha)
+        rejected=evidence.get("rejected_uploads") or [];previous_upload_rejected=bool(rejected);rejected_ids={item.get("printify_image_id") for item in rejected};reusable=bool(upload_id and upload_id not in rejected_ids and upload.get("selected_design_sha256")==selected_sha)
         if state.get("shop_id")!=RECOVERY_SHOP_ID or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Independent recovery requires the original unpublished, unordered Printify shop job.",operation="product_orchestrator.recover_draft",stage="ownership")
         if not selected_path.is_file() or _file_sha(selected_path)!=selected_sha:raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH",diagnostic_message="Selected local design candidate no longer matches recovery evidence.",operation="product_orchestrator.recover_draft",stage="artwork")
@@ -844,11 +908,14 @@ class ProductOrchestrator:
         if brief["garment_colors"]!=DEFAULT_COLORS or brief["sizes"]!=DEFAULT_SIZES:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent recovery is restricted to Black, Dark Grey Heather, and White in sizes S through 3XL.",operation="product_orchestrator.recover_draft",stage="variants")
         listing=generate_listing(brief,selected);marker=evidence.get("draft_marker") or _draft_marker(state);stored_ids=(evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
         if len(stored_ids)!=18 or len(set(stored_ids))!=18:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent recovery requires exactly 18 recorded requested variants.",operation="product_orchestrator.recover_draft",stage="variants")
+        approval=evidence.get("human_design_approval") or {};approval_valid=approval.get("approved") is True and approval.get("candidate_id")==selected.get("candidate_id") and approval.get("candidate_sha256")==selected_sha and _file_sha(selected_path)==selected_sha
         plan={"result":"independent_draft_recovery_plan","write_performed":False,"printify_write_performed":False,"job_id":state["job_id"],"shop_id":state["shop_id"],
             "reusable_upload_exists":reusable,"upload_id":upload_id if reusable else None,"new_upload_required":not reusable,"new_upload_would_occur":not reusable,
             "new_product_would_be_created":True,"enabled_variant_count":18,"title":listing["title"],"tags":listing["tags"],"selected_design_candidate":selected.get("candidate_id"),
-            "selected_design_path":str(selected_path),"front_artwork_only":True,"publish_status":"not_published","order_status":"not_created","safe_to_recover":True}
+            "selected_design_path":str(selected_path),"front_artwork_only":True,"previous_upload_rejected":previous_upload_rejected,"human_design_approval_required":not approval_valid,
+            "publish_status":"not_published","order_status":"not_created","safe_to_recover":approval_valid}
         if not confirmed:return plan
+        if not approval_valid:raise PermissionError("Human approval of the corrected candidate hash is required before recovery")
         client=self.adapters.client_factory();catalog=client.get_variants(12,29);selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES);chosen=selection["selected_variant_ids"]
         if len(chosen)!=18 or set(chosen)!=set(stored_ids):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Current Printify catalog variants differ from the failed job recovery evidence.",operation="product_orchestrator.recover_draft",stage="variants")
         payload={"title":listing["title"],"description":listing["description"],"tags":[*listing["tags"],marker],"blueprint_id":12,"print_provider_id":29,
@@ -1135,6 +1202,10 @@ class ProductOrchestrator:
             if "listing_ready" not in completed:
                 listing = generate_listing(state["brief"], selected); state["evidence"]["listing"] = listing
                 self._transition(state, "listing_ready", "generate_listing", listing)
+            if evidence.get("origin")=="independent_prompt":
+                approval=state["evidence"].get("human_design_approval") or {};candidate=state["evidence"]["selection"]["selected"]
+                approval_valid=approval.get("approved") is True and approval.get("candidate_id")==candidate.get("candidate_id") and approval.get("candidate_sha256")==candidate.get("png_sha256") and _file_sha(Path(candidate["png_path"]))==candidate.get("png_sha256")
+                if not approval_valid:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Human approval of the exact selected design hash is required before Printify upload.",operation="product_orchestrator",stage="design_approval",state={"external_write_attempted":False,"external_write_completed":False,"safe_to_retry":True})
             if not confirmed:
                 raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify draft creation requires --confirm-printify-draft.", operation="product_orchestrator", stage="printify_image_uploaded",
                     state={"external_write_attempted": False, "external_write_completed": False, "safe_to_retry": True}, suggested_action="Resume with --confirm-printify-draft after reviewing the local evidence.")
