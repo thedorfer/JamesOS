@@ -265,6 +265,14 @@ flutter analyze
 flutter run -d linux
 ```
 
+## License
+
+JamesOS is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md).
+
+Noncommercial use, modification, and redistribution are permitted only under the terms of that license. Commercial use requires separate written permission from James Allendoerfer.
+
+This is a source-available license and is not an open-source license. See [NOTICE](NOTICE) for the required copyright and licensing notice, and [CONTRIBUTING.md](CONTRIBUTING.md) for the current contribution policy.
+
 ## Documentation
 
 - [Current Status](docs/CURRENT_STATUS.md)
