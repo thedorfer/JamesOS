@@ -39,6 +39,8 @@ def _main() -> int:
     review = commands.add_parser("review-draft"); review.add_argument("--job-id", required=True)
     recover = commands.add_parser("recover-draft"); recover.add_argument("--job-id", required=True)
     recover.add_argument("--confirm-printify-draft-recovery", action="store_true")
+    prepare = commands.add_parser("prepare-listing"); prepare.add_argument("--job-id", required=True)
+    prepare.add_argument("--confirm-printify-listing-update", action="store_true")
     args = parser.parse_args(); orchestrator = ProductOrchestrator()
     if args.command == "create":
         state = orchestrator.create(prompt=args.prompt, source_job_id=args.source_job_id, shop_id=args.shop_id, mode=args.mode,
@@ -52,6 +54,8 @@ def _main() -> int:
         result=orchestrator.review_draft(args.job_id);print(json.dumps(result,indent=2));return 0
     elif args.command == "recover-draft":
         result=orchestrator.recover_draft(args.job_id,confirmed=args.confirm_printify_draft_recovery);print(json.dumps(result,indent=2));return 0
+    elif args.command == "prepare-listing":
+        result=orchestrator.prepare_listing(args.job_id,confirmed=args.confirm_printify_listing_update);print(json.dumps(result,indent=2));return 0
     else:
         path = orchestrator.report(args.job_id); print(json.dumps({"result":"report_ready","job_id":args.job_id,"report_path":str(path)},indent=2)); return 0
     result = response_summary(state, orchestrator)

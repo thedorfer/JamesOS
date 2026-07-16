@@ -30,7 +30,7 @@ POLICY = "draft_only_autopilot"
 PROTECTED_PRODUCT_ID = "6a57eaa752f2c3e4700dbf23"
 STAGES = ("prompt_received", "brief_ready", "artwork_ready", "production_artifact_ready", "design_candidates_ready",
           "design_selected", "listing_ready", "printify_image_uploaded", "printify_draft_created", "mockups_downloaded",
-          "awaiting_human_approval", "failed")
+          "awaiting_human_approval", "awaiting_printify_human_review", "failed")
 DEFAULT_COLORS = ["Black", "Dark Grey Heather", "White"]
 DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
 COLOR_EXACT = {"black":"Black", "dark grey heather":"Dark Grey Heather", "white":"White"}
@@ -43,6 +43,51 @@ RECOVERY_TITLE = "Love Is Love Rainbow Heart Unisex Tee"
 RECOVERY_DESCRIPTION = "A playful bold retro Love Is Love design on a soft Bella+Canvas 3001 unisex tee."
 RECOVERY_TAGS = ["love is love","rainbow heart","inclusive shirt","retro tee","unisex shirt","jamesos-orchestrator-00f7f20a52144d9306ff"]
 RECOVERY_VARIANT_IDS = [*range(18100,18106),*range(18148,18154),*range(18540,18546)]
+LISTING_PRODUCT_ID = "6a5902f1c777748ffa050166"
+ETSY_TITLE = "Love Is Love Rainbow Heart Shirt: LGBTQ+ Pride Unisex Tee, Inclusive Gift"
+ETSY_DESCRIPTION = """Celebrate equality, pride, and authentic self-expression with this Love Is Love rainbow heart shirt. The playful retro artwork makes this LGBTQ+ pride unisex tee a colorful everyday statement and a thoughtful inclusive gift for Pride Month, friends, partners, allies, and anyone who believes love belongs to everyone.
+
+🌈 WHY YOU'LL LOVE IT
+
+• Bold rainbow heart artwork featuring the words LOVE IS LOVE
+• Soft Bella+Canvas 3001 unisex jersey tee
+• Comfortable retail fit with a classic crew neckline
+• Front direct-to-garment print with no back design
+• Available in Black, Dark Grey Heather, and White
+• Sizes S through 3XL
+
+👕 FIT & SIZING
+
+This shirt has a modern unisex fit. Choose your usual size for an everyday fit or size up for a roomier look. Please review the size chart before ordering. Fiber content may vary by garment color.
+
+🧼 CARE INSTRUCTIONS
+
+Turn the shirt inside out and machine wash cold with similar colors. Tumble dry low or hang dry. Do not bleach, dry clean, or iron directly over the printed design.
+
+🎁 PERFECT FOR
+
+Pride Month, LGBTQ+ celebrations, equality advocates, queer pride gifts, ally gifts, birthdays, festivals, partners, friends, and colorful everyday wear.
+
+🖨️ MADE TO ORDER
+
+Designed by UnityStitches and printed to order by our production partner. Slight differences in color or placement may occur between the on-screen mockup and the finished garment.
+
+COLORS
+
+Black
+Dark Grey Heather
+White
+
+SIZES
+
+S
+M
+L
+XL
+2XL
+3XL"""
+ETSY_TAGS = ["love is love shirt","lgbtq pride shirt","rainbow heart tee","queer pride gift","equality t shirt","inclusive clothing",
+    "retro rainbow tee","pride month gift","gay pride shirt","lgbtq ally gift","unisex graphic tee","pride festival tee","colorful heart tee"]
 
 
 def _json_sha(value: Any) -> str:
@@ -196,6 +241,33 @@ def mockup_identifies_variant(image: dict[str, Any], variant_id: int) -> bool:
     return bool(re.search(pattern,mockup_id) or re.search(pattern,source_path))
 
 
+def validate_etsy_tags(tags: list[str]) -> None:
+    if len(tags)!=13 or len(set(tags))!=13 or any(not tag or len(tag)>20 or len(tag.split())<2 or "jamesos" in tag.casefold() for tag in tags):
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message="Etsy tags did not satisfy the guarded SEO constraints.",operation="product_orchestrator.prepare_listing",stage="listing")
+
+
+def validate_listing_claims(blueprint: dict[str, Any], catalog: dict[str, Any]) -> None:
+    source=json.dumps({"blueprint":blueprint,"catalog":catalog},ensure_ascii=False,default=str).casefold()
+    required=(("bella+canvas 3001","bella canvas 3001"),("unisex",),("jersey",),("crew",),("direct-to-garment","dtg"),
+        ("machine wash cold",),("tumble dry low","hang dry"),("do not bleach",),("do not dry clean",),("do not iron",))
+    missing=[options[0] for options in required if not any(option in source for option in options)]
+    if missing:
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message="Current catalog data does not support every physical-product or care claim.",
+            operation="product_orchestrator.prepare_listing",stage="catalog_claims",context={"unsupported_claim_terms":missing})
+
+
+def replacement_ownership_matches(state: dict[str, Any], remote: dict[str, Any], product_id: str) -> bool:
+    evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload_id=(evidence.get("upload") or {}).get("printify_image_id")
+    lineage=any(item.get("status")=="verified" and item.get("deleted_product_id")==RECOVERY_DELETED_PRODUCT_ID
+        and item.get("replacement_product_id")==product_id for item in evidence.get("draft_recovery_history") or [])
+    enabled={item.get("id") for item in remote.get("variants") or [] if item.get("is_enabled") is True}
+    artwork=any(image.get("id")==upload_id for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+        if placeholder.get("position")=="front" for image in placeholder.get("images") or [])
+    return bool(product_id and product_id not in {RECOVERY_DELETED_PRODUCT_ID,PROTECTED_PRODUCT_ID} and draft.get("printify_product_id")==product_id
+        and remote.get("id")==product_id and remote.get("shop_id")==state.get("shop_id") and remote.get("blueprint_id")==12
+        and remote.get("print_provider_id")==29 and lineage and upload_id==RECOVERY_UPLOAD_ID and enabled==set(RECOVERY_VARIANT_IDS) and artwork)
+
+
 def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(response, dict):
         raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify variants response must be an object.",
@@ -316,6 +388,98 @@ class ProductOrchestrator:
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
 
+    def prepare_listing(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
+        if not job_id or Path(job_id).name!=job_id:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="Listing preparation requires a single existing job ID.",operation="product_orchestrator.prepare_listing",stage="input")
+        validate_etsy_tags(ETSY_TAGS);state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {}
+        product_id=draft.get("printify_product_id")
+        if product_id!=LISTING_PRODUCT_ID or state.get("shop_id")!=RECOVERY_SHOP_ID or product_id in {RECOVERY_DELETED_PRODUCT_ID,PROTECTED_PRODUCT_ID}:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The active draft does not match the guarded Etsy listing target.",operation="product_orchestrator.prepare_listing",stage="ownership")
+        client=self.adapters.client_factory();remote=client.get_product(RECOVERY_SHOP_ID,product_id)
+        if not replacement_ownership_matches(state,remote,product_id):
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Replacement-product ownership evidence did not match.",operation="product_orchestrator.prepare_listing",stage="ownership")
+        publication=assess_draft_publication_state(state,remote)
+        if not publication["safe_to_reconcile"] or state.get("order_status")!="not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Published, locked, or ordered products cannot be prepared.",operation="product_orchestrator.prepare_listing",stage="publication")
+        remote_variants=remote.get("variants") or [];enabled=[item for item in remote_variants if item.get("is_enabled") is True]
+        if len(enabled)!=18 or {item.get("id") for item in enabled}!=set(RECOVERY_VARIANT_IDS) or any(item.get("price")!=2499 for item in enabled):
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Enabled variants or pricing changed before listing preparation.",operation="product_orchestrator.prepare_listing",stage="variants")
+        front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+        back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+        placement={"x":.5,"y":.46,"scale":.85,"angle":0}
+        if not front or any(front[0].get(key)!=value for key,value in placement.items()) or back:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Artwork placement changed before listing preparation.",operation="product_orchestrator.prepare_listing",stage="artwork")
+        review_path=self._path(job_id).parent/"visual-review"/"visual-review.json"
+        try:review=json.loads(review_path.read_text(encoding="utf-8"))
+        except (OSError,ValueError) as exc:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="A fresh visual review is required before listing preparation.",operation="product_orchestrator.prepare_listing",stage="visual_review") from exc
+        mockups=(review.get("checks") or {}).get("mockups") or [];hashes=[item.get("downloaded_sha256") for item in mockups]
+        if review.get("product_id")!=product_id or review.get("recommended_scale_action")!="keep_0.85" or len(mockups)!=3 \
+                or [item.get("color") for item in mockups]!=DEFAULT_COLORS or not all(item.get("verified_mockup_available") for item in mockups) \
+                or any(not digest for digest in hashes) or len(set(hashes))!=3:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The replacement draft lacks three distinct verified color mockups.",operation="product_orchestrator.prepare_listing",stage="visual_review")
+        blueprint=client.get_blueprint(12);catalog=client.get_variants(12,29);validate_listing_claims(blueprint,catalog)
+        selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES)
+        if selection["selected_variant_ids"]!=RECOVERY_VARIANT_IDS:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="The current catalog no longer matches the enabled Etsy variants.",operation="product_orchestrator.prepare_listing",stage="variants")
+        catalog_ids={item.get("id") for item in catalog.get("variants") or [] if type(item.get("id")) is int}
+        variants_payload,full_ids=build_full_variant_payload(remote_variants,RECOVERY_VARIANT_IDS,catalog_ids,2499)
+        print_areas,empty_positions=sanitize_update_print_areas(remote.get("print_areas") or [],full_ids)
+        if len(remote_variants)!=318 or len(variants_payload)!=318 or not print_areas or any(set(area["variant_ids"])!=set(full_ids) for area in print_areas):
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The full remote variant or print-area document changed.",operation="product_orchestrator.prepare_listing",stage="payload")
+        payload={"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS,"variants":variants_payload,"print_areas":print_areas}
+        marker=evidence.get("draft_marker") or draft.get("draft_marker")
+        if marker and marker in json.dumps({"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS}):
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="Internal marker leaked into buyer-facing listing fields.",operation="product_orchestrator.prepare_listing",stage="listing")
+        manual_checks=["Set Black as the primary listing image.","Keep Dark Grey Heather second and White third.",
+            "Add an available lifestyle/on-person mockup.","Add a close-up design mockup.","Add a current Bella+Canvas 3001 size chart.",
+            "Verify the Etsy category and most-specific subcategory.","Complete Etsy attributes: primary color, secondary color, sleeve length, neckline, fit, style, and occasion.","Verify materials using current provider data.",
+            "Verify production-partner disclosure.","Select the correct Etsy shipping profile without copying an unrelated template ID.",
+            "Verify processing and delivery estimates.","Verify return and cancellation settings.","Review the $24.99 price and expected margin.",
+            "Verify all size and color combinations.","Perform a manual trademark and intellectual-property review.",
+            "Preview the complete Etsy listing on desktop and mobile.","Confirm GPSR/product-safety information, manufacturer, responsible person, product identification, warnings, and safety details in Printify.",
+            "Publish only through a separate future human-confirmed action."]
+        plan={"result":"listing_preparation_plan","write_performed":False,"printify_write_performed":False,"product_id":product_id,
+            "proposed_title":ETSY_TITLE,"seo_tag_count":13,"price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,
+            "primary_mockup_color":"Black","primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
+            "publish_status":"not_published","order_status":"not_created","safe_to_update":True}
+        if not confirmed:return plan
+        client.update_product(RECOVERY_SHOP_ID,product_id,payload)
+        verified=client.get_product(RECOVERY_SHOP_ID,product_id);verified_publication=assess_draft_publication_state(state,verified)
+        verified_variants=verified.get("variants") or [];verified_enabled=[item for item in verified_variants if item.get("is_enabled") is True]
+        verified_front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+        verified_back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+        prices_before={item.get("id"):item.get("price") for item in remote_variants};prices_after={item.get("id"):item.get("price") for item in verified_variants}
+        verified_ok=(verified.get("id")==product_id and verified.get("title")==ETSY_TITLE and verified.get("description")==ETSY_DESCRIPTION
+            and verified.get("tags")==ETSY_TAGS and (not marker or marker not in set(verified.get("tags") or [])) and len(verified_variants)==318
+            and {item.get("id") for item in verified_variants}==set(full_ids) and prices_after==prices_before
+            and {item.get("id") for item in verified_enabled}==set(RECOVERY_VARIANT_IDS) and len(verified_enabled)==18
+            and verified_front and all(verified_front[0].get(key)==value for key,value in placement.items()) and not verified_back
+            and verified_publication["safe_to_reconcile"] and verified.get("order_status") in (None,"not_created") and not verified.get("orders"))
+        if not verified_ok:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The listing draft failed post-update verification.",operation="product_orchestrator.prepare_listing",stage="verification",
+                context={"product_id":product_id,"update_performed":True})
+        state.update({"stage":"awaiting_printify_human_review","active_product_id":product_id,"visual_review_completed":True,
+            "visual_review_recommendation":"keep_0.85","human_artistic_approval":False,"listing_text_prepared":True,"seo_tag_count":13,
+            "primary_mockup_color_requested":"Black","primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
+            "final_review_location":"Printify","publish_status":"not_published","order_status":"not_created"})
+        evidence["listing"].update({"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS})
+        evidence["listing_preparation"]={"active_product_id":product_id,"prepared_at":datetime.now().astimezone().isoformat(),
+            "visual_review_completed":True,"visual_review_recommendation":"keep_0.85","human_artistic_approval":False,"listing_text_prepared":True,
+            "seo_tag_count":13,"primary_mockup_color_requested":"Black","primary_mockup_manual_action_required":True,
+            "gpsr_manual_confirmation_required":True,"shipping_profile_manual_confirmation_required":True,"final_review_location":"Printify",
+            "mockup_order_api_supported":False,"publish_status":"not_published","order_status":"not_created","manual_checks":manual_checks,"local_draft_marker":marker}
+        _atomic_json(self._path(job_id),state)
+        return {"result":"listing_draft_prepared","write_performed":True,"printify_write_performed":True,"product_id":product_id,
+            "title_verified":True,"description_verified":True,"seo_tags_verified":True,"seo_tag_count":13,
+            "internal_marker_removed_from_remote_tags":True,"variants_unchanged":True,"placement_unchanged":True,"no_new_upload":True,
+            "no_new_product":True,"primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
+            "stage":"awaiting_printify_human_review","publish_status":"not_published","order_status":"not_created"}
+
     def recover_draft(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="Draft recovery requires a single existing job ID.",operation="product_orchestrator.recover_draft",stage="input")
@@ -411,7 +575,7 @@ class ProductOrchestrator:
         client=self.adapters.client_factory();remote=client.get_product(state["shop_id"],product_id)
         marker=state.get("evidence",{}).get("draft_marker") or draft.get("draft_marker")
         publication=assess_draft_publication_state(state,remote)
-        ownership_ok=(remote.get("id")==product_id and remote.get("shop_id")==state["shop_id"] and marker
+        ownership_ok=replacement_ownership_matches(state,remote,product_id) or (remote.get("id")==product_id and remote.get("shop_id")==state["shop_id"] and marker
             and marker in {str(tag) for tag in remote.get("tags") or []})
         if not ownership_ok:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote draft ownership evidence did not match the job.",operation="product_orchestrator.review_draft",stage="ownership")
@@ -477,7 +641,7 @@ class ProductOrchestrator:
             resized=image.copy();resized.thumbnail((panel_width,sheet_height-label_height),Image.Resampling.LANCZOS)
             x=index*panel_width+(panel_width-resized.width)//2;y=label_height+(sheet_height-label_height-resized.height)//2
             record=records[index];status="verified" if record["verified_mockup_available"] else "downloaded, not color-verified" if record["mockup_available"] else "unavailable"
-            sheet.paste(resized,(x,y));draw.text((index*panel_width+20,25),f"{color} — {status}",fill=(20,20,20));resized.close();image.close()
+            sheet.paste(resized,(x,y));draw.text((index*panel_width+20,25),f"{color} - {status}",fill=(20,20,20));resized.close();image.close()
         sheet_path=review_root/"visual-review-sheet.png";sheet.save(sheet_path,"PNG");sheet.close()
         all_verified=all(item["verified_mockup_available"] for item in records)
         recommendation="keep_0.85" if all_verified else "manual_review_required"
@@ -488,7 +652,7 @@ class ProductOrchestrator:
         report={"job_id":job_id,"product_id":product_id,"colors_reviewed":DEFAULT_COLORS,"checks":checks,
             "recommended_scale_action":recommendation,"created_at":datetime.now().astimezone().isoformat()}
         json_path=review_root/"visual-review.json";_atomic_json(json_path,report)
-        rows_html="".join(f'<figure><img src="{html.escape(names[item["color"]])}" alt="{html.escape(item["color"])} front mockup"><figcaption>{html.escape(item["color"])} — {"verified" if item["verified_mockup_available"] else "downloaded, not color-verified" if item["mockup_available"] else "unavailable"}</figcaption></figure>' for item in records)
+        rows_html="".join(f'<figure><img src="{html.escape(names[item["color"]])}" alt="{html.escape(item["color"])} front mockup"><figcaption>{html.escape(item["color"])} - {"verified" if item["verified_mockup_available"] else "downloaded, not color-verified" if item["mockup_available"] else "unavailable"}</figcaption></figure>' for item in records)
         html_path=review_root/"visual-review.html";html_path.write_text("<!doctype html><meta charset=\"utf-8\"><title>Draft visual review</title>"
             "<style>body{font-family:sans-serif;margin:2rem}main{display:flex;gap:1rem}figure{margin:0;flex:1}img{max-width:100%;height:auto}</style>"
             f"<h1>Draft visual review</h1><p>Product {html.escape(product_id)}</p><main>{rows_html}</main>",encoding="utf-8")
@@ -510,7 +674,7 @@ class ProductOrchestrator:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote shop ID does not match the orchestrator job.", operation="product_orchestrator.reconcile_draft", stage="ownership",
                 context={"blocker":{"field":"remote.shop_id","value":remote.get("shop_id"),"expected":state["shop_id"]}})
         marker = state.get("evidence", {}).get("draft_marker") or draft.get("draft_marker")
-        if not marker or marker not in {str(tag) for tag in remote.get("tags") or []}:
+        if not replacement_ownership_matches(state,remote,product_id) and (not marker or marker not in {str(tag) for tag in remote.get("tags") or []}):
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft marker does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
         publication = assess_draft_publication_state(state, remote)
         if not publication["safe_to_reconcile"]:

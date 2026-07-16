@@ -390,6 +390,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertTrue(all(item["selection_method"]=="exact_mockup_variant" and item["color_match_verified"] for item in checks["mockups"]))
             self.assertEqual(len({item["downloaded_sha256"] for item in checks["mockups"]}),3);self.assertEqual(result["recommended_scale_action"],"keep_0.85")
             self.assertTrue(checks["front_artwork_present"]);self.assertTrue(checks["back_artwork_absent"]);self.assertEqual(checks["placement"]["scale"],.85)
+            html_report=Path(result["html_report_path"]).read_text();self.assertIn("Black - verified",html_report);self.assertNotIn("—",html_report)
             self.assertNotIn("mock.test",json.dumps(report));self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
             for method in (client.update_product,client.create_product,client.upload_image_contents,client.upload_image_url):method.assert_not_called()
             output=StringIO()
@@ -433,6 +434,87 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["recommended_scale_action"],"manual_review_required");self.assertEqual(len({item["downloaded_sha256"] for item in records}),1)
             self.assertTrue(all(item["mockup_available"] and not item["color_match_verified"] for item in records))
             self.assertTrue(all("mockup_color_mismatch" in item["issues"] for item in records));self.assertIn("downloaded, not color-verified",Path(result["html_report_path"]).read_text())
+
+    def listing_fixture(self, root: Path):
+        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.LISTING_PRODUCT_ID)
+        desired=set(product_orchestrator.RECOVERY_VARIANT_IDS);marker=product_orchestrator.RECOVERY_TAGS[-1]
+        for item in remote["variants"]:item["is_enabled"]=item["id"] in desired;item["price"]=2499 if item["is_enabled"] else item["price"]
+        remote["tags"]=[*product_orchestrator.RECOVERY_TAGS];remote["title"]=product_orchestrator.RECOVERY_TITLE;remote["description"]=product_orchestrator.RECOVERY_DESCRIPTION
+        remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=product_orchestrator.RECOVERY_UPLOAD_ID
+        state["evidence"]["draft_marker"]=marker;state["evidence"]["draft"]["draft_marker"]=marker
+        state["evidence"]["upload"]["printify_image_id"]=product_orchestrator.RECOVERY_UPLOAD_ID
+        state["evidence"]["draft_recovery_history"]=[{"status":"verified","deleted_product_id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID,
+            "replacement_product_id":product_orchestrator.LISTING_PRODUCT_ID,"historical":"preserved"}]
+        state["recovered_errors"]=[{"error_id":"old-error"}];state["evidence"]["draft_reconciliation"]={"status":"preserved"}
+        product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+        review_root=orchestrator._path("reconcile-job").parent/"visual-review";review_root.mkdir()
+        product_orchestrator._atomic_json(review_root/"visual-review.json",{"product_id":product_orchestrator.LISTING_PRODUCT_ID,
+            "recommended_scale_action":"keep_0.85","checks":{"mockups":[{"color":color,"verified_mockup_available":True,
+                "downloaded_sha256":str(index)*64} for index,color in enumerate(product_orchestrator.DEFAULT_COLORS,1)]}})
+        client=Mock();client.get_product.return_value=remote;client.get_blueprint.return_value={"title":"Bella+Canvas 3001 unisex jersey crew tee",
+            "claim_support":"direct-to-garment DTG machine wash cold tumble dry low hang dry do not bleach do not dry clean do not iron"}
+        client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
+        replacement=copy.deepcopy(remote);replacement.update(title=product_orchestrator.ETSY_TITLE,description=product_orchestrator.ETSY_DESCRIPTION,tags=product_orchestrator.ETSY_TAGS)
+        replacement["print_areas"]=product_orchestrator.sanitize_update_print_areas(remote["print_areas"],[item["id"] for item in remote["variants"]])[0]
+        return orchestrator,state,remote,replacement,client
+
+    def test_prepare_listing_dry_run_is_read_only_exact_and_marker_independent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);remote["tags"]=["buyer tag"]
+            before=orchestrator._path("reconcile-job").read_bytes();result=orchestrator.prepare_listing("reconcile-job")
+            self.assertEqual(result,{"result":"listing_preparation_plan","write_performed":False,"printify_write_performed":False,
+                "product_id":product_orchestrator.LISTING_PRODUCT_ID,"proposed_title":product_orchestrator.ETSY_TITLE,"seo_tag_count":13,
+                "price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,"primary_mockup_color":"Black",
+                "primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,"publish_status":"not_published",
+                "order_status":"not_created","safe_to_update":True})
+            self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called()
+            self.assertEqual(len(product_orchestrator.ETSY_TAGS),13);self.assertTrue(all(len(tag)<=20 and len(tag.split())>=2 for tag in product_orchestrator.ETSY_TAGS))
+            self.assertNotIn("jamesos",json.dumps([product_orchestrator.ETSY_TITLE,product_orchestrator.ETSY_DESCRIPTION,product_orchestrator.ETSY_TAGS]).lower())
+
+    def test_prepare_listing_confirmed_updates_once_and_preserves_product_document_and_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);client.get_product.side_effect=[remote,replacement]
+            result=orchestrator.prepare_listing("reconcile-job",confirmed=True);client.update_product.assert_called_once()
+            payload=client.update_product.call_args.args[2];self.assertEqual(set(payload),{"title","description","tags","variants","print_areas"})
+            self.assertEqual(payload["title"],product_orchestrator.ETSY_TITLE);self.assertEqual(payload["description"],product_orchestrator.ETSY_DESCRIPTION)
+            self.assertEqual(payload["tags"],product_orchestrator.ETSY_TAGS);self.assertEqual(len(payload["variants"]),318)
+            self.assertEqual({item["id"] for item in payload["variants"]},{item["id"] for item in remote["variants"]})
+            self.assertEqual({item["id"] for item in payload["variants"] if item["is_enabled"]},set(product_orchestrator.RECOVERY_VARIANT_IDS))
+            self.assertNotIn("images",payload);self.assertNotIn("mockups",payload);self.assertNotIn("default",payload)
+            self.assertEqual(result["stage"],"awaiting_printify_human_review");saved=orchestrator.load("reconcile-job")
+            self.assertEqual(saved["stage"],"awaiting_printify_human_review");prepared=saved["evidence"]["listing_preparation"]
+            self.assertEqual(saved["active_product_id"],product_orchestrator.LISTING_PRODUCT_ID);self.assertTrue(saved["visual_review_completed"])
+            self.assertEqual(saved["visual_review_recommendation"],"keep_0.85");self.assertFalse(saved["human_artistic_approval"])
+            self.assertFalse(prepared["human_artistic_approval"]);self.assertTrue(prepared["primary_mockup_manual_action_required"])
+            self.assertTrue(prepared["gpsr_manual_confirmation_required"]);self.assertTrue(prepared["shipping_profile_manual_confirmation_required"])
+            self.assertEqual(prepared["local_draft_marker"],product_orchestrator.RECOVERY_TAGS[-1]);self.assertEqual(saved["recovered_errors"],[{"error_id":"old-error"}])
+            self.assertEqual(saved["evidence"]["draft_reconciliation"],{"status":"preserved"});self.assertEqual(len(saved["evidence"]["draft_recovery_history"]),1)
+            for method in (client.create_product,client.upload_image_contents,client.upload_image_url,client.publish_product,client.create_order,client.delete_product):method.assert_not_called()
+
+    def test_prepare_listing_failed_update_not_retried_and_unsupported_claims_block(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root)
+            client.update_product.side_effect=PrintifyAPIError("update_product",500,"failed","failed")
+            with self.assertRaises(PrintifyAPIError):orchestrator.prepare_listing("reconcile-job",confirmed=True)
+            client.update_product.assert_called_once();self.assertNotEqual(orchestrator.load("reconcile-job")["stage"],"awaiting_printify_human_review")
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);client.get_blueprint.return_value={"title":"unknown shirt"}
+            with self.assertRaises(ValidationError):orchestrator.prepare_listing("reconcile-job")
+            client.update_product.assert_not_called()
+
+    def test_prepare_listing_cli_uses_dedicated_confirmation_and_protected_product_never_writes(self):
+        orchestrator=Mock();orchestrator.prepare_listing.return_value={"result":"listing_preparation_plan"}
+        for argv,confirmed in ((["product_from_prompt.py","prepare-listing","--job-id","job"],False),
+                               (["product_from_prompt.py","prepare-listing","--job-id","job","--confirm-printify-listing-update"],True)):
+            with self.subTest(confirmed=confirmed):
+                orchestrator.prepare_listing.reset_mock();output=StringIO()
+                with patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),patch.object(product_from_prompt.sys,"argv",argv),redirect_stdout(output):self.assertEqual(product_from_prompt._main(),0)
+                orchestrator.prepare_listing.assert_called_once_with("job",confirmed=confirmed)
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root)
+            state["evidence"]["draft"]["printify_product_id"]=product_orchestrator.PROTECTED_PRODUCT_ID;product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.prepare_listing("reconcile-job",confirmed=True)
+            client.get_product.assert_not_called();client.update_product.assert_not_called()
 
     def recovery_fixture(self, root: Path):
         orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.RECOVERY_DELETED_PRODUCT_ID)
