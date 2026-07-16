@@ -177,6 +177,36 @@ def _find_marked_draft(response: Any, marker: str) -> dict[str, Any] | None:
     return None
 
 
+def assess_draft_publication_state(state: dict[str, Any], remote: dict[str, Any]) -> dict[str, Any]:
+    draft = state.get("evidence", {}).get("draft") or {}; transitions = state.get("transitions") or []
+    publish_operations = {"publish", "publish_product", "printify_publish", "publish_succeeded"}
+    publish_stages = {"published", "printify_published", "publish_succeeded"}
+    publish_transition = next((item for item in transitions if item.get("result") == "completed" and
+        (item.get("operation") in publish_operations or item.get("stage") in publish_stages)), None)
+    publish_evidence = state.get("evidence", {}).get("publish_success")
+    publication_record = state.get("evidence", {}).get("publication")
+    if not publish_evidence and (publication_record is True or isinstance(publication_record,dict) and publication_record.get("status") in ("published","success","completed")):
+        publish_evidence = publication_record
+    blockers = []
+    def block(field: str, value: Any, reason: str) -> None: blockers.append({"field":field,"value":value,"reason":reason})
+    if state.get("publish_status") != "not_published": block("state.publish_status",state.get("publish_status"),"local workflow is not marked unpublished")
+    if draft.get("publish_status") != "not_published": block("evidence.draft.publish_status",draft.get("publish_status"),"local draft is not marked unpublished")
+    if remote.get("is_locked") is True: block("remote.is_locked",True,"locked products cannot be safely reconciled")
+    if "is_published" in remote and remote.get("is_published") is True: block("remote.is_published",True,"API explicitly reports publication")
+    if "published" in remote and remote.get("published") is True: block("remote.published",True,"API explicitly reports publication")
+    if publish_transition: block("state.transitions",publish_transition,"a successful local publish transition exists")
+    if publish_evidence: block("state.evidence.publish_success",publish_evidence,"local publish-success evidence exists")
+    visible = remote.get("visible")
+    warnings = ([{"field":"remote.visible","value":visible,
+        "message":"Printify defaults this field to true; it is not sufficient publication evidence."}] if visible is True else [])
+    return {"safe_to_reconcile":not blockers,"local_publish_status":state.get("publish_status"),
+        "local_draft_publish_status":draft.get("publish_status"),"remote_visible":visible,
+        "remote_visible_interpretation":"Printify defaults this field to true; it is not sufficient publication evidence.",
+        "remote_is_published":remote.get("is_published") if "is_published" in remote else None,
+        "remote_published":remote.get("published") if "published" in remote else None,"remote_is_locked":remote.get("is_locked"),
+        "publish_transition_found":bool(publish_transition),"explicit_blockers":blockers,"informational_warnings":warnings}
+
+
 def _default_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
     return sale_candidate_vector.generate_v4_refinements(evidence["candidate"], root, phrase=brief["exact_text"])
 
@@ -229,11 +259,16 @@ class ProductOrchestrator:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="The recorded draft is missing or protected.", operation="product_orchestrator.reconcile_draft", stage="ownership")
         client = self.adapters.client_factory(); remote = client.get_product(state["shop_id"], product_id)
         if remote.get("id") != product_id: raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote product ID does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
+        if remote.get("shop_id") != state["shop_id"]:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote shop ID does not match the orchestrator job.", operation="product_orchestrator.reconcile_draft", stage="ownership",
+                context={"blocker":{"field":"remote.shop_id","value":remote.get("shop_id"),"expected":state["shop_id"]}})
         marker = state.get("evidence", {}).get("draft_marker") or draft.get("draft_marker")
         if not marker or marker not in {str(tag) for tag in remote.get("tags") or []}:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft marker does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
-        if remote.get("visible") is True or remote.get("is_published") is True or remote.get("published") is True:
-            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Published products cannot be reconciled.", operation="product_orchestrator.reconcile_draft", stage="publication")
+        publication = assess_draft_publication_state(state, remote)
+        if not publication["safe_to_reconcile"]:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Publication evidence blocks draft reconciliation.", operation="product_orchestrator.reconcile_draft", stage="publication",
+                context={"publication_assessment":publication,"blockers":publication["explicit_blockers"]})
         if state.get("order_status") != "not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="A product with order evidence cannot be reconciled.", operation="product_orchestrator.reconcile_draft", stage="order")
         if remote.get("blueprint_id") != 12 or remote.get("print_provider_id") != 29:
@@ -261,7 +296,8 @@ class ProductOrchestrator:
             "desired_colors":resolution["canonical_colors"],"desired_sizes":state["brief"]["sizes"],"variant_ids_to_retain":retain,
             "variant_ids_to_add":add,"variant_ids_to_remove":remove,"current_variant_count":len(current_ids),"resulting_variant_count":len(desired_ids),
             "price_cents":state["evidence"]["listing"]["price_cents"],"placement":copy.deepcopy(placements[0]),"placement_adjustment_plan":placement_plan,
-            "placement_change_included":False,"publish_status":"not_published","order_status":"not_created","draft_marker":marker}
+            "placement_change_included":False,"publish_status":"not_published","order_status":"not_created","draft_marker":marker,
+            "publication_assessment":publication}
         if not confirmed: return {"result":"draft_reconciliation_plan","write_performed":False,"plan":plan}
         payload={"title":remote.get("title"),"description":remote.get("description"),"tags":remote.get("tags") or [],"blueprint_id":12,"print_provider_id":29,
             "variants":[{"id":item,"price":plan["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":copy.deepcopy(remote.get("print_areas") or [])}
@@ -272,7 +308,8 @@ class ProductOrchestrator:
         if write_performed: client.update_product(state["shop_id"],product_id,payload)
         verified=client.get_product(state["shop_id"],product_id)
         verified_ids=sorted(item.get("id") for item in verified.get("variants") or [] if item.get("is_enabled"))
-        if verified.get("id")!=product_id or verified.get("visible") is True or verified_ids!=sorted(desired_ids):
+        verified_publication=assess_draft_publication_state(state,verified)
+        if verified.get("id")!=product_id or verified.get("shop_id")!=state["shop_id"] or not verified_publication["safe_to_reconcile"] or verified_ids!=sorted(desired_ids):
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft verification did not match the reconciliation plan.", operation="product_orchestrator.reconcile_draft", stage="verification")
         verified_placements=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             for image in placeholder.get("images") or [] if image.get("id")==image_id]
@@ -282,6 +319,7 @@ class ProductOrchestrator:
             "updated_at":datetime.now().astimezone().isoformat(),"no_new_upload":True,"no_new_product":True,
             "publish_status":"not_published","order_status":"not_created","placement_unchanged":placement_unchanged,"plan":plan}
         state["brief"]["garment_colors"]=resolution["canonical_colors"];state["brief"]["color_resolution"]=resolution
+        state["evidence"]["listing"]["colors"]=resolution["canonical_colors"]
         state["evidence"]["variant_selection"]=desired;state["evidence"]["draft_reconciliation"]=evidence;state["evidence"]["draft"]["variant_ids"]=desired_ids
         self._transition(state,"awaiting_human_approval","reconcile_existing_draft_variants",evidence);self.report(job_id)
         return {"result":evidence["status"],"write_performed":write_performed,"plan":plan,"reconciliation":evidence}

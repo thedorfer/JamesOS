@@ -214,12 +214,12 @@ class ProductOrchestratorTests(unittest.TestCase):
         def rows(ids,color):return [{"id":item,"title":f"{color} / {size}","is_available":True,"is_enabled":True,"price":2499} for item,size in zip(ids,sizes)]
         current_rows=rows(black,"Black")+rows(white,"White");desired_rows=rows(black,"Black")+rows(dark,"Dark Grey Heather")+rows(white,"White")
         placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0}
-        current={"id":product_id,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
-            "visible":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[{"position":"front","variant_ids":black+white,"images":[placement]}]}]}
+        current={"id":product_id,"shop_id":9437076,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
+            "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[{"position":"front","variant_ids":black+white,"images":[placement]}]}]}
         verified=copy.deepcopy(current);verified["variants"]=desired_rows;verified["print_areas"][0]["variant_ids"]=black+dark+white;verified["print_areas"][0]["placeholders"][0]["variant_ids"]=black+dark+white
         state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":9437076,"original_prompt":"LOVE IS LOVE on black, dark heather, and white",
             "brief":{"sizes":sizes,"garment_colors":["Black","White"]},"publish_status":"not_published","order_status":"not_created","transitions":[],"stage_output":{},
-            "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+white},"draft_marker":marker,
+            "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+white,"publish_status":"not_published","order_status":"not_created"},"draft_marker":marker,
                 "upload":{"printify_image_id":image_id,"selected_design_sha256":design_sha},"selection":{"selected":{"png_sha256":design_sha}},
                 "listing":{"price_cents":2499},"variants":{"retained":True},"mockups":[{"local_path":"mock.jpg"}]}}
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:None))
@@ -230,8 +230,12 @@ class ProductOrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);client=Mock()
             orchestrator.adapters.client_factory=lambda:client;client.get_product.return_value=current;client.get_variants.return_value=catalog
+            state_before=orchestrator._path("reconcile-job").read_bytes()
             plan=orchestrator.reconcile_draft("reconcile-job")
             self.assertFalse(plan["write_performed"]);client.update_product.assert_not_called();self.assertEqual(plan["plan"]["variant_ids_to_add"],dark)
+            self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
+            assessment=plan["plan"]["publication_assessment"];self.assertTrue(assessment["safe_to_reconcile"]);self.assertTrue(assessment["remote_visible"])
+            self.assertIn("not sufficient publication evidence",assessment["remote_visible_interpretation"])
             self.assertEqual(plan["plan"]["current_variant_count"],12);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
             self.assertEqual([x["scale"] for x in plan["plan"]["placement_adjustment_plan"]],[.85,.918,.952]);self.assertFalse(plan["plan"]["placement_change_included"])
             client.get_product.side_effect=[current,verified]
@@ -241,11 +245,14 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
             client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
             saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)
+            self.assertEqual(saved["evidence"]["listing"]["colors"],product_orchestrator.DEFAULT_COLORS)
             report=orchestrator.report("reconcile-job").read_text();self.assertIn("EXISTING DRAFT UPDATED",report);self.assertIn("Enabled variants: 18",report)
 
     def test_reconciliation_rejects_unsafe_ownership_publication_and_order(self):
         scenarios=(("wrong_id",lambda remote:remote.update(id="other")),("marker",lambda remote:remote.update(tags=[])),
-            ("published",lambda remote:remote.update(visible=True)),("order",lambda remote:remote.update(orders=[{"id":"order"}])) )
+            ("published",lambda remote:remote.update(is_published=True)),("published_alias",lambda remote:remote.update(published=True)),
+            ("locked",lambda remote:remote.update(is_locked=True)),("shop",lambda remote:remote.update(shop_id=2)),
+            ("order",lambda remote:remote.update(orders=[{"id":"order"}])) )
         for name,mutate in scenarios:
             with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary:
                 root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);mutate(current);client=Mock()
@@ -257,6 +264,26 @@ class ProductOrchestratorTests(unittest.TestCase):
             orchestrator.adapters.client_factory=Mock(side_effect=AssertionError("no client"))
             with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.reconcile_draft("reconcile-job",confirmed=True)
             orchestrator.adapters.client_factory.assert_not_called()
+
+    def test_publication_assessment_exact_blockers_and_visible_information(self):
+        state={"publish_status":"not_published","transitions":[],"evidence":{"draft":{"publish_status":"not_published"}}}
+        safe=product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":False})
+        self.assertTrue(safe["safe_to_reconcile"]);self.assertEqual(safe["explicit_blockers"],[]);self.assertTrue(safe["informational_warnings"])
+        cases=(("remote.is_published",{"is_published":True},state),("remote.published",{"published":True},state),
+            ("remote.is_locked",{"is_locked":True},state),("state.publish_status",{}, {**state,"publish_status":"published"}),
+            ("evidence.draft.publish_status",{}, {**state,"evidence":{"draft":{"publish_status":"published"}}}))
+        for expected,remote,local in cases:
+            with self.subTest(expected=expected):
+                result=product_orchestrator.assess_draft_publication_state(local,{"visible":True,**remote})
+                self.assertFalse(result["safe_to_reconcile"]);self.assertEqual(result["explicit_blockers"][0]["field"],expected)
+
+    def test_reconciliation_publication_error_context_names_exact_field(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);current["published"]=True;client=Mock()
+            client.get_product.return_value=current;orchestrator.adapters.client_factory=lambda:client
+            with self.assertRaises(product_orchestrator.StateConflictError) as raised:orchestrator.reconcile_draft("reconcile-job")
+            blockers=raised.exception.context["blockers"];self.assertEqual(blockers[0]["field"],"remote.published");self.assertIs(blockers[0]["value"],True)
+            client.update_product.assert_not_called()
 
 
 if __name__ == "__main__":unittest.main()
