@@ -14,17 +14,34 @@ BASE_URL = "https://api.printify.com/v1"
 TOKEN_PATH = VAULT / "JamesOS" / "Secrets" / "printify_api_token.txt"
 USER_AGENT = "JamesOS/1.0 PrintifyDraftIntegration"
 
+_OPERATION_ERROR_CODES = {
+    "authentication": "PRINTIFY_AUTHENTICATION_FAILED",
+    "upload_image": "PRINTIFY_UPLOAD_FAILED",
+    "create_product": "PRINTIFY_PRODUCT_CREATE_FAILED",
+    "update_product": "PRINTIFY_PRODUCT_UPDATE_FAILED",
+}
+
+_OPERATION_SUGGESTED_ACTIONS = {
+    "authentication": "Verify the Printify token exists, is nonempty, and has safe file permissions.",
+    "upload_image": "Review the artwork file and upload request, then retry only after correcting the reported condition.",
+    "create_product": "Review the product-draft payload and Printify validation details before creating another draft.",
+    "update_product": "Review the Printify validation details and correct the draft-update payload before retrying.",
+}
+
 
 class PrintifyAPIError(PrintifyError):
     def __init__(self, operation: str, http_status: int | None, error_code: str, safe_message: str, retryable: bool = False) -> None:
         code = ({401: "HTTP_UNAUTHORIZED", 403: "HTTP_FORBIDDEN", 404: "HTTP_NOT_FOUND", 429: "HTTP_RATE_LIMITED"}.get(http_status)
                 or ("HTTP_SERVER_ERROR" if http_status is not None and http_status >= 500 else
-                    "PRINTIFY_PRODUCT_CREATE_FAILED" if operation == "create_product" else "PRINTIFY_UPLOAD_FAILED"))
+                    _OPERATION_ERROR_CODES.get(operation, "PRINTIFY_REQUEST_FAILED")))
         self.http_status, self.error_code, self.safe_message = http_status, error_code, safe_message
         super().__init__(code, diagnostic_message=f"Printify {operation} failed ({http_status or 'network'}, {error_code}): {safe_message}",
             operation=f"printify.{operation}", stage="http_request", retryable=retryable,
             context={"http_status": http_status, "provider_error_code": error_code},
-            suggested_action="Verify Printify configuration and use the error ID for diagnostics.")
+            suggested_action=_OPERATION_SUGGESTED_ACTIONS.get(
+                operation,
+                "Review the Printify response and use the error ID to inspect the protected diagnostic record.",
+            ))
 
 
 def token_status(path: Path = TOKEN_PATH) -> dict[str, Any]:
