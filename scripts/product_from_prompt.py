@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 
 from jamesos.services.error_handler import cli_error, handle_error
-from jamesos.services.product_orchestrator import MODE, ProductOrchestrator
+from jamesos.services.product_orchestrator import MODE, ProductOrchestrator,normalize_source_job_id
 from jamesos.agents import CommerceAgent,EtsyAgent,PrintifyAgent
 from jamesos.core.agents import AgentRegistry,AgentRunner
 from jamesos.core.agents.approvals import ApprovalPolicy
@@ -83,7 +83,7 @@ def _main() -> int:
     inactive = commands.add_parser("send-to-etsy-inactive-review"); inactive.add_argument("--job-id",required=True);inactive.add_argument("--confirm-publish-and-deactivate",action="store_true")
     args = parser.parse_args(); orchestrator = ProductOrchestrator()
     if args.command == "create":
-        state = orchestrator.create(prompt=args.prompt, source_job_id=args.source_job_id, shop_id=args.shop_id, mode=args.mode,
+        state = orchestrator.create(prompt=args.prompt, source_job_id=normalize_source_job_id(args.source_job_id), shop_id=args.shop_id, mode=args.mode,
             price=round(args.price * 100) if args.price is not None else None, garment_colors=args.garment_color, sizes=args.size,
             confirm_printify_draft=args.confirm_printify_draft)
     elif args.command == "resume": state = orchestrator.resume(args.job_id, confirm_printify_draft=args.confirm_printify_draft)

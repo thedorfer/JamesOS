@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
+import sys
 
 from PIL import Image, ImageDraw
 
@@ -50,6 +51,46 @@ class ProductOrchestratorTests(unittest.TestCase):
         brief=product_orchestrator.normalize_prompt('Create a playful LOVE IS LOVE retro shirt on black and white. Price it at $24.99.')
         self.assertEqual(brief["exact_text"],"LOVE IS LOVE");self.assertEqual(brief["price_cents"],2499)
         self.assertEqual(brief["blank"],"Bella+Canvas 3001");self.assertIn("Black",brief["garment_colors"])
+        supportive=product_orchestrator.normalize_prompt("Create a warm retro shirt featuring the phrase YOU ARE SAFE WITH ME...")
+        self.assertEqual(supportive["exact_text"],"YOU ARE SAFE WITH ME")
+
+    def test_new_create_without_source_never_queries_job_queue_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);source_lookup=Mock(side_effect=AssertionError("source JobQueue lookup must not run"));independent=Mock(return_value={**evidence,"origin":"independent_prompt"})
+            adapters=product_orchestrator.Adapters(evidence=source_lookup,candidates=self.candidates,independent_evidence=independent,independent_candidates=self.candidates,client_factory=Mock(side_effect=AssertionError("no external client")))
+            orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                state=orchestrator.create(prompt='Create a retro shirt saying "YOU ARE SAFE WITH ME"',shop_id=9437076,job_id="new-independent")
+            source_lookup.assert_not_called();independent.assert_called_once();self.assertIsNone(state["source_job_id"]);self.assertEqual(state["job_id"],"new-independent")
+            self.assertIn("design_candidates_ready",{item["stage"] for item in state["transitions"]});adapters.client_factory.assert_not_called()
+
+    def test_none_blank_and_whitespace_source_ids_are_independent(self):
+        for index,source in enumerate((None,"","   \t")):
+            with self.subTest(source=source),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);evidence=self.fixture(root);source_lookup=Mock(side_effect=AssertionError("blank source queried"));independent=Mock(return_value={**evidence,"origin":"independent_prompt"})
+                adapters=product_orchestrator.Adapters(evidence=source_lookup,candidates=self.candidates,independent_evidence=independent,independent_candidates=self.candidates,client_factory=Mock())
+                orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
+                with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                    state=orchestrator.create(prompt='"YOU ARE SAFE WITH ME"',source_job_id=source,shop_id=1,job_id=f"new-{index}")
+                self.assertIsNone(state["source_job_id"]);source_lookup.assert_not_called();independent.assert_called_once()
+
+    def test_valid_source_job_is_stripped_and_loaded(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);source_lookup=Mock(return_value=evidence);independent=Mock(side_effect=AssertionError("independent path must not run"))
+            adapters=product_orchestrator.Adapters(evidence=source_lookup,candidates=self.candidates,independent_evidence=independent,client_factory=Mock())
+            orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                state=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="  source-job-123  ",shop_id=1,job_id="source-backed")
+            source_lookup.assert_called_once_with("source-job-123");independent.assert_not_called();self.assertEqual(state["source_job_id"],"source-job-123")
+
+    def test_exact_cli_repeated_colors_and_sizes_reaches_normal_create(self):
+        orchestrator=Mock();orchestrator.create.return_value={"job_id":"new-job","stage":"awaiting_human_approval","publish_status":"not_published","order_status":"not_created","last_error":None,"recovered_errors":[]};orchestrator._path.return_value=Path("/tmp/new-job/orchestrator-state.json")
+        argv=["product_from_prompt.py","create","--prompt","Create a warm, supportive retro shirt design featuring the phrase YOU ARE SAFE WITH ME...","--shop-id","9437076","--mode","printify-draft",
+            "--garment-color","Black","--garment-color","Dark Grey Heather","--garment-color","White","--size","S","--size","M","--size","L","--size","XL","--size","2XL","--size","3XL","--confirm-printify-draft"]
+        output=StringIO()
+        with patch.object(sys,"argv",argv),patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),redirect_stdout(output):result=product_from_prompt._main()
+        self.assertEqual(result,0);kwargs=orchestrator.create.call_args.kwargs;self.assertIsNone(kwargs["source_job_id"]);self.assertEqual(kwargs["garment_colors"],["Black","Dark Grey Heather","White"]);self.assertEqual(kwargs["sizes"],["S","M","L","XL","2XL","3XL"])
+        self.assertNotIn("token",output.getvalue().lower());orchestrator.send_to_etsy_review.assert_not_called()
 
     def test_color_aliases_order_longest_match_duplicates_and_unresolved(self):
         for phrase in ("dark heather","dark gray heather","dark grey heather"):

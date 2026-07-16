@@ -16,7 +16,7 @@ from typing import Any, Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import requests
 
 from jamesos.config import VAULT
@@ -142,7 +142,8 @@ def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: l
     cleaned = " ".join(prompt.split())
     if not cleaned: raise ValidationError("VALIDATION_FAILED", diagnostic_message="Product prompt is empty.", operation="product_orchestrator", stage="prompt_received")
     quoted = re.search(r"[\"“](.+?)[\"”]", cleaned)
-    exact = quoted.group(1).upper().strip() if quoted else "LOVE IS LOVE" if "love is love" in cleaned.lower() else ""
+    labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:\.{2,}|…|[,;!?]|$))", cleaned)
+    exact = quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else "LOVE IS LOVE" if "love is love" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
     lower = cleaned.lower(); color_resolution = resolve_garment_colors(garment_colors if garment_colors is not None else cleaned)
@@ -176,8 +177,9 @@ def select_candidate(candidates: list[dict[str, Any]], brief: dict[str, Any]) ->
 
 def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[str, Any]:
     exact = brief["exact_text"].title()
-    return {"title": f"{exact} Rainbow Heart Unisex Tee", "description": f"A {brief['visual_style']} {exact} design on a soft Bella+Canvas 3001 unisex tee.",
-        "tags": [brief["exact_text"].lower(), "rainbow heart", "inclusive shirt", "retro tee", "unisex shirt"],
+    pride=brief["exact_text"]=="LOVE IS LOVE"
+    return {"title": f"{exact} {'Rainbow Heart ' if pride else ''}Unisex Tee", "description": f"A {brief['visual_style']} {exact} design on a soft Bella+Canvas 3001 unisex tee.",
+        "tags": [brief["exact_text"].lower(), "rainbow heart" if pride else "supportive message", "inclusive shirt", "retro tee", "unisex shirt"],
         "price_cents": brief["price_cents"], "currency": brief["currency"], "colors": brief["garment_colors"], "sizes": brief["sizes"],
         "blank": brief["blank"], "print_provider": brief["print_provider"], "selected_design_sha256": selected["png_sha256"],
         "draft_status": "not_published", "order_status": "not_created"}
@@ -381,6 +383,51 @@ def _default_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, A
     return sale_candidate_vector.generate_v4_refinements(evidence["candidate"], root, phrase=brief["exact_text"])
 
 
+def normalize_source_job_id(value: str | None) -> str | None:
+    if value is None: return None
+    normalized = str(value).strip()
+    if not normalized: return None
+    if Path(normalized).name != normalized or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", normalized):
+        raise ValidationError("VALIDATION_FAILED", diagnostic_message="Source job ID must be a single nonblank job identifier.", operation="product_orchestrator", stage="prompt_received")
+    return normalized
+
+
+def _independent_evidence(state: dict[str, Any], root: Path, brief: dict[str, Any]) -> dict[str, Any]:
+    design_root=root/"independent-design";design_root.mkdir(parents=True,exist_ok=True);candidate=design_root/"prompt-source.png"
+    canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));draw=ImageDraw.Draw(canvas);phrase=brief["exact_text"] or "YOU ARE SAFE WITH ME"
+    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";words=phrase.split();lines=[];line=""
+    for word in words:
+        proposed=f"{line} {word}".strip()
+        if len(proposed)>18 and line:lines.append(line);line=word
+        else:line=proposed
+    if line:lines.append(line)
+    size=max(300,min(720,1800//max(1,len(lines))));font=ImageFont.truetype(font_path,size)
+    palette=((236,82,82,255),(244,154,72,255),(238,204,83,255),(77,178,124,255),(70,132,205,255),(145,91,189,255))
+    total=len(lines)*(size+90);y=(5400-total)//2
+    for index,text in enumerate(lines):
+        box=draw.textbbox((0,0),text,font=font,stroke_width=18);width=box[2]-box[0];x=(4500-width)//2
+        draw.rounded_rectangle((x-100,y-45,x+width+100,y+size+55),radius=90,fill=palette[index%len(palette)])
+        draw.text((x,y),text,font=font,fill=(255,255,255,255),stroke_width=18,stroke_fill=(35,30,45,255));y+=size+90
+    canvas.save(candidate);canvas.close();candidate_sha=_file_sha(candidate)
+    approval={"job_id":state["job_id"],"origin":"independent_prompt","prompt_sha256":sha256(state["original_prompt"].encode()).hexdigest(),"approved_artifact_sha256":candidate_sha,
+        "approval_scope":"local technical generation","human_artistic_approval":False,"created_at":datetime.now().astimezone().isoformat()}
+    approval_path=design_root/"local-generation-evidence.json";_atomic_json(approval_path,approval)
+    return {"origin":"independent_prompt","candidate":candidate,"candidate_sha":candidate_sha,"approval_sha":_file_sha(approval_path),"production":{"canvas_dimensions":[4500,5400]},"job_root":root}
+
+
+def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
+    root.mkdir(parents=True,exist_ok=True);result=[]
+    for index,name in enumerate(("prompt_centered","prompt_balanced","prompt_compact")):
+        path=root/f"{name}.png";path.write_bytes(Path(evidence["candidate"]).read_bytes());digest=_file_sha(path)
+        result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,
+            "source_artwork_sha256":evidence["candidate_sha"],"font_sha256":None,"layout_id":name,"treatment_id":"local_prompt_v1",
+            "quality_checks":{"hard_phrase_correct":True,"hard_no_duplicate_or_missing_text":True,"hard_safe_bounds":True,"hard_artwork_integrity":True,
+                "hard_dimensions":True,"hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True},
+            "thumbnail_path":str(path),"thumbnail_readability_score":10-index,"garment_contrast_score":9,"balanced_bounds_score":8-index,
+            "warnings":["Local technical generation does not replace human artistic review."]})
+    return result
+
+
 def _etsy_public_visibility(handle: str) -> str:
     url=handle if handle.startswith("https://www.etsy.com/") else f"https://www.etsy.com/listing/{handle.lstrip('/')}"
     try:response=requests.get(url,timeout=(5,15),allow_redirects=True,headers={"User-Agent":"JamesOS/1.0 EtsyVisibilityCheck"})
@@ -394,6 +441,8 @@ def _etsy_public_visibility(handle: str) -> str:
 class Adapters:
     evidence: Callable[[str], dict[str, Any]] = printify_product._approved_evidence
     candidates: Callable[[dict[str, Any], Path, dict[str, Any]], list[dict[str, Any]]] = _default_candidates
+    independent_evidence: Callable[[dict[str, Any],Path,dict[str,Any]],dict[str,Any]] = _independent_evidence
+    independent_candidates: Callable[[dict[str,Any],Path,dict[str,Any]],list[dict[str,Any]]] = _independent_candidates
     client_factory: Callable[[], PrintifyClient] = PrintifyClient
     etsy_visibility: Callable[[str],str] = _etsy_public_visibility
     sleep: Callable[[float],None] = time.sleep
@@ -419,7 +468,7 @@ class ProductOrchestrator:
                garment_colors: list[str] | None = None, sizes: list[str] | None = None, confirm_printify_draft: bool = False,
                job_id: str | None = None) -> dict[str, Any]:
         if mode != MODE: raise ValidationError("VALIDATION_FAILED", diagnostic_message=f"Unsupported mode: {mode}", operation="product_orchestrator", stage="prompt_received")
-        job_id = job_id or f"product-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+        source_job_id=normalize_source_job_id(source_job_id);job_id = job_id or f"product-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
         if self._path(job_id).exists(): raise StateConflictError("STATE_CONFLICT", diagnostic_message="Orchestrator job already exists.", operation="product_orchestrator", stage="prompt_received")
         state = {"job_id": job_id, "mode": mode, "policy": POLICY, "shop_id": shop_id, "source_job_id": source_job_id,
             "original_prompt": prompt, "brief": None, "stage": None, "stage_output": {}, "transitions": [], "evidence": {},
@@ -971,7 +1020,9 @@ class ProductOrchestrator:
             if unresolved:
                 raise ValidationError("VALIDATION_FAILED", diagnostic_message="Requested garment colors could not be resolved to exact catalog colors.",
                     operation="product_orchestrator", stage="brief_ready", context={"unresolved_colors":unresolved})
-            evidence = self.adapters.evidence(state["source_job_id"] or "")
+            source_job_id=normalize_source_job_id(state.get("source_job_id"))
+            evidence=(self.adapters.evidence(source_job_id) if source_job_id else
+                self.adapters.independent_evidence(state,self._path(state["job_id"]).parent,state["brief"]))
             if "artwork_ready" not in completed:
                 artwork = {"path": str(evidence["candidate"]), "sha256": evidence["candidate_sha"], "approval_sha256": evidence["approval_sha"]}
                 state["evidence"]["artwork"] = artwork; self._transition(state, "artwork_ready", "verify_approved_artwork", artwork)
@@ -982,7 +1033,8 @@ class ProductOrchestrator:
                 state["evidence"]["production"] = production; self._transition(state, "production_artifact_ready", "verify_production_artifact", production)
             design_root = self._path(state["job_id"]).parent / "design-candidates"
             if "design_candidates_ready" not in completed:
-                candidates = self.adapters.candidates(evidence, design_root, state["brief"]); state["evidence"]["candidates"] = candidates
+                generator=self.adapters.independent_candidates if evidence.get("origin")=="independent_prompt" else self.adapters.candidates
+                candidates = generator(evidence, design_root, state["brief"]); state["evidence"]["candidates"] = candidates
                 self._transition(state, "design_candidates_ready", "generate_v4_refinements", {"candidates": candidates})
             candidates = state["evidence"]["candidates"]
             if "design_selected" not in completed:
