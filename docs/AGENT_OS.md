@@ -10,12 +10,12 @@ The agents are not separate chatbots. They are bounded software components that 
 
 The goals are:
 
-- keep Printify, Etsy, creative generation, and orchestration logic separated
+- keep provider, marketplace, creative generation, and orchestration logic separated
 - make consequential actions reviewable
 - bind approvals to exact artifacts or complete proposals
 - prevent accidental duplicate uploads, products, publications, or state changes
 - preserve enough evidence to recover safely after partial failures
-- support multiple shops through configuration rather than duplicated code
+- support multiple private deployments through configuration rather than duplicated code
 
 ## Runtime Components
 
@@ -44,11 +44,11 @@ A typed request containing:
 
 ### AgentTaskRequest
 
-A follow-up capability request emitted by one agent for another agent. This is how the CommerceAgent delegates Printify and Etsy work rather than instantiating clients directly.
+A follow-up capability request emitted by one agent for another agent. This is how the CommerceAgent delegates provider and marketplace work rather than instantiating clients directly.
 
 ### ToolBroker
 
-Provides approved access to integrations such as Printify and Etsy. Agents request a named tool handle; they do not read credential files directly.
+Provides approved access to integrations. Agents request a named tool handle; they do not read credential files directly.
 
 ### SecretProvider
 
@@ -64,7 +64,7 @@ Records agent runs, attempts, child tasks, side effects, failures, and verificat
 
 ## Current Agents
 
-## CommerceAgent
+### CommerceAgent
 
 The CommerceAgent coordinates multi-step publication workflows.
 
@@ -73,11 +73,11 @@ Current capabilities:
 - `commerce.workflow.publish_to_inactive_review`
 - `commerce.workflow.publish_active_after_approval`
 
-It delegates rather than calling provider clients directly.
+It delegates rather than calling integration clients directly.
 
-### Active-after-approval flow
+#### Active-after-approval flow
 
-Used by UnityStitches:
+Available to profiles that publish live after final approval:
 
 ```text
 CommerceAgent
@@ -86,13 +86,13 @@ CommerceAgent
 → EtsyAgent verifies the listing state is active
 ```
 
-### Staged-review flow
+#### Staged-review flow
 
-Available for other profiles:
+Available to profiles that require marketplace review before activation:
 
 ```text
 CommerceAgent
-→ verifies Etsy readiness
+→ verifies marketplace readiness
 → PrintifyAgent publishes once
 → EtsyAgent deactivates the listing
 → EtsyAgent verifies inactive state
@@ -100,9 +100,9 @@ CommerceAgent
 
 No automatic republish or automatic retry is allowed.
 
-## PrintifyAgent
+### PrintifyAgent
 
-Owns Printify-facing product capabilities. It works through the product orchestrator and is constrained by explicit confirmation, idempotency records, protected-resource checks, and one-attempt limits.
+Owns provider-facing product capabilities. It works through the product orchestrator and is constrained by explicit confirmation, idempotency records, protected-resource checks, and one-attempt limits.
 
 Responsibilities include:
 
@@ -115,9 +115,9 @@ Responsibilities include:
 
 The broader product orchestrator currently handles catalog resolution, artwork upload, product creation and update, variant configuration, mockup retrieval, and draft recovery. Those lower-level operations remain independently testable and are gradually being exposed through agent capabilities.
 
-## EtsyAgent
+### EtsyAgent
 
-Owns Etsy listing reads and state transitions.
+Owns marketplace listing reads and state transitions.
 
 Current capabilities include:
 
@@ -138,9 +138,9 @@ OAuth credentials and refresh tokens remain outside Git.
 
 ## Profiles And Agents
 
-A shop is a profile, not an agent.
+A shop or deployment is a profile, not an agent.
 
-UnityStitches is configured as a generic `commerce_shop` profile with bindings to:
+Private local `commerce_shop` profiles can bind to:
 
 ```text
 marketplace  → EtsyAgent
@@ -148,7 +148,7 @@ fulfillment  → PrintifyAgent
 orchestrator → CommerceAgent
 ```
 
-This lets the same agents support future shops with different policies.
+This lets the same public agent code support multiple private deployments with different policies while keeping identifying names, shop IDs, product IDs, and protected resources outside Git.
 
 ## Configurable Approval Policies
 
@@ -157,39 +157,39 @@ Supported approval modes:
 - `single_final`
 - `staged`
 
-Supported Etsy final states:
+Supported marketplace final states:
 
 - `active`
 - `inactive`
 
 These settings are independent.
 
-UnityStitches currently uses:
+A typical private profile can use:
 
 ```json
 {
   "approval_mode": "single_final",
-  "etsy_final_state": "active",
+  "marketplace_final_state": "active",
   "human_review_location": "jamesos_listing_preview",
-  "preapproval_printify_draft_allowed": true,
+  "preapproval_provider_draft_allowed": true,
   "publish_policy": "publish_active_after_approval"
 }
 ```
 
 ## Single-Final Approval
 
-The target UnityStitches experience is:
+A generic single-final experience is:
 
 ```text
 idea
 → local design generation and validation
-→ non-public Printify draft
-→ real Printify mockups
-→ complete Etsy title, description, tags, price, variants, and placement
+→ non-public provider draft
+→ real provider mockups
+→ complete marketplace title, description, tags, price, variants, and placement
 → one immutable listing proposal
-→ James approves once
+→ user approves once
 → publish once
-→ verify Etsy listing is active
+→ verify the marketplace listing is active
 ```
 
 Selecting a candidate, requesting a design change, correcting contrast, or adjusting listing copy is editing, not final approval.
@@ -197,16 +197,16 @@ Selecting a candidate, requesting a design change, correcting contrast, or adjus
 The final approval is intended to bind to a canonical proposal hash covering:
 
 - exact artwork SHA-256
-- Printify product and artwork IDs
+- provider product and artwork IDs
 - enabled variants
 - placement
 - mockups
 - listing title
 - listing description
-- Etsy tags
+- marketplace tags
 - price
-- destination shop
-- expected Etsy final state
+- destination marketplace account
+- expected final state
 
 Any bound change invalidates the approval.
 
@@ -239,11 +239,11 @@ artwork upload succeeds, product update fails
 → keep the upload ID
 → do not upload again automatically
 
-Printify publication succeeds, Etsy lookup fails
+provider publication succeeds, marketplace lookup fails
 → mark the state indeterminate
 → do not republish
 
-Etsy listing ID is known, deactivation fails
+marketplace listing ID is known, deactivation fails
 → allow deactivation-only recovery
 → do not repeat publication
 ```
@@ -260,23 +260,23 @@ The product orchestrator is the mature lower-level implementation currently used
 - human artwork review
 - exact-hash design approval
 - garment contrast checks
-- Printify upload, product creation, and product update
+- provider upload, product creation, and product update
 - variant and placement enforcement
 - real mockup retrieval
 - listing preparation
-- guarded publication and Etsy review workflows
+- guarded publication and marketplace review workflows
 - recovery without duplicate completed side effects
 
-The next step is to wrap these capabilities in a unified CommerceProposal workflow while keeping the lower-level commands available for diagnostics.
+The next step is to wrap these capabilities in a unified `CommerceProposal` workflow while keeping the lower-level commands available for diagnostics.
 
 ## Next Major Agent Milestone
 
-Implement the preferred two-command user flow:
+Implement a preferred two-command user flow:
 
 ```bash
 jamesos commerce create \
-  --profile unitystitches \
-  --idea "Supportive You Are Safe With Me rainbow heart shirt"
+  --profile PRIVATE_PROFILE_ID \
+  --idea "PRODUCT IDEA"
 
 jamesos commerce approve \
   --job-id JOB_ID \
@@ -289,13 +289,13 @@ Internally this should:
 ```text
 CommerceAgent
 ├── request design generation and validation
-├── request Printify draft creation or update
+├── request provider draft creation or update
 ├── request exact mockup retrieval
 ├── request listing metadata generation
 ├── build immutable CommerceProposal
 ├── wait for one final approval
-├── request one Printify publication
-└── request Etsy active-state verification
+├── request one provider publication
+└── request marketplace final-state verification
 ```
 
-The complete status and current product checkpoint are documented in [CURRENT_STATUS.md](CURRENT_STATUS.md).
+Deployment-specific profile names, credentials, shop IDs, product IDs, and checkpoints belong outside the public repository.
