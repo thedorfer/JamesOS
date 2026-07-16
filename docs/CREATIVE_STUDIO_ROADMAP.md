@@ -1,222 +1,198 @@
 # Jade Creative Studio Roadmap
 
-Jade Creative Studio is the planned creative automation surface for JamesOS. It should create reviewable local work packages, not uncontrolled external actions.
+Jade Creative Studio is the creative automation surface for JamesOS. It creates reviewable local work packages and uses guarded provider and marketplace integrations.
 
 ## North Star
 
 ```text
-Evidence -> Job Queue -> Creative Studio -> Draft package -> James approval -> optional external draft target
+idea
+→ design plan
+→ candidates
+→ validation
+→ provider draft
+→ real mockups
+→ complete listing proposal
+→ approval
+→ guarded publication
+→ final-state verification
 ```
 
-Creative Studio should support UnityStitches, local image generation, product copy, review workflows, and future sales intelligence while staying approval-first.
+Private shop names, account identifiers, product identifiers, artwork, and deployment policies live outside the public repository.
 
 ## Phase 1: Foundations
 
-Status: foundation in place.
+Status: complete.
 
 - Job Queue
 - approval-gated job model
 - server config and integration health foundation
 - Control Center admin/readiness foundation
 - architecture and roadmap docs
-- safe placeholders for Creative Studio, UnityStitches, and ComfyUI
-
-Not included:
-
-- image generation
-- Printify calls
-- Etsy calls
-- product publishing
-- orders
-- send-to-production actions
 
 ## Phase 2: Creative Studio Foundation
 
-Status: foundation in place.
+Status: complete.
 
 - `jamesos/services/creative_studio.py`
 - `scripts/creative_studio.py`
-- `~/JamesOSData/JamesOS/Config/creative_studio.yaml`
-- `~/JamesOSData/JamesOS/Reports/Creative Studio.md`
+- local configuration under `~/JamesOSData/JamesOS`
 - Creative Studio API routes
 - Job Queue-backed creative jobs
-- safe placeholder job types:
-  - `creative_pipeline`
-  - `creative_image_generation`
-  - `creative_product_draft`
-  - `creative_mockup`
-  - `creative_social_post`
-- queue-backed pipeline shell:
-  - `idea`
-  - `prompt`
-  - `image`
-  - `mockup`
-  - `listing`
-  - `review`
-  - `printify_draft`
-  - `etsy_review`
-  - `complete`
+- queue-backed pipeline stages
 
-Still not included:
+## Phase 3: Creative Review Shell
 
-- ComfyUI execution
-- Printify calls
-- Etsy calls
-- product publishing
-- orders
-- sending
+Status: foundation in place; polished user experience remains in progress.
 
-## Phase 3: Creative Studio Review Shell
-
-Planned:
-
-- Control Center-backed health and approval summary in Jade
-- dashboard for creative jobs
+- creative-job dashboard
 - draft package viewer
-- approve/reject/regenerate actions
+- approve, reject, and regenerate actions
 - source and evidence labels
 - local asset browser
-- clear safety state for every draft
+- explicit safety state for every draft
 
-The review shell should be powered by Job Queue jobs and local draft files.
+## Phase 4: Generic Product Pipeline
 
-## Phase 4: UnityStitches Product Pipeline
+Status: lower-level foundations implemented.
 
-Status: foundation in place.
-
-- daily product draft packages
 - configurable product mix
-- niche rotation
-- Etsy title, tags, and descriptions
+- niche and compatibility rules
+- title, tags, and description generation
 - pricing notes
-- Printify blueprint search notes
-- `needs_review` status
-- `approval_required: true`
-- Creative Studio pipeline job per run
-- exactly two drafts per run:
-  - one women's underwear product
-  - one rotating configured product
-- Creative Intelligence compatibility checks before package creation
-- hard block on teacher/school/child-related underwear or intimate-apparel pairings
+- provider catalog and blueprint resolution
+- `needs_review` state
+- approval requirements
+- profile-driven shop policy
 
-Target product direction:
+The public code must remain generic. Shop-specific product mixes, brand voice, niche choices, and account details belong in private local profiles.
 
-- LGBTQ+ pride
-- trans pride
-- nonbinary pride
-- ally/supporter
-- inclusive teacher
-- self-love/confidence
-- mental health positivity
-- Thai/English identity
-- seasonal and holiday pride
-- Pride Month
+## Phase 5: Local Image Generation
 
-Product compatibility boundary:
+Status: approved local image generation and deterministic design rendering are available.
 
-- women's underwear may only use underwear-safe niches such as pride, self-love, confidence, body positivity, mental health positivity, Thai/English identity, pronouns/names, seasonal inclusive, and clean adult partner humor
-- teacher, school, education, classroom, student, kids, special education, speech therapy, occupational therapy, back-to-school, and child-related niches may only use non-intimate products such as shirts, sweatshirts, hoodies, totes, mugs, stickers, classroom accessories, and seasonal gifts
+Active pieces:
 
-Everything remains draft-only. ComfyUI, Printify, Etsy, publishing, ordering, and sending remain disabled.
+- ComfyUI health checks
+- Model Registry
+- Workflow Manager
+- Image Worker plans
+- approved local execution
+- generated assets under JamesOSData
+- deterministic text and motif composition for exact phrase rendering
+- transparency, bounds, resolution, uniqueness, and contrast checks
+- human artistic review artifacts
 
-## Phase 5: Local ComfyUI Image Generation
+ComfyUI is only an image engine. JamesOS owns the workflow, safety model, storage, validation, and approvals.
 
-Status: approved single-image local generation is available for explicitly approved image jobs.
+## Phase 6: Provider Draft Integration
 
-Active readiness pieces:
+Status: implemented and live-tested.
 
-- ComfyUI health check against `http://127.0.0.1:8188/system_stats`
-- Model Registry at `~/JamesOSData/JamesOS/AI/model_registry.yaml`
-- Workflow Manager for listing, selection, and path validation
-- managed API prompt template at `~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/print_design_basic.api.json`
-- managed transparent API prompt template at `~/JamesOSData/JamesOS/CreativeStudio/WorkflowTemplates/transparent_print_design_basic.api.json`
-- Image Worker safe execution plans
-- approved single-image execution through local ComfyUI only
-- generated draft assets saved under `~/JamesOSData/JamesOS/CreativeStudio/Generated/YYYY-MM-DD/<job_id>/`
-- one image job at a time
-- global execution remains disabled unless an approved job is actively executing
+Capabilities:
 
-Implemented execution:
-
-- local ComfyUI API on the desktop
-- GTX 1080 Ti-aware workflow choices
-- workflow JSON loading
-- placeholder replacement for prompt/negative prompt/checkpoint/seed/size
-- prepared workflow copy saved beside generated output
-- print-ready design artifact metadata with source size, target size, transparency, and manual-upload readiness
-- PNG download and local asset storage
-- Job Queue attachment of generated assets
-
-ComfyUI is only the image engine. JamesOS remains the workflow owner, and the ComfyUI browser's open workflow is ignored. Current transparent PNG output is prompt-only and marked as a production candidate until local background removal and upscaling are added. Realistic Vision may still produce photo/person-biased outputs; a vector/design checkpoint may be needed later for stricter print artwork.
-
-## Phase 6: Printify Draft Integration
-
-Planned placeholders:
-
-- list shops
-- list blueprints
-- find product blueprint
-- upload artwork
-- create product draft
+- list shops and catalogs
+- resolve blueprint, provider, colors, sizes, and variants
+- upload approved artwork
+- create or update a non-public product draft
+- retrieve real mockups
+- verify artwork ID, placement, variants, and front-only configuration
+- recover without duplicating completed side effects
 
 Rules:
 
-- draft-only
-- no publishing
-- no ordering
-- no send to production
-- require James approval
+- explicit confirmation for remote writes
+- no automatic retry
+- no duplicate product creation during recovery
+- protected resources enforced from private profiles
+- no order creation
 
-## Phase 7: Etsy Draft Integration
+## Phase 7: Marketplace Integration
 
-Planned:
+Status: guarded capabilities implemented and live-tested.
 
-- prepare Etsy draft metadata
-- title/tag/description review
-- connect approved product draft details
-- track listing readiness
+Capabilities:
+
+- OAuth authorization and refresh
+- listing reads
+- listing resolution after provider publication
+- staged deactivation and inactive verification
+- active-state verification
 
 Rules:
 
-- no live listings without approval
-- no hidden publishing
-- no automatic renewal or sales action without explicit future approval controls
+- no publication without the required approval reference
+- no hidden activation or deactivation
+- no automatic republish after an indeterminate result
+- no order fulfillment from the product workflow
 
-## Phase 8: Sales Intelligence
+## Phase 8: Agent OS
 
-Status: read-only Etsy performance-history foundation added; live sync remains placeholder until OAuth/shop credentials are configured and the connector is intentionally activated.
+Status: foundation implemented.
 
-Planned/active:
+```text
+CommerceAgent
+├── PrintifyAgent
+└── EtsyAgent
+```
 
-- niche performance notes
+The agents cooperate through typed requests, capability routing, approval policies, tool brokering, secret handles, run ledgers, and one-attempt controls.
+
+Private shops are profiles, not agents.
+
+## Phase 9: Unified Commerce Proposal
+
+Status: next major milestone.
+
+Target user experience:
+
+```text
+give idea
+→ JamesOS generates design and creates a non-public provider draft
+→ JamesOS retrieves real mockups and prepares the complete listing
+→ user reviews and revises
+→ user approves the immutable proposal once
+→ JamesOS publishes once
+→ JamesOS verifies the configured final marketplace state
+```
+
+Planned commands:
+
+```bash
+jamesos commerce create \
+  --profile PRIVATE_PROFILE_ID \
+  --idea "PRODUCT IDEA"
+
+jamesos commerce approve \
+  --job-id JOB_ID \
+  --proposal-sha256 SHA256 \
+  --confirm
+```
+
+The proposal should bind artwork, provider draft IDs, mockups, listing metadata, price, variants, placement, destination, and expected final state.
+
+## Phase 10: Sales Intelligence
+
+Status: read-only performance foundation exists.
+
+Planned and active directions:
+
+- product and niche performance
 - seasonal timing
 - pricing suggestions
 - listing quality checks
 - draft iteration recommendations
-- evidence-backed creative direction
-- read-only UnityStitches Etsy performance tables
-- local performance scoring influence when history exists
+- provider-agnostic performance learning
 
-Sales intelligence should advise first, create queued draft tasks second, and act externally only after approval.
-
-Read-only Etsy safety:
-
-- no listing creation or edits
-- no publishing, renewal, deactivation, or deletion
-- no messages
-- no order fulfillment
-- no Printify calls
-- no ComfyUI calls
-- no image uploads
+Sales intelligence should advise first and request guarded actions only through the Agent OS.
 
 ## Safety Model
 
-Creative Studio must keep these defaults:
-
-- approval-first
 - local-first
-- draft-only
-- evidence-labeled when possible
-- Job Queue-backed for consequential actions
-- ComfyUI execution only for explicitly approved local image jobs
-- no Printify/Etsy/provider writes until the corresponding phase is intentionally implemented
+- evidence-aware
+- profile-configurable approvals
+- exact-hash or proposal-hash approval binding
+- no automatic external retry
+- no duplicate completed side effects
+- no hidden publication state changes
+- no orders
+- deployment-specific identities and identifiers outside Git
