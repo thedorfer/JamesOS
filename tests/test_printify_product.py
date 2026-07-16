@@ -130,8 +130,9 @@ class PrintifyTests(unittest.TestCase):
 
     def test_no_forbidden_client_methods_or_routes(self):
         client_names = set(dir(PrintifyClient))
-        for name in ("publish_product", "create_order", "send_to_production", "delete_product", "archive_upload"):
+        for name in ("create_order", "send_to_production", "delete_product", "archive_upload"):
             self.assertNotIn(name, client_names)
+        self.assertIn("publish_product",client_names)
         from jamesos.core.api import app
         paths = {route.path for route in app.routes}
         self.assertFalse(any("publish" in path or "order" in path for path in paths if path.startswith("/commerce/printify")))

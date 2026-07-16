@@ -41,6 +41,8 @@ def _main() -> int:
     recover.add_argument("--confirm-printify-draft-recovery", action="store_true")
     prepare = commands.add_parser("prepare-listing"); prepare.add_argument("--job-id", required=True)
     prepare.add_argument("--confirm-printify-listing-update", action="store_true")
+    etsy = commands.add_parser("send-to-etsy-review"); etsy.add_argument("--job-id", required=True)
+    etsy.add_argument("--confirm-etsy-channel-test", action="store_true")
     args = parser.parse_args(); orchestrator = ProductOrchestrator()
     if args.command == "create":
         state = orchestrator.create(prompt=args.prompt, source_job_id=args.source_job_id, shop_id=args.shop_id, mode=args.mode,
@@ -56,6 +58,8 @@ def _main() -> int:
         result=orchestrator.recover_draft(args.job_id,confirmed=args.confirm_printify_draft_recovery);print(json.dumps(result,indent=2));return 0
     elif args.command == "prepare-listing":
         result=orchestrator.prepare_listing(args.job_id,confirmed=args.confirm_printify_listing_update);print(json.dumps(result,indent=2));return 0
+    elif args.command == "send-to-etsy-review":
+        result=orchestrator.send_to_etsy_review(args.job_id,confirmed=args.confirm_etsy_channel_test);print(json.dumps(result,indent=2));return 0
     else:
         path = orchestrator.report(args.job_id); print(json.dumps({"result":"report_ready","job_id":args.job_id,"report_path":str(path)},indent=2)); return 0
     result = response_summary(state, orchestrator)

@@ -542,6 +542,95 @@ class ProductOrchestratorTests(unittest.TestCase):
             with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.prepare_listing("reconcile-job",confirmed=True)
             client.get_product.assert_not_called();client.update_product.assert_not_called()
 
+    def etsy_fixture(self, root: Path, *, gpsr: bool = True):
+        orchestrator,state,remote,replacement,client=self.listing_fixture(root);remote=replacement
+        state.update(stage="awaiting_printify_human_review",publish_status="not_published",order_status="not_created")
+        state["evidence"]["listing"].update(title=product_orchestrator.ETSY_TITLE,description=product_orchestrator.ETSY_DESCRIPTION,tags=product_orchestrator.ETSY_TAGS)
+        product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+        for item in remote["variants"]:item["is_default"]=item["id"]==18542
+        remote["images"]=[{"id":f"mock-{item}","mockup_id":f"front-{item}","src":f"https://mock.test/{item}.png"} for item in (18102,18150,18542)]
+        remote["external"]={};client.list_shops.return_value=[{"id":9437076,"sales_channel":"etsy"}];client.get_product.return_value=remote
+        client.get_product_gpsr.return_value={"sections":[{"title":"Manufacturer","text":"Exact manufacturer text"},{"title":"Warnings","text":"Exact warning text"}]} if gpsr else {"sections":[]}
+        ready=copy.deepcopy(remote)
+        for item in ready["variants"]:item["is_default"]=item["id"]==18102
+        if gpsr:ready["safety_information"]="Manufacturer\nExact manufacturer text\n\nWarnings\nExact warning text"
+        published=copy.deepcopy(ready);published["external"]={"id":"etsy-123","handle":"love-is-love-123"}
+        orchestrator.adapters.etsy_visibility=lambda _handle:"held_for_review";orchestrator.adapters.publish_poll_attempts=1;orchestrator.adapters.sleep=lambda _seconds:None
+        return orchestrator,state,remote,ready,published,client
+
+    def test_etsy_channel_plan_is_read_only_and_reports_public_risk(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root);before=orchestrator._path("reconcile-job").read_bytes()
+            result=orchestrator.send_to_etsy_review("reconcile-job")
+            self.assertEqual(result["result"],"etsy_channel_test_plan");self.assertFalse(result["write_performed"]);self.assertFalse(result["publish_performed"])
+            self.assertEqual(result["current_default_variant_id"],18542);self.assertEqual(result["proposed_default_variant_id"],18102)
+            self.assertEqual(result["current_mockup_count"],3);self.assertTrue(result["gpsr_information_available"]);self.assertTrue(result["public_listing_risk_acknowledged"])
+            self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called();client.publish_product.assert_not_called()
+            client.get_product_gpsr.assert_called_once_with(9437076,product_orchestrator.LISTING_PRODUCT_ID)
+
+    def test_etsy_channel_confirmed_updates_default_once_and_publishes_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root);client.get_product.side_effect=[remote,ready,published]
+            result=orchestrator.send_to_etsy_review("reconcile-job",confirmed=True);client.update_product.assert_called_once();client.publish_product.assert_called_once()
+            update=client.update_product.call_args.args[2];self.assertNotIn("images",update);self.assertEqual(len(update["variants"]),318)
+            self.assertEqual([item["id"] for item in update["variants"] if item["is_default"]],[18102])
+            self.assertEqual(update["safety_information"],"Manufacturer\nExact manufacturer text\n\nWarnings\nExact warning text")
+            publish=client.publish_product.call_args.args[2];self.assertEqual(publish,{"title":True,"description":True,"images":True,"variants":True,"tags":True,"keyFeatures":True,"shipping_template":True})
+            self.assertEqual(result["etsy_human_gate_result"],"held_for_review");self.assertEqual(result["stage"],"awaiting_etsy_human_review")
+            saved=orchestrator.load("reconcile-job");self.assertEqual(saved["evidence"]["etsy_channel_test"]["etsy_listing_id"],"etsy-123")
+            readiness=json.loads((orchestrator._path("reconcile-job").parent/"etsy-listing-readiness.json").read_text())
+            self.assertFalse(readiness["category"]["selected_remotely"]);self.assertFalse(readiness["additional_marketing_images_generated"])
+            for method in (client.create_product,client.upload_image_contents,client.upload_image_url,client.delete_product,client.create_order,client.unpublish_product):method.assert_not_called()
+
+    def test_etsy_channel_empty_gpsr_invents_nothing_and_visibility_is_conservative(self):
+        for classification,expected_stage in (("publicly_active","awaiting_etsy_human_review"),("held_for_review","awaiting_etsy_human_review"),("indeterminate","awaiting_etsy_visibility_confirmation")):
+            with self.subTest(classification=classification),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root,gpsr=False)
+                for item in remote["variants"]:item["is_default"]=item["id"]==18102
+                published=copy.deepcopy(remote);published["external"]={"id":"etsy-123","handle":"handle"};client.get_product.side_effect=[remote,published]
+                orchestrator.adapters.etsy_visibility=lambda _handle,value=classification:value
+                result=orchestrator.send_to_etsy_review("reconcile-job",confirmed=True);client.update_product.assert_not_called();client.publish_product.assert_called_once()
+                self.assertEqual(result["etsy_human_gate_result"],classification);self.assertEqual(result["stage"],expected_stage)
+                if classification=="publicly_active":self.assertTrue(result["immediate_etsy_review_required"])
+
+    def test_etsy_channel_readiness_failure_blocks_publish_and_existing_external_blocks_republish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root);ready["variants"][0]["is_default"]=True
+            client.get_product.side_effect=[remote,ready]
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.send_to_etsy_review("reconcile-job",confirmed=True)
+            client.update_product.assert_called_once();client.publish_product.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root);remote["external"]={"id":"existing","handle":"handle"}
+            result=orchestrator.send_to_etsy_review("reconcile-job",confirmed=True);self.assertEqual(result["result"],"existing_etsy_listing")
+            client.update_product.assert_not_called();client.publish_product.assert_not_called()
+
+    def test_etsy_channel_publish_failure_is_not_retried_and_403_is_indeterminate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root);client.get_product.side_effect=[remote,ready,ready]
+            client.publish_product.side_effect=PrintifyAPIError("publish_product",500,"failed","failed")
+            result=orchestrator.send_to_etsy_review("reconcile-job",confirmed=True);self.assertEqual(result["etsy_human_gate_result"],"unavailable")
+            client.publish_product.assert_called_once();client.update_product.assert_called_once()
+        for status,text,expected in ((403,"blocked","indeterminate"),(404,"not found","held_for_review"),(200,"Add to cart","publicly_active"),(200,"ambiguous","indeterminate")):
+            with self.subTest(status=status,text=text):
+                response=Mock(status_code=status,text=text)
+                with patch.object(product_orchestrator.requests,"get",return_value=response):self.assertEqual(product_orchestrator._etsy_public_visibility("handle"),expected)
+
+    def test_etsy_channel_protected_product_is_never_referenced(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,ready,published,client=self.etsy_fixture(root)
+            state["evidence"]["draft"]["printify_product_id"]=product_orchestrator.PROTECTED_PRODUCT_ID;product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.send_to_etsy_review("reconcile-job",confirmed=True)
+            client.list_shops.assert_not_called();client.get_product.assert_not_called();client.update_product.assert_not_called();client.publish_product.assert_not_called()
+
+    def test_etsy_channel_cli_confirmation_is_dedicated(self):
+        orchestrator=Mock();orchestrator.send_to_etsy_review.return_value={"result":"etsy_channel_test_plan"}
+        for argv,confirmed in ((["product_from_prompt.py","send-to-etsy-review","--job-id","job"],False),
+                               (["product_from_prompt.py","send-to-etsy-review","--job-id","job","--confirm-etsy-channel-test"],True)):
+            with self.subTest(confirmed=confirmed):
+                orchestrator.send_to_etsy_review.reset_mock();output=StringIO()
+                with patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),patch.object(product_from_prompt.sys,"argv",argv),redirect_stdout(output):self.assertEqual(product_from_prompt._main(),0)
+                orchestrator.send_to_etsy_review.assert_called_once_with("job",confirmed=confirmed)
+
     def recovery_fixture(self, root: Path):
         orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.RECOVERY_DELETED_PRODUCT_ID)
         marker=product_orchestrator.RECOVERY_TAGS[-1];state["evidence"]["draft_marker"]=marker;state["evidence"]["draft"]["draft_marker"]=marker

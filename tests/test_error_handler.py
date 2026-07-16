@@ -144,5 +144,15 @@ class ErrorHandlerTests(unittest.TestCase):
             self.assertTrue(urls[2].endswith("/catalog/blueprints/12/print_providers/29/variants.json?show-out-of-stock=1"))
             self.assertTrue(all(call.kwargs.get("json") is None for call in session.request.call_args_list))
 
+    def test_printify_gpsr_is_read_only_and_publish_write_has_one_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            token=Path(temporary)/"token";token.write_text("secret");token.chmod(0o600);session=Mock()
+            ok=Mock(status_code=200);ok.json.return_value={"sections":[]};session.request.return_value=ok;client=PrintifyClient(token_path=token,session=session)
+            client.get_product_gpsr(9437076,"product");call=session.request.call_args
+            self.assertEqual(call.args[0],"GET");self.assertTrue(call.args[1].endswith("/shops/9437076/products/product/gpsr.json"))
+            failed=Mock(status_code=500,headers={});failed.json.return_value={"message":"failed"};session.reset_mock();session.request.return_value=failed
+            with self.assertRaises(PrintifyAPIError):client.publish_product(9437076,"product",{"images":True})
+            self.assertEqual(session.request.call_count,1);self.assertEqual(session.request.call_args.args[0],"POST")
+
 
 if __name__ == "__main__": unittest.main()
