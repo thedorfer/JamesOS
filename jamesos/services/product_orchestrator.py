@@ -142,7 +142,7 @@ def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: l
     cleaned = " ".join(prompt.split())
     if not cleaned: raise ValidationError("VALIDATION_FAILED", diagnostic_message="Product prompt is empty.", operation="product_orchestrator", stage="prompt_received")
     quoted = re.search(r"[\"“](.+?)[\"”]", cleaned)
-    labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:\.{2,}|…|[,;!?]|$))", cleaned)
+    labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:…|[.,;!?]|$))", cleaned)
     exact = quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else "LOVE IS LOVE" if "love is love" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
@@ -176,13 +176,55 @@ def select_candidate(candidates: list[dict[str, Any]], brief: dict[str, Any]) ->
 
 
 def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[str, Any]:
-    exact = brief["exact_text"].title()
+    phrase=str(brief.get("exact_text") or "").strip()
+    if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Product exact phrase is required before listing metadata can be generated.",operation="product_orchestrator",stage="listing_ready")
+    exact = phrase.title()
     pride=brief["exact_text"]=="LOVE IS LOVE"
-    return {"title": f"{exact} {'Rainbow Heart ' if pride else ''}Unisex Tee", "description": f"A {brief['visual_style']} {exact} design on a soft Bella+Canvas 3001 unisex tee.",
-        "tags": [brief["exact_text"].lower(), "rainbow heart" if pride else "supportive message", "inclusive shirt", "retro tee", "unisex shirt"],
+    tags=sanitize_printify_tags([phrase.lower(),"rainbow heart" if pride else "supportive message","inclusive shirt","retro tee","unisex shirt"],phrase=phrase,blank=brief.get("blank"))
+    return {"title": f"{exact} {'Rainbow Heart ' if pride else ''}Unisex Tee".strip(), "description": f"A {brief['visual_style']} {exact} design on a {brief['blank']} unisex tee.".strip(),
+        "tags":tags,
         "price_cents": brief["price_cents"], "currency": brief["currency"], "colors": brief["garment_colors"], "sizes": brief["sizes"],
         "blank": brief["blank"], "print_provider": brief["print_provider"], "selected_design_sha256": selected["png_sha256"],
         "draft_status": "not_published", "order_status": "not_created"}
+
+
+def sanitize_printify_tags(tags: list[Any] | None, *, phrase: str="", blank: str="") -> list[str]:
+    result=[];seen=set()
+    for value in tags or []:
+        if not isinstance(value,str):continue
+        clean=" ".join(value.split())
+        if not clean or clean.casefold() in seen:continue
+        seen.add(clean.casefold());result.append(clean)
+    if not result:
+        fallbacks=[phrase.casefold(),"unisex tee",str(blank).casefold(),"front print"]
+        for value in fallbacks:
+            clean=" ".join(value.split())
+            if clean and clean.casefold() not in seen:seen.add(clean.casefold());result.append(clean)
+    return result
+
+
+def create_variant_payload(catalog: dict[str,Any],selected_ids:list[int],price:int)->list[dict[str,Any]]:
+    selected=set(selected_ids);rows=[];seen=set()
+    for item in catalog.get("variants") or []:
+        variant_id=item.get("id")
+        if type(variant_id) is not int or variant_id in seen:continue
+        seen.add(variant_id);rows.append({"id":variant_id,"price":price,"is_enabled":variant_id in selected})
+    if selected-seen:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Selected variants are missing from the Printify catalog payload.",operation="product_orchestrator",stage="printify_payload_validation",context={"missing_variant_ids":sorted(selected-seen)})
+    return rows
+
+
+def validate_create_payload(payload:dict[str,Any],expected_enabled_ids:list[int])->dict[str,Any]:
+    for field in ("title","description"):
+        if not isinstance(payload.get(field),str) or not payload[field].strip():raise ValidationError("VALIDATION_FAILED",diagnostic_message=f"Printify payload field {field} must be a nonblank string.",operation="product_orchestrator",stage="printify_payload_validation")
+    tags=payload.get("tags")
+    if not isinstance(tags,list) or not tags or any(not isinstance(tag,str) or not tag.strip() for tag in tags):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field tags must contain only nonblank strings.",operation="product_orchestrator",stage="printify_payload_validation")
+    if len({tag.casefold() for tag in tags})!=len(tags):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field tags contains case-insensitive duplicates.",operation="product_orchestrator",stage="printify_payload_validation")
+    variants=payload.get("variants") or [];enabled=[item.get("id") for item in variants if item.get("is_enabled") is True]
+    if len(enabled)!=len(expected_enabled_ids) or set(enabled)!=set(expected_enabled_ids):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload enabled variants must exactly match the requested variants.",operation="product_orchestrator",stage="printify_payload_validation",context={"enabled_variant_count":len(enabled),"requested_variant_count":len(expected_enabled_ids)})
+    areas=payload.get("print_areas") or [];placeholders=[placeholder for area in areas for placeholder in area.get("placeholders") or []]
+    used=[placeholder for placeholder in placeholders if placeholder.get("images")]
+    if not used or any(placeholder.get("position")!="front" for placeholder in used):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload artwork must use the front placeholder only.",operation="product_orchestrator",stage="printify_payload_validation")
+    return payload
 
 
 def sanitize_update_print_areas(remote_areas: list[dict[str, Any]], desired_ids: list[int]) -> tuple[list[dict[str, Any]],list[str]]:
@@ -707,6 +749,8 @@ class ProductOrchestrator:
         if not job_id or Path(job_id).name!=job_id:
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="Draft recovery requires a single existing job ID.",operation="product_orchestrator.recover_draft",stage="input")
         state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload=evidence.get("upload") or {}
+        if state.get("stage")=="failed" and not draft.get("printify_product_id") and evidence.get("selection"):
+            return self._recover_independent_create(state,confirmed=confirmed)
         deleted_id=draft.get("printify_product_id");marker=evidence.get("draft_marker") or draft.get("draft_marker")
         listing=evidence.get("listing") or {};selected_sha=evidence.get("selection",{}).get("selected",{}).get("png_sha256")
         if state.get("shop_id")!=RECOVERY_SHOP_ID or deleted_id!=RECOVERY_DELETED_PRODUCT_ID or deleted_id==PROTECTED_PRODUCT_ID:
@@ -788,6 +832,53 @@ class ProductOrchestrator:
             "deleted_product_id":deleted_id,"replacement_product_id":replacement_id,"reused_upload":True,"new_upload_created":False,
             "new_product_created":True,"enabled_variant_count":18,"remote_product_verified":True,"publish_status":"not_published",
             "order_status":"not_created","fresh_visual_review_required":True}
+
+    def _recover_independent_create(self,state:dict[str,Any],*,confirmed:bool=False)->dict[str,Any]:
+        evidence=state.get("evidence") or {};selected=(evidence.get("selection") or {}).get("selected") or {};selected_path=Path(str(selected.get("png_path") or ""))
+        selected_sha=selected.get("png_sha256");upload=evidence.get("upload") or {};upload_id=upload.get("printify_image_id")
+        reusable=bool(upload_id and upload.get("selected_design_sha256")==selected_sha)
+        if state.get("shop_id")!=RECOVERY_SHOP_ID or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Independent recovery requires the original unpublished, unordered Printify shop job.",operation="product_orchestrator.recover_draft",stage="ownership")
+        if not selected_path.is_file() or _file_sha(selected_path)!=selected_sha:raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH",diagnostic_message="Selected local design candidate no longer matches recovery evidence.",operation="product_orchestrator.recover_draft",stage="artwork")
+        old_brief=state.get("brief") or {};brief=normalize_prompt(state["original_prompt"],price=old_brief.get("price_cents"),garment_colors=old_brief.get("garment_colors") or DEFAULT_COLORS,sizes=old_brief.get("sizes") or DEFAULT_SIZES)
+        if brief["garment_colors"]!=DEFAULT_COLORS or brief["sizes"]!=DEFAULT_SIZES:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent recovery is restricted to Black, Dark Grey Heather, and White in sizes S through 3XL.",operation="product_orchestrator.recover_draft",stage="variants")
+        listing=generate_listing(brief,selected);marker=evidence.get("draft_marker") or _draft_marker(state);stored_ids=(evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
+        if len(stored_ids)!=18 or len(set(stored_ids))!=18:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent recovery requires exactly 18 recorded requested variants.",operation="product_orchestrator.recover_draft",stage="variants")
+        plan={"result":"independent_draft_recovery_plan","write_performed":False,"printify_write_performed":False,"job_id":state["job_id"],"shop_id":state["shop_id"],
+            "reusable_upload_exists":reusable,"upload_id":upload_id if reusable else None,"new_upload_required":not reusable,"new_upload_would_occur":not reusable,
+            "new_product_would_be_created":True,"enabled_variant_count":18,"title":listing["title"],"tags":listing["tags"],"selected_design_candidate":selected.get("candidate_id"),
+            "selected_design_path":str(selected_path),"front_artwork_only":True,"publish_status":"not_published","order_status":"not_created","safe_to_recover":True}
+        if not confirmed:return plan
+        client=self.adapters.client_factory();catalog=client.get_variants(12,29);selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES);chosen=selection["selected_variant_ids"]
+        if len(chosen)!=18 or set(chosen)!=set(stored_ids):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Current Printify catalog variants differ from the failed job recovery evidence.",operation="product_orchestrator.recover_draft",stage="variants")
+        payload={"title":listing["title"],"description":listing["description"],"tags":[*listing["tags"],marker],"blueprint_id":12,"print_provider_id":29,
+            "variants":create_variant_payload(catalog,chosen,listing["price_cents"]),"print_areas":[{"variant_ids":chosen,"placeholders":[{"position":"front","images":[{"id":upload_id or "pending-validated-upload","x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
+        validate_create_payload(payload,chosen)
+        existing=_find_marked_draft(client.list_products(state["shop_id"]),marker)
+        if existing:product=existing;created=False
+        else:
+            if reusable:
+                remote_upload=client.get_upload(upload_id)
+                if remote_upload.get("id") not in (None,upload_id):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Reusable Printify upload identity did not match.",operation="product_orchestrator.recover_draft",stage="upload")
+            else:
+                remote_upload=client.upload_image_contents(f"jamesos-{state['job_id']}-{selected_sha[:12]}.png",__import__("base64").b64encode(selected_path.read_bytes()).decode())
+                upload_id=remote_upload.get("id")
+                if not upload_id:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify upload did not return an image ID.",operation="product_orchestrator.recover_draft",stage="upload")
+            payload["print_areas"][0]["placeholders"][0]["images"][0]["id"]=upload_id;validate_create_payload(payload,chosen)
+            product=client.create_product(state["shop_id"],payload);created=True
+        product_id=product.get("id")
+        if not product_id or product_id==PROTECTED_PRODUCT_ID:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Recovery returned a missing or protected Printify product ID.",operation="product_orchestrator.recover_draft",stage="creation")
+        verified=client.get_product(state["shop_id"],product_id);enabled={item.get("id") for item in verified.get("variants") or [] if item.get("is_enabled") is True}
+        front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==upload_id]
+        back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+        if verified.get("id")!=product_id or enabled!=set(chosen) or not front or back:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Recovered independent draft failed post-create verification.",operation="product_orchestrator.recover_draft",stage="verification",context={"product_id":product_id})
+        current_error=state.get("last_error")
+        if current_error and not any(item.get("error_id")==current_error.get("error_id") for item in state.setdefault("recovered_errors",[])):state["recovered_errors"].append({**current_error,"recovered_at":datetime.now().astimezone().isoformat()})
+        state["brief"]=brief;evidence["listing"]=listing;evidence["upload"]={"printify_image_id":upload_id,"selected_design_sha256":selected_sha};evidence["variant_selection"]=selection
+        evidence["draft"]={"printify_product_id":product_id,"variant_ids":chosen,"draft_marker":marker,"reconciled_existing_remote_draft":not created,"publish_status":"not_published","order_status":"not_created"}
+        evidence.setdefault("draft_recovery_history",[]).append({"status":"verified","recovery_type":"independent_create_failure","replacement_product_id":product_id,"reused_upload":reusable,"new_upload_created":not reusable,"created_at":datetime.now().astimezone().isoformat()})
+        state["stage"]="awaiting_human_approval";state["last_error"]=None;_atomic_json(self._path(state["job_id"]),state)
+        return {"result":"independent_draft_recovered","write_performed":True,"printify_write_performed":True,"product_id":product_id,"reused_upload":reusable,"new_upload_created":not reusable,"new_product_created":created,"enabled_variant_count":18,"front_artwork_only":True,"publish_status":"not_published","order_status":"not_created"}
 
     def review_draft(self, job_id: str) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:
@@ -1047,22 +1138,27 @@ class ProductOrchestrator:
             if not confirmed:
                 raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify draft creation requires --confirm-printify-draft.", operation="product_orchestrator", stage="printify_image_uploaded",
                     state={"external_write_attempted": False, "external_write_completed": False, "safe_to_retry": True}, suggested_action="Resume with --confirm-printify-draft after reviewing the local evidence.")
-            client = self.adapters.client_factory()
+            listing=state["evidence"]["listing"];tags=sanitize_printify_tags(listing.get("tags"),phrase=state["brief"].get("exact_text",""),blank=state["brief"].get("blank",""));listing["tags"]=tags
+            if not str(listing.get("title") or "").strip():raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field title must be a nonblank string.",operation="product_orchestrator",stage="printify_payload_validation")
+            if not str(listing.get("description") or "").strip():raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field description must be a nonblank string.",operation="product_orchestrator",stage="printify_payload_validation")
+            if not tags:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field tags must contain a nonblank string.",operation="product_orchestrator",stage="printify_payload_validation")
+            client = self.adapters.client_factory();variant_evidence=None;payload=None;marker=None
+            if "printify_draft_created" not in completed:
+                catalog=client.get_variants(12,29);variant_evidence=select_printify_variants(catalog,colors=state["brief"]["garment_colors"],sizes=state["brief"]["sizes"])
+                chosen=variant_evidence["selected_variant_ids"];marker=state["evidence"].get("draft_marker") or _draft_marker(state)
+                provisional_image=(state["evidence"].get("upload") or {}).get("printify_image_id") or "pending-validated-upload"
+                payload={"title":listing["title"],"description":listing["description"],"tags":[*tags,marker],"blueprint_id":12,"print_provider_id":29,
+                    "variants":create_variant_payload(catalog,chosen,listing["price_cents"]),"print_areas":[{"variant_ids":chosen,"placeholders":[{"position":"front","images":[{"id":provisional_image,"x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
+                validate_create_payload(payload,chosen)
             if "printify_image_uploaded" not in completed:
                 remote = client.upload_image_contents(f"jamesos-{state['job_id']}-{selected['png_sha256'][:12]}.png", __import__("base64").b64encode(Path(selected["png_path"]).read_bytes()).decode())
                 upload = {"printify_image_id": remote["id"], "selected_design_sha256": selected["png_sha256"]}; state["evidence"]["upload"] = upload
                 self._transition(state, "printify_image_uploaded", "printify_upload", upload)
             else: client.get_upload(state["evidence"]["upload"]["printify_image_id"])
             if "printify_draft_created" not in completed:
-                variant_evidence = select_printify_variants(client.get_variants(12, 29), colors=state["brief"]["garment_colors"], sizes=state["brief"]["sizes"])
-                chosen = variant_evidence["selected_variant_ids"]; marker = state["evidence"].get("draft_marker") or _draft_marker(state)
+                payload["print_areas"][0]["placeholders"][0]["images"][0]["id"]=state["evidence"]["upload"]["printify_image_id"];validate_create_payload(payload,chosen)
                 state["evidence"]["variant_selection"] = variant_evidence; state["evidence"]["draft_marker"] = marker
                 _atomic_json(self._path(state["job_id"]), state)
-                listing = state["evidence"]["listing"]; image_id = state["evidence"]["upload"]["printify_image_id"]
-                payload = {"title": listing["title"], "description": listing["description"], "tags": listing["tags"], "blueprint_id": 12, "print_provider_id": 29,
-                    "variants": [{"id": x, "price": listing["price_cents"], "is_enabled": True} for x in chosen],
-                    "print_areas": [{"variant_ids": chosen, "placeholders": [{"position": "front", "images": [{"id": image_id, "x": .5, "y": .46, "scale": .85, "angle": 0}]}]}]}
-                payload["tags"] = [*payload["tags"], marker]
                 product = _find_marked_draft(client.list_products(state["shop_id"]), marker)
                 reconciled = product is not None
                 if product is None: product = client.create_product(state["shop_id"], payload)
