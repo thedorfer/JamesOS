@@ -132,7 +132,9 @@ class PrintifyClient:
     def get_blueprint(self, blueprint_id: int): return self._request("GET", f"/catalog/blueprints/{blueprint_id}.json", operation="get_blueprint", safe_read=True)
     def list_print_providers(self): return self._request("GET", "/catalog/print_providers.json", operation="list_print_providers", safe_read=True)
     def list_print_providers_for_blueprint(self, blueprint_id: int): return self._request("GET", f"/catalog/blueprints/{blueprint_id}/print_providers.json", operation="list_blueprint_providers", safe_read=True)
-    def get_variants(self, blueprint_id: int, provider_id: int): return self._request("GET", f"/catalog/blueprints/{blueprint_id}/print_providers/{provider_id}/variants.json", operation="get_variants", safe_read=True)
+    def get_variants(self, blueprint_id: int, provider_id: int, *, show_out_of_stock: bool = False):
+        suffix="?show-out-of-stock=1" if show_out_of_stock else ""
+        return self._request("GET", f"/catalog/blueprints/{blueprint_id}/print_providers/{provider_id}/variants.json{suffix}", operation="get_variants", safe_read=True)
     def get_shipping(self, blueprint_id: int, provider_id: int): return self._request("GET", f"/catalog/blueprints/{blueprint_id}/print_providers/{provider_id}/shipping.json", operation="get_shipping", safe_read=True)
     def list_uploads(self): return self._request("GET", "/uploads.json", operation="list_uploads", safe_read=True)
     def get_upload(self, image_id: str): return self._request("GET", f"/uploads/{image_id}.json", operation="get_upload", safe_read=True)

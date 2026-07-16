@@ -132,5 +132,17 @@ class ErrorHandlerTests(unittest.TestCase):
         payload = json.loads(output.getvalue()); self.assertEqual(status, 1); self.assertEqual(payload["result"], "failed")
         self.assertNotIn("diagnostic_message", payload)
 
+    def test_printify_catalog_reads_include_provider_listing_and_out_of_stock_variants(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            token=Path(temporary)/"token";token.write_text("secret");token.chmod(0o600)
+            response=Mock(status_code=200);response.json.return_value={};session=Mock();session.request.return_value=response
+            client=PrintifyClient(token_path=token,session=session)
+            client.get_blueprint(12);client.list_print_providers_for_blueprint(12);client.get_variants(12,29,show_out_of_stock=True)
+            urls=[call.args[1] for call in session.request.call_args_list]
+            self.assertTrue(urls[0].endswith("/catalog/blueprints/12.json"))
+            self.assertTrue(urls[1].endswith("/catalog/blueprints/12/print_providers.json"))
+            self.assertTrue(urls[2].endswith("/catalog/blueprints/12/print_providers/29/variants.json?show-out-of-stock=1"))
+            self.assertTrue(all(call.kwargs.get("json") is None for call in session.request.call_args_list))
+
 
 if __name__ == "__main__": unittest.main()

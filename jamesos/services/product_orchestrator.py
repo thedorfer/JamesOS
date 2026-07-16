@@ -19,6 +19,7 @@ from PIL import Image, ImageDraw
 
 from jamesos.config import VAULT
 from jamesos.core.errors import ArtifactIntegrityError, StateConflictError, ValidationError
+from jamesos.core.structured_logging import redact
 from jamesos.integrations.printify_client import PrintifyAPIError, PrintifyClient
 from jamesos.services import printify_product, sale_candidate_vector
 from jamesos.services.error_handler import handle_error
@@ -45,24 +46,19 @@ RECOVERY_TAGS = ["love is love","rainbow heart","inclusive shirt","retro tee","u
 RECOVERY_VARIANT_IDS = [*range(18100,18106),*range(18148,18154),*range(18540,18546)]
 LISTING_PRODUCT_ID = "6a5902f1c777748ffa050166"
 ETSY_TITLE = "Love Is Love Rainbow Heart Shirt: LGBTQ+ Pride Unisex Tee, Inclusive Gift"
-ETSY_DESCRIPTION = """Celebrate equality, pride, and authentic self-expression with this Love Is Love rainbow heart shirt. The playful retro artwork makes this LGBTQ+ pride unisex tee a colorful everyday statement and a thoughtful inclusive gift for Pride Month, friends, partners, allies, and anyone who believes love belongs to everyone.
+ETSY_DESCRIPTION = """Celebrate equality, pride, and authentic self-expression with this Love Is Love rainbow heart shirt. The bold retro artwork makes this LGBTQ+ pride tee a colorful everyday statement and a thoughtful inclusive gift for Pride Month, friends, partners, allies, and anyone who believes love belongs to everyone.
 
 🌈 WHY YOU'LL LOVE IT
 
 • Bold rainbow heart artwork featuring the words LOVE IS LOVE
-• Soft Bella+Canvas 3001 unisex jersey tee
-• Comfortable retail fit with a classic crew neckline
-• Front direct-to-garment print with no back design
+• Bella+Canvas 3001 Unisex Jersey Short Sleeve Tee
+• Front artwork only with no back design
 • Available in Black, Dark Grey Heather, and White
 • Sizes S through 3XL
 
-👕 FIT & SIZING
+👕 SIZE OPTIONS
 
-This shirt has a modern unisex fit. Choose your usual size for an everyday fit or size up for a roomier look. Please review the size chart before ordering. Fiber content may vary by garment color.
-
-🧼 CARE INSTRUCTIONS
-
-Turn the shirt inside out and machine wash cold with similar colors. Tumble dry low or hang dry. Do not bleach, dry clean, or iron directly over the printed design.
+Available sizes are S, M, L, XL, 2XL, and 3XL. Please review the current size chart in the listing images before ordering.
 
 🎁 PERFECT FOR
 
@@ -70,7 +66,7 @@ Pride Month, LGBTQ+ celebrations, equality advocates, queer pride gifts, ally gi
 
 🖨️ MADE TO ORDER
 
-Designed by UnityStitches and printed to order by our production partner. Slight differences in color or placement may occur between the on-screen mockup and the finished garment.
+This product is created after purchase through our production partner. Colors displayed on a screen may vary slightly from the finished product.
 
 COLORS
 
@@ -246,14 +242,47 @@ def validate_etsy_tags(tags: list[str]) -> None:
         raise ValidationError("VALIDATION_FAILED",diagnostic_message="Etsy tags did not satisfy the guarded SEO constraints.",operation="product_orchestrator.prepare_listing",stage="listing")
 
 
-def validate_listing_claims(blueprint: dict[str, Any], catalog: dict[str, Any]) -> None:
-    source=json.dumps({"blueprint":blueprint,"catalog":catalog},ensure_ascii=False,default=str).casefold()
-    required=(("bella+canvas 3001","bella canvas 3001"),("unisex",),("jersey",),("crew",),("direct-to-garment","dtg"),
-        ("machine wash cold",),("tumble dry low","hang dry"),("do not bleach",),("do not dry clean",),("do not iron",))
-    missing=[options[0] for options in required if not any(option in source for option in options)]
-    if missing:
-        raise ValidationError("VALIDATION_FAILED",diagnostic_message="Current catalog data does not support every physical-product or care claim.",
-            operation="product_orchestrator.prepare_listing",stage="catalog_claims",context={"unsupported_claim_terms":missing})
+def validate_listing_claims(description: str, blueprint: dict[str, Any], providers: Any, catalog: dict[str, Any],
+                            remote: dict[str, Any], product_id: str) -> dict[str, Any]:
+    def text(value: Any) -> str:
+        if isinstance(value,dict):return str(value.get("title") or value.get("name") or value.get("value") or "")
+        return str(value or "")
+    provider_rows=providers if isinstance(providers,list) else (providers.get("data") or providers.get("print_providers") or []) if isinstance(providers,dict) else []
+    provider=next((item for item in provider_rows if item.get("id")==29),{})
+    brand=text(blueprint.get("brand"));model=text(blueprint.get("model"));blueprint_title=text(blueprint.get("title"));blueprint_description=text(blueprint.get("description"))
+    enabled_ids={item.get("id") for item in remote.get("variants") or [] if item.get("is_enabled") is True}
+    enabled_rows=[row for row in normalize_printify_variants({"variants":remote.get("variants") or []}) if row["variant_id"] in enabled_ids]
+    enabled_colors=list(dict.fromkeys(row["color"] for row in enabled_rows));enabled_sizes=list(dict.fromkeys(row["size"] for row in enabled_rows))
+    front=any(placeholder.get("images") for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front")
+    back=any(placeholder.get("images") for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position") in ("back","neck"))
+    observed={"brand":brand,"model":model,"blueprint_title":blueprint_title,"enabled_colors":enabled_colors,"enabled_sizes":enabled_sizes,
+        "front_only_artwork":bool(front and not back)}
+    checks={"brand":brand.casefold().replace(" ","") in {"bella+canvas","bella&canvas","bellacanvas"},
+        "model":"3001" in model.casefold(),"blueprint_title":"unisex jersey short sleeve tee" in blueprint_title.casefold(),
+        "enabled_colors":enabled_colors==DEFAULT_COLORS,"enabled_sizes":enabled_sizes==DEFAULT_SIZES,"front_only_artwork":bool(front and not back)}
+    lowered=description.casefold();blueprint_lower=blueprint_description.casefold();provider_text=json.dumps(provider,ensure_ascii=False,default=str).casefold()
+    optional=(("material",("cotton","polyester","fiber content"),blueprint_lower),("care",("machine wash","tumble dry","hang dry","do not bleach","dry clean","do not iron"),blueprint_lower),
+        ("fit",("retail fit","modern fit","crew neckline","side seams","shoulder taping"),blueprint_lower),
+        ("dtg",("direct-to-garment","dtg"),provider_text))
+    unsupported=[name for name,terms,source in optional if any(term in lowered for term in terms) and not all(term in source for term in terms if term in lowered)]
+    unsupported.extend(name for name,supported in checks.items() if not supported)
+    supported=[name for name,supported in checks.items() if supported]
+    options=[{"name":text(option.get("name")),"values":[text(value) for value in (option.get("values") or [])[:100]]}
+        for option in [*(blueprint.get("options") or []),*(catalog.get("options") or [])] if isinstance(option,dict)]
+    placeholders=[{"position":placeholder.get("position"),"decoration_method":placeholder.get("decoration_method")} for area in catalog.get("print_areas") or []
+        for placeholder in area.get("placeholders") or []]
+    record=redact({"supported":supported,"unsupported":unsupported,"evidence":{"blueprint_id":blueprint.get("id"),"provider_id":provider.get("id"),
+        "brand":brand,"model":model,"blueprint_title":blueprint_title,"blueprint_description":blueprint_description[:2000],
+        "provider_title":text(provider.get("title")),"provider_decoration_methods":provider.get("decoration_methods") or [],"options":options,
+        "variant_count":len(catalog.get("variants") or []),"variant_ids":[item.get("id") for item in (catalog.get("variants") or [])[:400]],
+        "variant_titles":[text(item.get("title")) for item in (catalog.get("variants") or [])[:400]],"placeholders":placeholders,**observed}})
+    if unsupported:
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message=f"Unsupported listing claims: {', '.join(unsupported)}.",
+            operation="product_orchestrator.prepare_listing",stage="catalog_claims",context={"product_id":product_id,"printify_product_id":product_id,
+                "blueprint_id":12,"print_provider_id":29,"failed_claim_names":unsupported,"catalog_evidence_category":"claim_validation",
+                "catalog_claim_validation":record,"expected":{"brand":"Bella+Canvas","model":"3001","blueprint_title":"Unisex Jersey Short Sleeve Tee",
+                    "enabled_colors":DEFAULT_COLORS,"enabled_sizes":DEFAULT_SIZES,"front_only_artwork":True},"observed":observed})
+    return record
 
 
 def replacement_ownership_matches(state: dict[str, Any], remote: dict[str, Any], product_id: str) -> bool:
@@ -420,7 +449,18 @@ class ProductOrchestrator:
                 or [item.get("color") for item in mockups]!=DEFAULT_COLORS or not all(item.get("verified_mockup_available") for item in mockups) \
                 or any(not digest for digest in hashes) or len(set(hashes))!=3:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The replacement draft lacks three distinct verified color mockups.",operation="product_orchestrator.prepare_listing",stage="visual_review")
-        blueprint=client.get_blueprint(12);catalog=client.get_variants(12,29);validate_listing_claims(blueprint,catalog)
+        def catalog_read(category: str, call: Callable[[],Any]) -> Any:
+            try:return call()
+            except PrintifyAPIError as exc:
+                exc.context.update({"product_id":product_id,"printify_product_id":product_id,"blueprint_id":12,"print_provider_id":29,
+                    "catalog_evidence_category":category,"failed_catalog_call_category":category,"unavailable_evidence":category})
+                exc.user_message=f"The read-only Printify catalog {category} evidence could not be retrieved."
+                exc.suggested_action=f"Retry after confirming the Printify {category} catalog endpoint is available."
+                raise
+        blueprint=catalog_read("blueprint",lambda:client.get_blueprint(12))
+        providers=catalog_read("print_providers",lambda:client.list_print_providers_for_blueprint(12))
+        catalog=catalog_read("provider_variants",lambda:client.get_variants(12,29,show_out_of_stock=True))
+        claim_validation=validate_listing_claims(ETSY_DESCRIPTION,blueprint,providers,catalog,remote,product_id)
         selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES)
         if selection["selected_variant_ids"]!=RECOVERY_VARIANT_IDS:
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="The current catalog no longer matches the enabled Etsy variants.",operation="product_orchestrator.prepare_listing",stage="variants")
@@ -444,7 +484,7 @@ class ProductOrchestrator:
         plan={"result":"listing_preparation_plan","write_performed":False,"printify_write_performed":False,"product_id":product_id,
             "proposed_title":ETSY_TITLE,"seo_tag_count":13,"price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,
             "primary_mockup_color":"Black","primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
-            "publish_status":"not_published","order_status":"not_created","safe_to_update":True}
+            "publish_status":"not_published","order_status":"not_created","safe_to_update":True,"catalog_claims_verified":True}
         if not confirmed:return plan
         client.update_product(RECOVERY_SHOP_ID,product_id,payload)
         verified=client.get_product(RECOVERY_SHOP_ID,product_id);verified_publication=assess_draft_publication_state(state,verified)
@@ -473,6 +513,7 @@ class ProductOrchestrator:
             "seo_tag_count":13,"primary_mockup_color_requested":"Black","primary_mockup_manual_action_required":True,
             "gpsr_manual_confirmation_required":True,"shipping_profile_manual_confirmation_required":True,"final_review_location":"Printify",
             "mockup_order_api_supported":False,"publish_status":"not_published","order_status":"not_created","manual_checks":manual_checks,"local_draft_marker":marker}
+        evidence["listing_preparation"]["catalog_claim_validation"]=claim_validation
         _atomic_json(self._path(job_id),state)
         return {"result":"listing_draft_prepared","write_performed":True,"printify_write_performed":True,"product_id":product_id,
             "title_verified":True,"description_verified":True,"seo_tags_verified":True,"seo_tag_count":13,

@@ -451,8 +451,9 @@ class ProductOrchestratorTests(unittest.TestCase):
         product_orchestrator._atomic_json(review_root/"visual-review.json",{"product_id":product_orchestrator.LISTING_PRODUCT_ID,
             "recommended_scale_action":"keep_0.85","checks":{"mockups":[{"color":color,"verified_mockup_available":True,
                 "downloaded_sha256":str(index)*64} for index,color in enumerate(product_orchestrator.DEFAULT_COLORS,1)]}})
-        client=Mock();client.get_product.return_value=remote;client.get_blueprint.return_value={"title":"Bella+Canvas 3001 unisex jersey crew tee",
-            "claim_support":"direct-to-garment DTG machine wash cold tumble dry low hang dry do not bleach do not dry clean do not iron"}
+        client=Mock();client.get_product.return_value=remote;client.get_blueprint.return_value={"id":12,"brand":"Bella + Canvas","model":"3001",
+            "title":"Unisex Jersey Short Sleeve Tee","description":""}
+        client.list_print_providers_for_blueprint.return_value={"data":[{"id":29,"title":"Monster Digital","decoration_methods":["dtg"]}]}
         client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
         replacement=copy.deepcopy(remote);replacement.update(title=product_orchestrator.ETSY_TITLE,description=product_orchestrator.ETSY_DESCRIPTION,tags=product_orchestrator.ETSY_TAGS)
         replacement["print_areas"]=product_orchestrator.sanitize_update_print_areas(remote["print_areas"],[item["id"] for item in remote["variants"]])[0]
@@ -466,8 +467,10 @@ class ProductOrchestratorTests(unittest.TestCase):
                 "product_id":product_orchestrator.LISTING_PRODUCT_ID,"proposed_title":product_orchestrator.ETSY_TITLE,"seo_tag_count":13,
                 "price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,"primary_mockup_color":"Black",
                 "primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,"publish_status":"not_published",
-                "order_status":"not_created","safe_to_update":True})
+                "order_status":"not_created","safe_to_update":True,"catalog_claims_verified":True})
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called()
+            client.get_blueprint.assert_called_once_with(12);client.list_print_providers_for_blueprint.assert_called_once_with(12)
+            client.get_variants.assert_called_once_with(12,29,show_out_of_stock=True)
             self.assertEqual(len(product_orchestrator.ETSY_TAGS),13);self.assertTrue(all(len(tag)<=20 and len(tag.split())>=2 for tag in product_orchestrator.ETSY_TAGS))
             self.assertNotIn("jamesos",json.dumps([product_orchestrator.ETSY_TITLE,product_orchestrator.ETSY_DESCRIPTION,product_orchestrator.ETSY_TAGS]).lower())
 
@@ -498,9 +501,32 @@ class ProductOrchestratorTests(unittest.TestCase):
             with self.assertRaises(PrintifyAPIError):orchestrator.prepare_listing("reconcile-job",confirmed=True)
             client.update_product.assert_called_once();self.assertNotEqual(orchestrator.load("reconcile-job")["stage"],"awaiting_printify_human_review")
         with tempfile.TemporaryDirectory() as temporary:
-            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);client.get_blueprint.return_value={"title":"unknown shirt"}
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);client.get_blueprint.return_value={"id":12,"brand":"Unknown","model":"Other","title":"unknown shirt"}
             with self.assertRaises(ValidationError):orchestrator.prepare_listing("reconcile-job")
             client.update_product.assert_not_called()
+
+    def test_listing_claim_evidence_rejects_only_unsupported_optional_claims_and_is_precise(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root)
+            blueprint=client.get_blueprint.return_value;providers=client.list_print_providers_for_blueprint.return_value;catalog=client.get_variants.return_value
+            record=product_orchestrator.validate_listing_claims(product_orchestrator.ETSY_DESCRIPTION,blueprint,providers,catalog,remote,product_orchestrator.LISTING_PRODUCT_ID)
+            self.assertEqual(record["supported"],["brand","model","blueprint_title","enabled_colors","enabled_sizes","front_only_artwork"])
+            self.assertEqual(record["unsupported"],[]);self.assertNotIn("dtg",record["supported"])
+            for claim,text in (("material","Made from cotton."),("care","Machine wash cold."),("fit","Comfortable retail fit.")):
+                with self.subTest(claim=claim),self.assertRaises(ValidationError) as raised:
+                    product_orchestrator.validate_listing_claims(product_orchestrator.ETSY_DESCRIPTION+"\n"+text,blueprint,providers,catalog,remote,product_orchestrator.LISTING_PRODUCT_ID)
+                self.assertIn(claim,raised.exception.context["failed_claim_names"]);self.assertEqual(raised.exception.context["product_id"],product_orchestrator.LISTING_PRODUCT_ID)
+                self.assertEqual(raised.exception.context["printify_product_id"],product_orchestrator.LISTING_PRODUCT_ID)
+
+    def test_prepare_listing_catalog_retrieval_failure_names_category_and_never_writes(self):
+        for method,category in (("get_blueprint","blueprint"),("list_print_providers_for_blueprint","print_providers"),("get_variants","provider_variants")):
+            with self.subTest(category=category),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root)
+                getattr(client,method).side_effect=PrintifyAPIError(method,500,"failed","failed")
+                with self.assertRaises(PrintifyAPIError) as raised:orchestrator.prepare_listing("reconcile-job")
+                self.assertEqual(raised.exception.context["failed_catalog_call_category"],category)
+                self.assertEqual(raised.exception.context["product_id"],product_orchestrator.LISTING_PRODUCT_ID)
+                client.update_product.assert_not_called()
 
     def test_prepare_listing_cli_uses_dedicated_confirmation_and_protected_product_never_writes(self):
         orchestrator=Mock();orchestrator.prepare_listing.return_value={"result":"listing_preparation_plan"}
