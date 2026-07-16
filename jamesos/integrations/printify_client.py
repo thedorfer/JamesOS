@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import time
 from typing import Any
@@ -8,6 +9,7 @@ import requests
 
 from jamesos.config import VAULT
 from jamesos.core.errors import PrintifyError
+from jamesos.core.structured_logging import redact
 
 
 BASE_URL = "https://api.printify.com/v1"
@@ -29,15 +31,37 @@ _OPERATION_SUGGESTED_ACTIONS = {
 }
 
 
+def _bounded_provider_value(value: Any, *, depth: int = 0) -> Any:
+    if depth > 8: return "[TRUNCATED]"
+    if isinstance(value, dict):
+        items=list(value.items()); result={str(key):_bounded_provider_value(item,depth=depth+1) for key,item in items[:100]}
+        if len(items)>100: result["__truncated_items__"]=len(items)-100
+        return result
+    if isinstance(value, list):
+        result=[_bounded_provider_value(item,depth=depth+1) for item in value[:100]]
+        if len(value)>100: result.append(f"[TRUNCATED {len(value)-100} ITEMS]")
+        return result
+    if isinstance(value, str): return value[:4000]
+    if value is None or isinstance(value,(bool,int,float)): return value
+    return str(value)[:1000]
+
+
+def _provider_response(value: dict[str, Any] | None) -> dict[str, Any]:
+    return _bounded_provider_value(redact(value or {}))
+
+
 class PrintifyAPIError(PrintifyError):
-    def __init__(self, operation: str, http_status: int | None, error_code: str, safe_message: str, retryable: bool = False) -> None:
+    def __init__(self, operation: str, http_status: int | None, error_code: str, safe_message: str, retryable: bool = False,
+                 provider_response: dict[str, Any] | None = None) -> None:
         code = ({401: "HTTP_UNAUTHORIZED", 403: "HTTP_FORBIDDEN", 404: "HTTP_NOT_FOUND", 429: "HTTP_RATE_LIMITED"}.get(http_status)
                 or ("HTTP_SERVER_ERROR" if http_status is not None and http_status >= 500 else
                     _OPERATION_ERROR_CODES.get(operation, "PRINTIFY_REQUEST_FAILED")))
         self.http_status, self.error_code, self.safe_message = http_status, error_code, safe_message
+        protected_response=_provider_response(provider_response or {"provider_status":http_status,"provider_error_code":error_code,
+            "provider_message":safe_message,"provider_errors":None})
         super().__init__(code, diagnostic_message=f"Printify {operation} failed ({http_status or 'network'}, {error_code}): {safe_message}",
             operation=f"printify.{operation}", stage="http_request", retryable=retryable,
-            context={"http_status": http_status, "provider_error_code": error_code},
+            context={"http_status": http_status, "provider_error_code": error_code,"provider_response":protected_response},
             suggested_action=_OPERATION_SUGGESTED_ACTIONS.get(
                 operation,
                 "Review the Printify response and use the error ID to inspect the protected diagnostic record.",
@@ -95,9 +119,12 @@ class PrintifyClient:
             try: body = response.json()
             except ValueError: body = {}
             token = headers["Authorization"].removeprefix("Bearer ")
-            code = str(body.get("code") or body.get("error") or f"http_{response.status_code}").replace(token, "[redacted]")[:100]
-            message = str(body.get("message") or body.get("error_description") or "Printify rejected the request.").replace(token, "[redacted]")[:500]
-            raise PrintifyAPIError(operation, response.status_code, code, message, retryable)
+            code = str(body.get("code") or body.get("error") or f"http_{response.status_code}").replace(token, "[REDACTED]")[:100]
+            message = str(body.get("message") or body.get("error_description") or "Printify rejected the request.").replace(token, "[REDACTED]")[:500]
+            provider_response={"provider_status":body.get("status",response.status_code),"provider_error_code":code,
+                "provider_message":message,"provider_errors":body.get("errors")}
+            provider_response=json.loads(json.dumps(provider_response,default=str).replace(token,"[REDACTED]"))
+            raise PrintifyAPIError(operation, response.status_code, code, message, retryable,provider_response)
         raise AssertionError("unreachable")
 
     def list_shops(self): return self._request("GET", "/shops.json", operation="list_shops", safe_read=True)

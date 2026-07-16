@@ -216,7 +216,9 @@ class ProductOrchestratorTests(unittest.TestCase):
         placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0,"src":"https://example.invalid/image.png",
             "imageId":image_id,"layerType":"image","name":"response-only","type":"image","width":4500,"height":5400,"flipX":False,"flipY":False}
         current={"id":product_id,"shop_id":9437076,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
-            "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[{"position":"front","variant_ids":black+white,"images":[placement]}]}]}
+            "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[
+                {"position":"front","decoration_method":"dtg","variant_ids":black+white,"images":[placement]},
+                {"position":"back","decoration_method":"dtg","variant_ids":black+white,"images":[]}]}]}
         verified=copy.deepcopy(current);verified["variants"]=desired_rows;verified["print_areas"][0]["variant_ids"]=black+dark+white;verified["print_areas"][0]["placeholders"][0]["variant_ids"]=black+dark+white
         state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":9437076,"original_prompt":"LOVE IS LOVE on black, dark heather, and white",
             "brief":{"sizes":sizes,"garment_colors":["Black","White"]},"publish_status":"not_published","order_status":"not_created","transitions":[],"stage_output":{},
@@ -226,6 +228,30 @@ class ProductOrchestratorTests(unittest.TestCase):
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:None))
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
         return orchestrator,state,current,verified,{"variants":desired_rows},dark
+
+    def test_update_print_areas_exclude_empty_placeholders_and_areas(self):
+        desired_ids=list(range(18));front={"id":"front-image","x":.5,"y":.46,"scale":.85,"angle":0,
+            "src":"response-only","width":4500,"flipX":False}
+        areas,excluded=product_orchestrator.sanitize_update_print_areas([
+            {"placeholders":[{"position":"front","decoration_method":"dtg","variant_ids":[1],"images":[front]},
+                {"position":"back","decoration_method":"dtg","variant_ids":[1],"images":[]}]},
+            {"placeholders":[{"position":"sleeve","images":[]}]},
+        ],desired_ids)
+        self.assertEqual(len(areas),1);self.assertEqual(excluded,["back","sleeve"])
+        self.assertEqual(areas[0]["variant_ids"],desired_ids);self.assertEqual(len(areas[0]["variant_ids"]),18)
+        self.assertEqual([item["position"] for item in areas[0]["placeholders"]],["front"])
+        placeholder=areas[0]["placeholders"][0];self.assertNotIn("variant_ids",placeholder)
+        self.assertEqual(placeholder["decoration_method"],"dtg");self.assertEqual(set(placeholder["images"][0]),{"id","x","y","scale","angle"})
+        self.assertEqual(placeholder["images"][0]["scale"],.85)
+
+    def test_update_print_areas_preserve_front_and_back_when_both_used(self):
+        desired_ids=list(range(18));placement=lambda image_id:{"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0}
+        areas,excluded=product_orchestrator.sanitize_update_print_areas([{"placeholders":[
+            {"position":"front","images":[placement("front-image")]},{"position":"back","images":[placement("back-image")]}
+        ]}],desired_ids)
+        self.assertEqual(excluded,[]);self.assertEqual(len(areas),1)
+        self.assertEqual([item["position"] for item in areas[0]["placeholders"]],["front","back"])
+        self.assertTrue(all(item["images"] for item in areas[0]["placeholders"]));self.assertEqual(areas[0]["variant_ids"],desired_ids)
 
     def test_reconciliation_plan_and_single_confirmed_update(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -239,12 +265,20 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertIn("not sufficient publication evidence",assessment["remote_visible_interpretation"])
             self.assertEqual(plan["plan"]["current_variant_count"],12);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
             self.assertEqual([x["scale"] for x in plan["plan"]["placement_adjustment_plan"]],[.85,.918,.952]);self.assertFalse(plan["plan"]["placement_change_included"])
+            self.assertEqual(plan["plan"]["update_payload_summary"],{"top_level_keys":["description","print_areas","tags","title","variants"],
+                "contains_blueprint_id":False,"contains_print_provider_id":False,"variant_count":18,"print_area_count":1,
+                "placeholder_positions":["front"],"empty_placeholders_excluded":["back"],"used_placeholder_count":1,
+                "image_fields":["angle","id","scale","x","y"],"placement_scale":.85})
             client.get_product.side_effect=[current,verified]
             result=orchestrator.reconcile_draft("reconcile-job",confirmed=True);client.update_product.assert_called_once()
             payload=client.update_product.call_args.args[2];self.assertEqual(len(payload["variants"]),18);self.assertEqual({x["price"] for x in payload["variants"]},{2499})
+            self.assertEqual(set(payload),{"title","description","tags","variants","print_areas"})
+            self.assertNotIn("blueprint_id",payload);self.assertNotIn("print_provider_id",payload)
             placeholder=payload["print_areas"][0]["placeholders"][0];image=placeholder["images"][0]
             self.assertEqual(image,{"id":"upload-owned","x":.5,"y":.46,"scale":.85,"angle":0})
-            self.assertNotIn("variant_ids",placeholder);self.assertEqual(payload["print_areas"][0]["variant_ids"],[item["id"] for item in payload["variants"]])
+            self.assertEqual(set(image),{"id","x","y","scale","angle"});self.assertEqual(image["scale"],.85)
+            self.assertNotIn("variant_ids",placeholder);self.assertEqual(len(payload["print_areas"][0]["variant_ids"]),18)
+            self.assertEqual(payload["print_areas"][0]["variant_ids"],[item["id"] for item in payload["variants"]])
             self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
             client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
             saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)

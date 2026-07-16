@@ -129,6 +129,26 @@ def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[st
         "draft_status": "not_published", "order_status": "not_created"}
 
 
+def sanitize_update_print_areas(remote_areas: list[dict[str, Any]], desired_ids: list[int]) -> tuple[list[dict[str, Any]],list[str]]:
+    print_areas=[];empty_positions=[]
+    for remote_area in remote_areas:
+        placeholders=[]
+        for remote_placeholder in remote_area.get("placeholders") or []:
+            images=[]
+            for remote_image in remote_placeholder.get("images") or []:
+                image={key:remote_image[key] for key in ("id","x","y","scale","angle") if key in remote_image}
+                if image.get("id"): images.append(image)
+            if not images:
+                if remote_placeholder.get("position") is not None: empty_positions.append(remote_placeholder["position"])
+                continue
+            placeholder={"position":remote_placeholder.get("position"),"images":images}
+            if remote_placeholder.get("decoration_method") is not None:
+                placeholder["decoration_method"]=remote_placeholder["decoration_method"]
+            placeholders.append(placeholder)
+        if placeholders: print_areas.append({"variant_ids":desired_ids,"placeholders":placeholders})
+    return print_areas,list(dict.fromkeys(empty_positions))
+
+
 def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(response, dict):
         raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify variants response must be an object.",
@@ -290,6 +310,15 @@ class ProductOrchestrator:
         current_scale = float(placements[0].get("scale") or 0); placement_plan = [{"label":"current","scale":current_scale,"inside_placeholder":0 < current_scale <= 1},
             {"label":"current_plus_8_percent","scale":round(current_scale*1.08,4),"inside_placeholder":0 < current_scale*1.08 <= 1},
             {"label":"current_plus_12_percent","scale":round(current_scale*1.12,4),"inside_placeholder":0 < current_scale*1.12 <= 1}]
+        print_areas,empty_positions=sanitize_update_print_areas(remote.get("print_areas") or [],desired_ids)
+        payload={"title":remote.get("title"),"description":remote.get("description"),"tags":remote.get("tags") or [],
+            "variants":[{"id":item,"price":state["evidence"]["listing"]["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":print_areas}
+        payload_images=[image for area in print_areas for placeholder in area["placeholders"] for image in placeholder["images"]]
+        payload_summary={"top_level_keys":sorted(payload),"contains_blueprint_id":"blueprint_id" in payload,
+            "contains_print_provider_id":"print_provider_id" in payload,"variant_count":len(payload["variants"]),
+            "print_area_count":len(print_areas),"placeholder_positions":[placeholder["position"] for area in print_areas for placeholder in area["placeholders"]],
+            "empty_placeholders_excluded":empty_positions,"used_placeholder_count":sum(len(area["placeholders"]) for area in print_areas),
+            "image_fields":sorted({key for image in payload_images for key in image}),"placement_scale":payload_images[0].get("scale") if payload_images else None}
         plan = {"product_id":product_id,"selected_image_id":image_id,"requested_colors":resolution["canonical_colors"],
             "color_resolution":resolution,"current_colors":list(dict.fromkeys(row["color"] for row in current_rows if row["variant_id"] in current_ids)),
             "current_sizes":list(dict.fromkeys(row["size"] for row in current_rows if row["variant_id"] in current_ids)),
@@ -297,21 +326,8 @@ class ProductOrchestrator:
             "variant_ids_to_add":add,"variant_ids_to_remove":remove,"current_variant_count":len(current_ids),"resulting_variant_count":len(desired_ids),
             "price_cents":state["evidence"]["listing"]["price_cents"],"placement":copy.deepcopy(placements[0]),"placement_adjustment_plan":placement_plan,
             "placement_change_included":False,"publish_status":"not_published","order_status":"not_created","draft_marker":marker,
-            "publication_assessment":publication}
+            "publication_assessment":publication,"update_payload_summary":payload_summary}
         if not confirmed: return {"result":"draft_reconciliation_plan","write_performed":False,"plan":plan}
-        print_areas=[]
-        for remote_area in remote.get("print_areas") or []:
-            placeholders=[]
-            for remote_placeholder in remote_area.get("placeholders") or []:
-                images=[{key:image[key] for key in ("id","x","y","scale","angle") if key in image}
-                    for image in remote_placeholder.get("images") or []]
-                placeholder={"position":remote_placeholder.get("position"),"images":images}
-                if remote_placeholder.get("decoration_method") is not None:
-                    placeholder["decoration_method"]=remote_placeholder["decoration_method"]
-                placeholders.append(placeholder)
-            print_areas.append({"variant_ids":desired_ids,"placeholders":placeholders})
-        payload={"title":remote.get("title"),"description":remote.get("description"),"tags":remote.get("tags") or [],"blueprint_id":12,"print_provider_id":29,
-            "variants":[{"id":item,"price":plan["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":print_areas}
         write_performed=bool(add or remove)
         if write_performed: client.update_product(state["shop_id"],product_id,payload)
         verified=client.get_product(state["shop_id"],product_id)

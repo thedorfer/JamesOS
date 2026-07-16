@@ -106,6 +106,22 @@ class ErrorHandlerTests(unittest.TestCase):
             with self.assertRaises(PrintifyAPIError): client.create_product(1, {})
             self.assertEqual(session.request.call_count, 1)
 
+            update_response=Mock(status_code=400,headers={});update_response.json.return_value={"status":"error","code":8150,
+                "message":"Validation failed.","errors":{"variants":["Invalid variant"],"authorization":"secret","password":"private",
+                    "nested":{"access_token":"secret","detail":"Bearer secret"}}}
+            session.reset_mock();session.request.return_value=update_response
+            with self.assertRaises(PrintifyAPIError) as raised:client.update_product(1,"draft",{})
+            self.assertEqual(session.request.call_count,1);self.assertEqual(raised.exception.code,"PRINTIFY_PRODUCT_UPDATE_FAILED")
+            envelope=error_handler.handle_error(raised.exception,operation="test",diagnostic_root=Path(temporary)/"diagnostics",log=False)
+            provider=envelope["context"]["provider_response"]
+            self.assertEqual(provider["provider_status"],"error");self.assertEqual(provider["provider_error_code"],"8150")
+            self.assertEqual(provider["provider_errors"]["variants"],["Invalid variant"])
+            self.assertEqual(provider["provider_errors"]["authorization"],REDACTED);self.assertEqual(provider["provider_errors"]["password"],REDACTED)
+            self.assertEqual(provider["provider_errors"]["nested"]["access_token"],REDACTED);self.assertEqual(provider["provider_errors"]["nested"]["detail"],REDACTED)
+            persisted=json.loads(Path(envelope["diagnostic_artifact_path"]).read_text());self.assertEqual(persisted["context"]["provider_response"],provider)
+            cli=error_handler.cli_error(envelope);self.assertNotIn("provider",json.dumps(cli).lower());self.assertNotIn("Invalid variant",json.dumps(cli))
+            json.dumps(envelope)
+
     def test_cli_boundary_is_safe_json_and_nonzero(self):
         envelope = error_handler.handle_error(ValidationError("VALIDATION_FAILED", operation="cli", stage="input"),
                                                operation="cli", persist=False, log=False)
