@@ -212,9 +212,11 @@ class ProductOrchestratorTests(unittest.TestCase):
         marker="jamesos-orchestrator-marker";image_id="upload-owned";design_sha="d"*64
         black=list(range(18100,18106));dark=list(range(18148,18154));white=list(range(18540,18546));sizes=product_orchestrator.DEFAULT_SIZES
         def rows(ids,color):return [{"id":item,"title":f"{color} / {size}","is_available":True,"is_enabled":True,"price":2499} for item,size in zip(ids,sizes)]
-        desired_rows=rows(black,"Black")+rows(dark,"Dark Grey Heather")+rows(white,"White");extras=[{"id":item,"title":"Navy / S",
-            "is_available":True,"is_enabled":False,"price":1900+(item%100)} for item in range(20000,20300)]
-        current_rows=copy.deepcopy(desired_rows)+extras
+        desired_rows=rows(black,"Black")+rows(dark,"Dark Grey Heather")+rows(white,"White")
+        remote_only=[18065,18097,18156,18161,18265,18417,18456,18457,18477,18478,18480,18481,18492,18529,38710,38722,38740,38743,38752,38755,38761,80476]
+        common=[{"id":item,"title":"Navy / S","is_available":True,"is_enabled":False,"price":1900+(item%100)} for item in range(20000,20278)]
+        drift=[{"id":item,"title":"Retired variant","is_available":False,"is_enabled":False,"price":2100+(index%100)} for index,item in enumerate(remote_only)]
+        current_rows=copy.deepcopy(desired_rows)+common+drift
         for row in current_rows: row["is_enabled"]=row["id"] in black+white
         placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0,"src":"https://example.invalid/image.png",
             "imageId":image_id,"layerType":"image","name":"response-only","type":"image","width":4500,"height":5400,"flipX":False,"flipY":False}
@@ -232,7 +234,7 @@ class ProductOrchestratorTests(unittest.TestCase):
                 "listing":{"price_cents":2499},"variants":{"retained":True},"mockups":[{"local_path":"mock.jpg"}]}}
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:None))
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
-        return orchestrator,state,current,verified,{"variants":copy.deepcopy(desired_rows)+copy.deepcopy(extras)},dark
+        return orchestrator,state,current,verified,{"variants":copy.deepcopy(desired_rows)+copy.deepcopy(common)},dark
 
     def test_update_print_areas_exclude_empty_placeholders_and_areas(self):
         desired_ids=list(range(18));front={"id":"front-image","x":.5,"y":.46,"scale":.85,"angle":0,
@@ -271,8 +273,11 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(plan["plan"]["current_variant_count"],12);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
             self.assertEqual([x["scale"] for x in plan["plan"]["placement_adjustment_plan"]],[.85,.918,.952]);self.assertFalse(plan["plan"]["placement_change_included"])
             self.assertEqual(plan["plan"]["update_payload_summary"],{"payload_variant_count":318,"remote_variant_count":318,
+                "current_catalog_variant_count":296,"remote_only_variant_count":22,
+                "remote_only_variant_ids":[18065,18097,18156,18161,18265,18417,18456,18457,18477,18478,18480,18481,18492,18529,38710,38722,38740,38743,38752,38755,38761,80476],
+                "catalog_ids_absent_from_remote_count":0,"desired_ids_present_in_remote":True,"desired_ids_present_in_catalog":True,
                 "enabled_variant_count_before":12,"enabled_variant_count_after":18,"disabled_variant_count_after":300,
-                "newly_enabled_variant_ids":dark,"newly_disabled_variant_ids":[],"print_area_variant_count":318,
+                "newly_enabled_variant_ids":dark,"newly_disabled_variant_ids":[],"remote_only_enabled_count_after":0,"print_area_variant_count":318,
                 "variant_id_sets_match":True,"placeholder_positions":["front"],"empty_placeholders_excluded":["back"],
                 "placement_scale":.85})
             client.get_product.side_effect=[current,verified]
@@ -282,6 +287,9 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(len(enabled),18);self.assertEqual(len(disabled),300);self.assertEqual({item["id"] for item in enabled},{*range(18100,18106),*dark,*range(18540,18546)})
             self.assertEqual({item["price"] for item in enabled},{2499});remote_prices={item["id"]:item["price"] for item in current["variants"]}
             self.assertTrue(all(item["price"]==remote_prices[item["id"]] for item in disabled));self.assertTrue(all(set(item)=={"id","price","is_enabled"} for item in payload["variants"]))
+            remote_only=set(plan["plan"]["update_payload_summary"]["remote_only_variant_ids"]);payload_by_id={item["id"]:item for item in payload["variants"]}
+            self.assertTrue(remote_only<=set(payload_by_id));self.assertTrue(all(not payload_by_id[item]["is_enabled"] for item in remote_only))
+            self.assertTrue(all(payload_by_id[item]["price"]==remote_prices[item] for item in remote_only))
             self.assertEqual(set(payload),{"title","description","tags","variants","print_areas"})
             self.assertNotIn("blueprint_id",payload);self.assertNotIn("print_provider_id",payload)
             placeholder=payload["print_areas"][0]["placeholders"][0];image=placeholder["images"][0]
@@ -289,6 +297,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(set(image),{"id","x","y","scale","angle"});self.assertEqual(image["scale"],.85)
             self.assertNotIn("variant_ids",placeholder);self.assertEqual(len(payload["print_areas"][0]["variant_ids"]),318)
             self.assertEqual(payload["print_areas"][0]["variant_ids"],[item["id"] for item in payload["variants"]])
+            self.assertTrue(remote_only<=set(payload["print_areas"][0]["variant_ids"]))
             self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
             client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
             saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)
@@ -296,6 +305,9 @@ class ProductOrchestratorTests(unittest.TestCase):
             reconciliation=saved["evidence"]["draft_reconciliation"];self.assertEqual(len(reconciliation["full_remote_variant_ids"]),318)
             self.assertEqual(reconciliation["enabled_variant_ids"],[item["id"] for item in enabled])
             self.assertEqual(reconciliation["disabled_variant_count"],300);self.assertTrue(reconciliation["print_area_variant_ids_verified"])
+            self.assertEqual(reconciliation["remote_only_variant_ids"],sorted(remote_only));self.assertEqual(reconciliation["remote_only_variant_count"],22)
+            self.assertEqual(reconciliation["remote_only_enabled_count"],0);self.assertEqual(len(reconciliation["current_catalog_variant_ids"]),296)
+            self.assertEqual(len(saved["evidence"]["draft"]["variant_ids"]),18)
             report=orchestrator.report("reconcile-job").read_text();self.assertIn("EXISTING DRAFT UPDATED",report);self.assertIn("Enabled variants: 18",report)
 
     def test_reconciliation_rejects_unsafe_ownership_publication_and_order(self):
@@ -319,8 +331,8 @@ class ProductOrchestratorTests(unittest.TestCase):
         def missing_price(remote,catalog,dark):remote["variants"][-1].pop("price")
         def duplicate_id(remote,catalog,dark):remote["variants"].append(copy.deepcopy(remote["variants"][-1]))
         def missing_desired(remote,catalog,dark):remote["variants"]=[item for item in remote["variants"] if item["id"]!=dark[0]]
-        def outside_catalog(remote,catalog,dark):remote["variants"][-1]["id"]=999999
-        for name,mutate in (("missing_price",missing_price),("duplicate_id",duplicate_id),("missing_desired",missing_desired),("outside_catalog",outside_catalog)):
+        def desired_missing_catalog(remote,catalog,dark):catalog["variants"]=[item for item in catalog["variants"] if item["id"]!=dark[0]]
+        for name,mutate in (("missing_price",missing_price),("duplicate_id",duplicate_id),("missing_desired",missing_desired),("desired_missing_catalog",desired_missing_catalog)):
             with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary:
                 root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);mutate(current,catalog,dark)
                 client=Mock();client.get_product.return_value=current;client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
@@ -328,6 +340,17 @@ class ProductOrchestratorTests(unittest.TestCase):
                 with self.assertRaises((ValidationError,product_orchestrator.StateConflictError)):
                     orchestrator.reconcile_draft("reconcile-job",confirmed=True)
                 client.update_product.assert_not_called();self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
+
+    def test_reconciliation_allows_remote_catalog_drift_and_unrelated_new_catalog_ids(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root)
+            catalog["variants"].append({"id":999999,"title":"New Catalog Color / S","is_available":True,"price":2499})
+            client=Mock();client.get_product.return_value=current;client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
+            state_before=orchestrator._path("reconcile-job").read_bytes();plan=orchestrator.reconcile_draft("reconcile-job")
+            self.assertEqual(plan["plan"]["update_payload_summary"]["remote_only_variant_count"],22)
+            self.assertEqual(plan["plan"]["update_payload_summary"]["catalog_ids_absent_from_remote_count"],1)
+            self.assertEqual(plan["plan"]["update_payload_summary"]["payload_variant_count"],318)
+            client.update_product.assert_not_called();self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
 
     def test_reconciliation_verification_rejects_total_or_enabled_variant_drift(self):
         for name,mutate in (("total",lambda verified:verified["variants"].pop()),

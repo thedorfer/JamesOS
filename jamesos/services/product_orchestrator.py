@@ -165,10 +165,10 @@ def build_full_variant_payload(remote_variants: list[dict[str, Any]], desired_en
     if missing_desired:
         raise StateConflictError("STATE_CONFLICT",diagnostic_message="Desired enabled variants are missing from the remote product.",
             operation="product_orchestrator.reconcile_draft",stage="variant_preflight",context={"missing_desired_variant_ids":missing_desired})
-    unknown_remote=sorted(seen-catalog_variant_ids)
-    if unknown_remote:
-        raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote product variants do not match the selected blueprint and print provider catalog.",
-            operation="product_orchestrator.reconcile_draft",stage="variant_preflight",context={"unknown_remote_variant_ids":unknown_remote})
+    missing_catalog=sorted(set(desired_enabled_ids)-catalog_variant_ids)
+    if missing_catalog:
+        raise StateConflictError("STATE_CONFLICT",diagnostic_message="Desired enabled variants are missing from the selected blueprint and print provider catalog.",
+            operation="product_orchestrator.reconcile_draft",stage="variant_preflight",context={"desired_variant_ids_missing_from_catalog":missing_catalog})
     desired=set(desired_enabled_ids)
     payload=[{"id":item["id"],"price":target_price if item["id"] in desired else item["price"],"is_enabled":item["id"] in desired}
         for item in remote_variants]
@@ -330,9 +330,16 @@ class ProductOrchestrator:
         if resolution["unresolved_colors"] or resolution["canonical_colors"] != DEFAULT_COLORS:
             raise ValidationError("VALIDATION_FAILED", diagnostic_message="The prompt did not resolve to the required three exact garment colors.", operation="product_orchestrator.reconcile_draft", stage="color_resolution", context=resolution)
         catalog = client.get_variants(12,29); desired = select_printify_variants(catalog,colors=resolution["canonical_colors"],sizes=state["brief"]["sizes"])
-        desired_ids = desired["selected_variant_ids"];remote_variants=remote.get("variants") or []
+        desired_ids = desired["selected_variant_ids"]
+        expected_pairs={(color.casefold(),size.upper()) for color in DEFAULT_COLORS for size in state["brief"]["sizes"]}
+        selected_pairs={(item["color"].casefold(),item["size"]) for item in desired["selected_variants"]}
+        if len(desired_ids)!=18 or len(set(desired_ids))!=18 or selected_pairs!=expected_pairs:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="The current catalog did not resolve to exactly 18 required color and size variants.",
+                operation="product_orchestrator.reconcile_draft",stage="variant_preflight",context={"selected_variant_count":len(desired_ids)})
+        remote_variants=remote.get("variants") or []
         catalog_ids={item.get("id") for item in catalog.get("variants") or [] if type(item.get("id")) is int}
         variants_payload,full_remote_ids=build_full_variant_payload(remote_variants,desired_ids,catalog_ids,state["evidence"]["listing"]["price_cents"])
+        remote_only_ids=sorted(set(full_remote_ids)-catalog_ids);catalog_absent_remote_ids=sorted(catalog_ids-set(full_remote_ids))
         current_rows = normalize_printify_variants({"variants":remote_variants})
         current_ids = [item["id"] for item in remote_variants if item.get("is_enabled") is True]
         retain = [item for item in desired_ids if item in current_ids]; add = [item for item in desired_ids if item not in current_ids]; remove = [item for item in current_ids if item not in desired_ids]
@@ -347,9 +354,13 @@ class ProductOrchestrator:
         payload_disabled_ids=[item["id"] for item in variants_payload if not item["is_enabled"]]
         print_area_id_sets=[set(area["variant_ids"]) for area in print_areas]
         payload_summary={"payload_variant_count":len(variants_payload),"remote_variant_count":len(remote_variants),
+            "current_catalog_variant_count":len(catalog_ids),"remote_only_variant_count":len(remote_only_ids),"remote_only_variant_ids":remote_only_ids,
+            "catalog_ids_absent_from_remote_count":len(catalog_absent_remote_ids),"desired_ids_present_in_remote":set(desired_ids)<=set(full_remote_ids),
+            "desired_ids_present_in_catalog":set(desired_ids)<=catalog_ids,
             "enabled_variant_count_before":len(current_ids),"enabled_variant_count_after":len(payload_enabled_ids),
             "disabled_variant_count_after":len(payload_disabled_ids),"newly_enabled_variant_ids":[item for item in desired_ids if item not in current_ids],
             "newly_disabled_variant_ids":[item for item in current_ids if item not in desired_ids],
+            "remote_only_enabled_count_after":len(set(payload_enabled_ids)&set(remote_only_ids)),
             "print_area_variant_count":len(print_areas[0]["variant_ids"]) if print_areas else 0,
             "variant_id_sets_match":bool(print_area_id_sets) and all(ids==set(full_remote_ids) for ids in print_area_id_sets),
             "placeholder_positions":[placeholder["position"] for area in print_areas for placeholder in area["placeholders"]],
@@ -368,13 +379,14 @@ class ProductOrchestrator:
         verified=client.get_product(state["shop_id"],product_id)
         verified_variants=verified.get("variants") or [];verified_total_ids=[item.get("id") for item in verified_variants]
         verified_ids=sorted(item.get("id") for item in verified_variants if item.get("is_enabled"))
+        verified_remote_only_enabled={item.get("id") for item in verified_variants if item.get("is_enabled") and item.get("id") in set(remote_only_ids)}
         verified_publication=assess_draft_publication_state(state,verified)
         verified_used_areas=[area for area in verified.get("print_areas") or [] if any(placeholder.get("images") for placeholder in area.get("placeholders") or [])]
         print_area_ids_verified=bool(verified_used_areas) and all(len(area.get("variant_ids") or [])==len(full_remote_ids)
             and set(area.get("variant_ids") or [])==set(full_remote_ids) for area in verified_used_areas)
         total_ids_verified=len(verified_total_ids)==len(full_remote_ids) and len(set(verified_total_ids))==len(full_remote_ids) and set(verified_total_ids)==set(full_remote_ids)
         if verified.get("id")!=product_id or verified.get("shop_id")!=state["shop_id"] or not verified_publication["safe_to_reconcile"] \
-                or not total_ids_verified or verified_ids!=sorted(desired_ids) or not print_area_ids_verified:
+                or not total_ids_verified or verified_ids!=sorted(desired_ids) or verified_remote_only_enabled or not print_area_ids_verified:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft verification did not match the reconciliation plan.", operation="product_orchestrator.reconcile_draft", stage="verification")
         verified_placements=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             for image in placeholder.get("images") or [] if image.get("id")==image_id]
@@ -383,6 +395,8 @@ class ProductOrchestrator:
             "resulting_variant_ids":desired_ids,"added_variant_ids":add,"removed_variant_ids":remove,"remote_product_verified":True,
             "updated_at":datetime.now().astimezone().isoformat(),"no_new_upload":True,"no_new_product":True,
             "publish_status":"not_published","order_status":"not_created","placement_unchanged":placement_unchanged,
+            "current_catalog_variant_ids":sorted(catalog_ids),"remote_only_variant_ids":remote_only_ids,"remote_only_variant_count":len(remote_only_ids),
+            "remote_only_enabled_count":len(verified_remote_only_enabled),"desired_ids_present_in_catalog":set(desired_ids)<=catalog_ids,
             "full_remote_variant_ids":full_remote_ids,"enabled_variant_ids":desired_ids,"disabled_variant_count":len(full_remote_ids)-len(desired_ids),
             "print_area_variant_ids_verified":print_area_ids_verified,"plan":plan}
         state["brief"]["garment_colors"]=resolution["canonical_colors"];state["brief"]["color_resolution"]=resolution
