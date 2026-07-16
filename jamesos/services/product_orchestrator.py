@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 
 from jamesos.config import VAULT
 from jamesos.core.errors import ArtifactIntegrityError, StateConflictError, ValidationError
-from jamesos.integrations.printify_client import PrintifyClient
+from jamesos.integrations.printify_client import PrintifyAPIError, PrintifyClient
 from jamesos.services import printify_product, sale_candidate_vector
 from jamesos.services.error_handler import handle_error
 
@@ -36,6 +36,13 @@ DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
 COLOR_EXACT = {"black":"Black", "dark grey heather":"Dark Grey Heather", "white":"White"}
 COLOR_ALIASES = {"dark heather":"Dark Grey Heather", "dark gray heather":"Dark Grey Heather"}
 COLOR_WORDS = re.compile(r"\b(?:black|white|grey|gray|heather|charcoal|navy|red|blue|green|yellow|purple|pink|orange)\b", re.I)
+RECOVERY_DELETED_PRODUCT_ID = "6a580c6594f352520e06f440"
+RECOVERY_UPLOAD_ID = "6a580a8e43d9a89162f792a7"
+RECOVERY_SHOP_ID = 9437076
+RECOVERY_TITLE = "Love Is Love Rainbow Heart Unisex Tee"
+RECOVERY_DESCRIPTION = "A playful bold retro Love Is Love design on a soft Bella+Canvas 3001 unisex tee."
+RECOVERY_TAGS = ["love is love","rainbow heart","inclusive shirt","retro tee","unisex shirt","jamesos-orchestrator-00f7f20a52144d9306ff"]
+RECOVERY_VARIANT_IDS = [*range(18100,18106),*range(18148,18154),*range(18540,18546)]
 
 
 def _json_sha(value: Any) -> str:
@@ -308,6 +315,92 @@ class ProductOrchestrator:
 
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
+
+    def recover_draft(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
+        if not job_id or Path(job_id).name!=job_id:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="Draft recovery requires a single existing job ID.",operation="product_orchestrator.recover_draft",stage="input")
+        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload=evidence.get("upload") or {}
+        deleted_id=draft.get("printify_product_id");marker=evidence.get("draft_marker") or draft.get("draft_marker")
+        listing=evidence.get("listing") or {};selected_sha=evidence.get("selection",{}).get("selected",{}).get("png_sha256")
+        if state.get("shop_id")!=RECOVERY_SHOP_ID or deleted_id!=RECOVERY_DELETED_PRODUCT_ID or deleted_id==PROTECTED_PRODUCT_ID:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The job does not match the guarded deleted-draft recovery target.",operation="product_orchestrator.recover_draft",stage="ownership")
+        if upload.get("printify_image_id")!=RECOVERY_UPLOAD_ID or upload.get("selected_design_sha256")!=selected_sha:
+            raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH",diagnostic_message="Recovery upload evidence does not match the selected artwork.",operation="product_orchestrator.recover_draft",stage="artwork")
+        if marker!=RECOVERY_TAGS[-1] or listing.get("title")!=RECOVERY_TITLE or listing.get("description")!=RECOVERY_DESCRIPTION \
+                or listing.get("tags")!=RECOVERY_TAGS[:-1] or listing.get("price_cents")!=2499:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Local listing evidence does not match the guarded recovery specification.",operation="product_orchestrator.recover_draft",stage="listing")
+        protected_history=[item for item in evidence.get("draft_recovery_history") or []
+            if item.get("deleted_product_id")==PROTECTED_PRODUCT_ID or item.get("replacement_product_id")==PROTECTED_PRODUCT_ID]
+        if protected_history:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Recovery history references the protected product.",operation="product_orchestrator.recover_draft",stage="protected_product")
+        publish_ops={"publish","publish_product","printify_publish","publish_succeeded"};order_ops={"order","create_order","submit_order","order_created"}
+        if any(item.get("operation") in publish_ops|order_ops or item.get("stage") in {"published","printify_published","order_created"}
+               for item in state.get("transitions") or []) or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Publish or order history blocks deleted-draft recovery.",operation="product_orchestrator.recover_draft",stage="history")
+        client=self.adapters.client_factory()
+        try: client.get_product(RECOVERY_SHOP_ID,deleted_id)
+        except PrintifyAPIError as exc:
+            if exc.http_status!=404: raise
+        else:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The old Printify product still exists.",operation="product_orchestrator.recover_draft",stage="deleted_product")
+        remote_upload=client.get_upload(RECOVERY_UPLOAD_ID)
+        mime=remote_upload.get("mime_type") or remote_upload.get("mimeType") or remote_upload.get("type")
+        if mime!="image/png" or remote_upload.get("width")!=4500 or remote_upload.get("height")!=5400:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="The reusable Printify upload does not match the required PNG dimensions.",operation="product_orchestrator.recover_draft",stage="upload")
+        products=_products(client.list_products(RECOVERY_SHOP_ID));matches=[item for item in products if item.get("id")==deleted_id
+            or marker in {str(tag) for tag in item.get("tags") or []} or item.get("title")==RECOVERY_TITLE]
+        if matches:
+            if any(item.get("id")==PROTECTED_PRODUCT_ID for item in matches):
+                raise StateConflictError("STATE_CONFLICT",diagnostic_message="A matching recovery candidate is the protected product.",operation="product_orchestrator.recover_draft",stage="protected_product")
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="A matching replacement draft already exists.",operation="product_orchestrator.recover_draft",stage="replacement_search")
+        catalog=client.get_variants(12,29);selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES)
+        if selection["selected_variant_ids"]!=RECOVERY_VARIANT_IDS:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="The current catalog does not match the guarded recovery variants.",operation="product_orchestrator.recover_draft",stage="variants")
+        placement={"x":.5,"y":.46,"scale":.85,"angle":0}
+        plan={"result":"draft_recovery_plan","write_performed":False,"printify_write_performed":False,"job_id":job_id,
+            "deleted_product_id":deleted_id,"shop_id":RECOVERY_SHOP_ID,"upload_id":RECOVERY_UPLOAD_ID,"reuse_existing_upload":True,
+            "new_upload_required":False,"replacement_product_required":True,"enabled_variant_count":18,"price_cents":2499,
+            "placement":placement,"publish_status":"not_published","order_status":"not_created","safe_to_recover":True}
+        if not confirmed:return plan
+        payload={"title":RECOVERY_TITLE,"description":RECOVERY_DESCRIPTION,"tags":RECOVERY_TAGS,"blueprint_id":12,"print_provider_id":29,
+            "variants":[{"id":item,"price":2499,"is_enabled":True} for item in RECOVERY_VARIANT_IDS],
+            "print_areas":[{"variant_ids":RECOVERY_VARIANT_IDS,"placeholders":[{"position":"front","decoration_method":"dtg",
+                "images":[{"id":RECOVERY_UPLOAD_ID,**placement}]}]}]}
+        created=client.create_product(RECOVERY_SHOP_ID,payload);replacement_id=created.get("id")
+        if not replacement_id or replacement_id in {deleted_id,PROTECTED_PRODUCT_ID}:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Printify did not return a safe new replacement product ID.",operation="product_orchestrator.recover_draft",stage="creation")
+        history=evidence.setdefault("draft_recovery_history",[]);recovery={"status":"creation_succeeded_verification_pending",
+            "deleted_product_id":deleted_id,"replacement_product_id":replacement_id,"reused_upload":True,"new_upload_created":False,
+            "new_product_created":True,"publish_status":"not_published","order_status":"not_created"}
+        history.append(recovery);evidence["visual_review_status"]={"status":"stale","product_id":deleted_id,"fresh_visual_review_required":True}
+        _atomic_json(self._path(job_id),state)
+        try:
+            verified=client.get_product(RECOVERY_SHOP_ID,replacement_id);publication=assess_draft_publication_state(state,verified)
+            enabled=[item for item in verified.get("variants") or [] if item.get("is_enabled") is True]
+            front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+                if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+            back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+                if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+            placement_ok=bool(front and all(front[0].get(key)==value for key,value in placement.items()))
+            verified_ok=(verified.get("id")==replacement_id and verified.get("shop_id")==RECOVERY_SHOP_ID and verified.get("blueprint_id")==12
+                and verified.get("print_provider_id")==29 and verified.get("title")==RECOVERY_TITLE and marker in {str(tag) for tag in verified.get("tags") or []}
+                and len(enabled)==18 and {item.get("id") for item in enabled}==set(RECOVERY_VARIANT_IDS)
+                and all(item.get("price")==2499 for item in enabled) and placement_ok and not back and publication["safe_to_reconcile"]
+                and verified.get("order_status") in (None,"not_created") and not verified.get("orders"))
+            if not verified_ok:
+                raise StateConflictError("STATE_CONFLICT",diagnostic_message="The replacement draft failed post-create verification.",operation="product_orchestrator.recover_draft",stage="verification",
+                    context={"replacement_product_id":replacement_id})
+        except Exception as exc:
+            recovery["status"]="verification_failed";recovery["verification_failed_at"]=datetime.now().astimezone().isoformat();_atomic_json(self._path(job_id),state)
+            if hasattr(exc,"context"):exc.context["replacement_product_id"]=replacement_id
+            raise
+        recovery.update({"status":"verified","recovered_at":datetime.now().astimezone().isoformat(),"remote_product_verified":True})
+        draft["printify_product_id"]=replacement_id;draft["variant_ids"]=RECOVERY_VARIANT_IDS
+        state["publish_status"]="not_published";state["order_status"]="not_created";_atomic_json(self._path(job_id),state)
+        return {"result":"deleted_draft_recovered","write_performed":True,"printify_write_performed":True,
+            "deleted_product_id":deleted_id,"replacement_product_id":replacement_id,"reused_upload":True,"new_upload_created":False,
+            "new_product_created":True,"enabled_variant_count":18,"remote_product_verified":True,"publish_status":"not_published",
+            "order_status":"not_created","fresh_visual_review_required":True}
 
     def review_draft(self, job_id: str) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:

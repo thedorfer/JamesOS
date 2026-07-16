@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from PIL import Image, ImageDraw
 
 from jamesos.core.errors import ValidationError
+from jamesos.integrations.printify_client import PrintifyAPIError
 from jamesos.services import error_handler, product_orchestrator, sale_candidate_vector
 from scripts import product_from_prompt
 
@@ -432,6 +433,95 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["recommended_scale_action"],"manual_review_required");self.assertEqual(len({item["downloaded_sha256"] for item in records}),1)
             self.assertTrue(all(item["mockup_available"] and not item["color_match_verified"] for item in records))
             self.assertTrue(all("mockup_color_mismatch" in item["issues"] for item in records));self.assertIn("downloaded, not color-verified",Path(result["html_report_path"]).read_text())
+
+    def recovery_fixture(self, root: Path):
+        orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.RECOVERY_DELETED_PRODUCT_ID)
+        marker=product_orchestrator.RECOVERY_TAGS[-1];state["evidence"]["draft_marker"]=marker;state["evidence"]["draft"]["draft_marker"]=marker
+        state["evidence"]["listing"].update({"title":product_orchestrator.RECOVERY_TITLE,"description":product_orchestrator.RECOVERY_DESCRIPTION,
+            "tags":product_orchestrator.RECOVERY_TAGS[:-1],"price_cents":2499})
+        state["evidence"]["upload"].update(printify_image_id=product_orchestrator.RECOVERY_UPLOAD_ID)
+        state["recovered_errors"]=[{"error_id":"historical-error"}];state["evidence"]["draft_reconciliation"]={"status":"historical"}
+        product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+        deleted=PrintifyAPIError("get_product",404,"not_found","Product not found")
+        client=Mock();client.get_product.side_effect=[deleted];client.get_upload.return_value={"id":product_orchestrator.RECOVERY_UPLOAD_ID,
+            "mime_type":"image/png","width":4500,"height":5400};client.list_products.return_value={"data":[]};client.get_variants.return_value=catalog
+        orchestrator.adapters.client_factory=lambda:client
+        replacement={"id":"replacement-draft","shop_id":9437076,"blueprint_id":12,"print_provider_id":29,
+            "title":product_orchestrator.RECOVERY_TITLE,"tags":product_orchestrator.RECOVERY_TAGS,"visible":True,"is_locked":False,
+            "variants":[{"id":item,"price":2499,"is_enabled":True} for item in product_orchestrator.RECOVERY_VARIANT_IDS],
+            "print_areas":[{"variant_ids":product_orchestrator.RECOVERY_VARIANT_IDS,"placeholders":[{"position":"front","decoration_method":"dtg",
+                "images":[{"id":product_orchestrator.RECOVERY_UPLOAD_ID,"x":.5,"y":.46,"scale":.85,"angle":0}]},{"position":"back","images":[]}]}],
+            "order_status":"not_created","orders":[]}
+        return orchestrator,state,client,replacement,deleted
+
+    def test_recover_draft_default_is_read_only_plan_and_reuses_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root);before=orchestrator._path("reconcile-job").read_bytes()
+            result=orchestrator.recover_draft("reconcile-job")
+            self.assertEqual(result,{"result":"draft_recovery_plan","write_performed":False,"printify_write_performed":False,"job_id":"reconcile-job",
+                "deleted_product_id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID,"shop_id":9437076,"upload_id":product_orchestrator.RECOVERY_UPLOAD_ID,
+                "reuse_existing_upload":True,"new_upload_required":False,"replacement_product_required":True,"enabled_variant_count":18,"price_cents":2499,
+                "placement":{"x":.5,"y":.46,"scale":.85,"angle":0},"publish_status":"not_published","order_status":"not_created","safe_to_recover":True})
+            self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.create_product.assert_not_called();client.update_product.assert_not_called()
+            client.upload_image_contents.assert_not_called();client.upload_image_url.assert_not_called()
+
+    def test_recover_draft_cli_uses_dedicated_confirmation_flag(self):
+        orchestrator=Mock();orchestrator.recover_draft.return_value={"result":"draft_recovery_plan"}
+        for argv,confirmed in ((["product_from_prompt.py","recover-draft","--job-id","job"],False),
+                               (["product_from_prompt.py","recover-draft","--job-id","job","--confirm-printify-draft-recovery"],True)):
+            with self.subTest(confirmed=confirmed):
+                orchestrator.recover_draft.reset_mock();output=StringIO()
+                with patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),patch.object(product_from_prompt.sys,"argv",argv),redirect_stdout(output):
+                    self.assertEqual(product_from_prompt._main(),0)
+                orchestrator.recover_draft.assert_called_once_with("job",confirmed=confirmed);self.assertEqual(json.loads(output.getvalue())["result"],"draft_recovery_plan")
+
+    def test_recover_draft_refuses_existing_old_matching_replacement_and_protected_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root);client.get_product.side_effect=None
+            client.get_product.return_value={"id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID}
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.recover_draft("reconcile-job")
+            client.create_product.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root)
+            client.list_products.return_value={"data":[{"id":"replacement","title":product_orchestrator.RECOVERY_TITLE,"tags":[]}]}
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.recover_draft("reconcile-job")
+            client.create_product.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root)
+            state["evidence"]["draft_recovery_history"]=[{"replacement_product_id":product_orchestrator.PROTECTED_PRODUCT_ID}]
+            product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.recover_draft("reconcile-job")
+            client.get_product.assert_not_called();client.create_product.assert_not_called()
+
+    def test_recover_draft_confirmed_creates_once_verifies_and_preserves_history(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root)
+            client.create_product.return_value={"id":"replacement-draft"};client.get_product.side_effect=[deleted,replacement]
+            result=orchestrator.recover_draft("reconcile-job",confirmed=True);client.create_product.assert_called_once()
+            payload=client.create_product.call_args.args[1];self.assertEqual(len(payload["variants"]),18);self.assertTrue(all(item["price"]==2499 for item in payload["variants"]))
+            self.assertEqual(payload["print_areas"][0]["placeholders"][0]["images"][0],{"id":product_orchestrator.RECOVERY_UPLOAD_ID,"x":.5,"y":.46,"scale":.85,"angle":0})
+            self.assertEqual(result["result"],"deleted_draft_recovered");self.assertEqual(result["replacement_product_id"],"replacement-draft")
+            saved=orchestrator.load("reconcile-job");self.assertEqual(saved["evidence"]["draft"]["printify_product_id"],"replacement-draft")
+            recovery=saved["evidence"]["draft_recovery_history"][-1];self.assertEqual(recovery["deleted_product_id"],product_orchestrator.RECOVERY_DELETED_PRODUCT_ID)
+            self.assertEqual(recovery["replacement_product_id"],"replacement-draft");self.assertEqual(recovery["status"],"verified")
+            self.assertEqual(saved["recovered_errors"],[{"error_id":"historical-error"}]);self.assertEqual(saved["evidence"]["draft_reconciliation"],{"status":"historical"})
+            self.assertEqual(saved["evidence"]["visual_review_status"]["status"],"stale")
+            for method in (client.update_product,client.upload_image_contents,client.upload_image_url,client.publish_product,client.create_order):method.assert_not_called()
+
+    def test_recover_draft_creation_is_not_retried_and_failed_verification_retains_new_id(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root)
+            client.create_product.side_effect=PrintifyAPIError("create_product",500,"failed","failed")
+            with self.assertRaises(PrintifyAPIError):orchestrator.recover_draft("reconcile-job",confirmed=True)
+            client.create_product.assert_called_once();self.assertNotIn("draft_recovery_history",orchestrator.load("reconcile-job")["evidence"])
+        for field in ("is_published","is_locked"):
+            with self.subTest(field=field),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root);replacement[field]=True
+                client.create_product.return_value={"id":"replacement-draft"};client.get_product.side_effect=[deleted,replacement]
+                with self.assertRaises(product_orchestrator.StateConflictError) as raised:orchestrator.recover_draft("reconcile-job",confirmed=True)
+                client.create_product.assert_called_once();saved=orchestrator.load("reconcile-job")
+                recovery=saved["evidence"]["draft_recovery_history"][-1];self.assertEqual(recovery["replacement_product_id"],"replacement-draft")
+                self.assertEqual(recovery["status"],"verification_failed");self.assertEqual(raised.exception.context["replacement_product_id"],"replacement-draft")
 
     def test_reconciliation_verification_rejects_total_or_enabled_variant_drift(self):
         for name,mutate in (("total",lambda verified:verified["variants"].pop()),
