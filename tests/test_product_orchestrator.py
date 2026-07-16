@@ -99,6 +99,39 @@ class ProductOrchestratorTests(unittest.TestCase):
                 resumed=orchestrator.resume("approval",confirm_printify_draft=True)
             self.assertEqual(resumed["stage"],"failed");client_factory.assert_not_called();self.assertNotIn("secret",json.dumps(review).lower())
 
+    def test_white_fill_fails_white_and_universal_treatment_passes_all_garments(self):
+        current={"treatment_id":"deterministic_rainbow_heart_v2"};assessment=product_orchestrator.assess_candidate_contrast(current)
+        self.assertEqual(assessment["per_color"]["White"]["result"],"fail");self.assertEqual(assessment["per_color"]["Black"]["result"],"pass");self.assertEqual(assessment["per_color"]["Dark Grey Heather"]["result"],"pass")
+        with tempfile.TemporaryDirectory() as temporary:
+            candidate=product_orchestrator._render_universal_contrast_candidate("YOU ARE SAFE WITH ME",Path(temporary)/"universal.png","a"*64)
+            self.assertTrue(candidate["garment_contrast"]["all_pass"]);self.assertTrue(all(item["result"]=="pass" for item in candidate["garment_contrast"]["per_color"].values()));self.assertEqual(candidate["rendered_phrase"],"YOU ARE SAFE WITH ME")
+
+    def contrast_job_fixture(self,root,*,revised=False,approved=False):
+        original=root/"prompt_centered.png";candidate=product_orchestrator._render_universal_contrast_candidate("YOU ARE SAFE WITH ME",original,"source")
+        if not revised:candidate={**candidate,"candidate_id":"prompt_centered","treatment_id":"deterministic_rainbow_heart_v2","png_sha256":sha256(original.read_bytes()).hexdigest()};candidate.pop("typography_treatment",None);candidate["garment_contrast"]=product_orchestrator.assess_candidate_contrast(candidate)
+        ids=product_orchestrator.RECOVERY_VARIANT_IDS;state={"job_id":"contrast","shop_id":9437076,"stage":"awaiting_human_approval","source_job_id":None,"original_prompt":"featuring the exact phrase YOU ARE SAFE WITH ME.","brief":{"exact_text":"YOU ARE SAFE WITH ME","blank":"Bella+Canvas 3001","visual_style":"playful bold retro","price_cents":2499,"currency":"USD","garment_colors":product_orchestrator.DEFAULT_COLORS,"sizes":product_orchestrator.DEFAULT_SIZES,"print_provider":"Monster Digital"},"publish_status":"not_published","order_status":"not_created","transitions":[],"evidence":{"selection":{"selected":candidate,"approval":{"human_artistic_approval":approved}},"candidates":[candidate],"draft":{"printify_product_id":"existing-product","publish_status":"not_published","order_status":"not_created"},"variant_selection":{"selected_variant_ids":ids},"listing":{"title":"You Are Safe With Me Unisex Tee","description":"Grounded unisex tee draft.","tags":["you are safe with me","unisex tee"]}}}
+        if approved:state["evidence"]["human_design_approval"]={"approved":True,"candidate_id":candidate["candidate_id"],"candidate_sha256":candidate["png_sha256"]}
+        orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no external call"))));product_orchestrator._atomic_json(orchestrator._path("contrast"),state);return orchestrator,state,candidate
+
+    def test_contrast_revision_invalidates_old_approval_and_is_local_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,current=self.contrast_job_fixture(root,approved=True);result=orchestrator.revise_design_contrast("contrast");saved=orchestrator.load("contrast")
+            self.assertEqual(result["candidate_id"],"prompt_centered_universal_contrast");self.assertTrue(result["previous_approval_invalidated"]);self.assertNotIn("human_design_approval",saved["evidence"]);self.assertEqual(saved["evidence"]["superseded_design_approvals"][-1]["candidate_sha256"],current["png_sha256"])
+            self.assertTrue(Path(result["review_sheet_path"]).is_file());self.assertFalse(result["printify_write_performed"]);orchestrator.adapters.client_factory.assert_not_called()
+            plan=orchestrator.update_draft_artwork("contrast");self.assertFalse(plan["safe_to_update"]);self.assertFalse(plan["upload_would_occur"]);orchestrator.adapters.client_factory.assert_not_called()
+
+    def test_confirmed_artwork_update_uses_existing_product_once_and_preserves_variants_placement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,candidate=self.contrast_job_fixture(root,revised=True,approved=True);ids=product_orchestrator.RECOVERY_VARIANT_IDS;remote_variants=[{"id":item,"price":2499,"is_enabled":True} for item in ids]+[{"id":999,"price":1999,"is_enabled":False}]
+            remote={"id":"existing-product","shop_id":9437076,"visible":True,"is_locked":False,"variants":remote_variants,"print_areas":[{"variant_ids":[item["id"] for item in remote_variants],"placeholders":[{"position":"front","images":[{"id":"old"}]}]}],"order_status":"not_created","orders":[]}
+            verified=copy.deepcopy(remote);verified["print_areas"]=[{"variant_ids":[item["id"] for item in remote_variants],"placeholders":[{"position":"front","images":[{"id":"new-upload","x":.5,"y":.46,"scale":.85,"angle":0}]},{"position":"back","images":[]}]}]
+            client=Mock();client.get_product.side_effect=[remote,verified];client.upload_image_contents.return_value={"id":"new-upload"};orchestrator.adapters.client_factory=lambda:client
+            dry=orchestrator.update_draft_artwork("contrast");self.assertTrue(dry["safe_to_update"]);client.get_product.assert_not_called();client.upload_image_contents.assert_not_called();client.update_product.assert_not_called()
+            result=orchestrator.update_draft_artwork("contrast",confirmed=True);self.assertEqual(result["product_id"],"existing-product");self.assertFalse(result["new_product_created"]);self.assertEqual(client.upload_image_contents.call_count,1);self.assertEqual(client.update_product.call_count,1);client.create_product.assert_not_called()
+            payload=client.update_product.call_args.args[2];self.assertEqual({item["id"] for item in payload["variants"] if item["is_enabled"]},set(ids));self.assertFalse(next(item for item in payload["variants"] if item["id"]==999)["is_enabled"])
+            image=payload["print_areas"][0]["placeholders"][0]["images"][0];self.assertEqual({key:image[key] for key in ("x","y","scale","angle")},{"x":.5,"y":.46,"scale":.85,"angle":0});self.assertEqual([p["position"] for a in payload["print_areas"] for p in a["placeholders"] if p.get("images")],["front"])
+            for method in (client.publish_product,client.create_order):method.assert_not_called()
+
     def test_new_create_without_source_never_queries_job_queue_id(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);evidence=self.fixture(root);source_lookup=Mock(side_effect=AssertionError("source JobQueue lookup must not run"));independent=Mock(return_value={**evidence,"origin":"independent_prompt"})

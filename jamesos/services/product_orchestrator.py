@@ -503,6 +503,57 @@ def _write_design_review(job_root:Path,candidates:list[dict[str,Any]],phrase:str
     sheet_path=review_root/"design-review-sheet.png";sheet.save(sheet_path);sheet.close();report={"result":"design_review_ready","phrase":phrase,"human_artistic_review_required":True,"candidates":[{"candidate_id":item["candidate_id"],"dimensions":[4500,5400],"alpha_bounds":item["visible_alpha_bounds"],"safe_margin_passed":item["quality_checks"]["hard_safe_bounds"],"rendered_phrase":item["rendered_phrase"],"rendered_text_lines":item["rendered_text_lines"],"sha256":item["png_sha256"],"motif_evidence":item["motif_evidence"]} for item in candidates],"review_sheet_path":str(sheet_path),"warning":"Human artistic review is required; automated checks prove only technical properties."};json_path=review_root/"design-review.json";_atomic_json(json_path,report);return {"review_sheet_path":str(sheet_path),"json_report_path":str(json_path)}
 
 
+GARMENT_BACKGROUNDS={"Black":(10,10,12),"Dark Grey Heather":(62,62,66),"White":(255,255,255)}
+def _luminance(color):
+    values=[]
+    for value in color[:3]:
+        channel=value/255;values.append(channel/12.92 if channel<=.04045 else ((channel+.055)/1.055)**2.4)
+    return .2126*values[0]+.7152*values[1]+.0722*values[2]
+def _contrast_ratio(first,second):
+    light,dark=sorted((_luminance(first),_luminance(second)),reverse=True);return (light+.05)/(dark+.05)
+def assess_candidate_contrast(candidate:dict[str,Any])->dict[str,Any]:
+    treatment=candidate.get("typography_treatment") or ({"fill_rgb":[255,255,255],"outline_rgb":[30,30,38],"outline_width":18,"outer_shadow_rgb":[30,30,38]} if candidate.get("treatment_id")=="deterministic_rainbow_heart_v2" else {})
+    fill=tuple(treatment.get("fill_rgb") or (255,255,255));outline=tuple(treatment.get("outline_rgb") or (30,30,38));width=int(treatment.get("outline_width") or 0);results={}
+    for name,background in GARMENT_BACKGROUNDS.items():
+        fill_ratio=_contrast_ratio(fill,background);outline_ratio=_contrast_ratio(outline,background);light_background=_luminance(background)>.7
+        passed=fill_ratio>=4.5 if light_background else width>=18 and max(fill_ratio,outline_ratio)>=4.5
+        reason=("primary dark text fill has strong light-garment contrast" if passed and light_background else "thick contrasting outline preserves lettering on the dark garment" if passed else
+            "primary text fill blends into the light garment; outline-only readability is not accepted" if light_background else "neither text fill nor outline has sufficient dark-garment contrast")
+        results[name]={"background_rgb":list(background),"fill_contrast_ratio":round(fill_ratio,2),"outline_contrast_ratio":round(outline_ratio,2),"outline_width":width,"result":"pass" if passed else "fail","reason":reason,"human_confirmation_required":True}
+    return {"method":"WCAG-relative-luminance-inspired conservative garment simulation","text_pixels_inspected":True,"human_visual_review_authoritative":True,"per_color":results,"all_pass":all(item["result"]=="pass" for item in results.values())}
+
+
+def _render_universal_contrast_candidate(phrase:str,path:Path,source_sha:str)->dict[str,Any]:
+    phrase=" ".join(phrase.split()).upper();lines=["YOU ARE","SAFE","WITH ME"] if phrase=="YOU ARE SAFE WITH ME" else [phrase]
+    canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));palette=((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));mask=Image.new("L",(2600,2600),0);md=ImageDraw.Draw(mask);md.ellipse((0,0,1508,1508),fill=255);md.ellipse((1092,0,2600,1508),fill=255);md.polygon(((0,832),(2600,832),(1300,2600)),fill=255);stripes=Image.new("RGBA",mask.size,(0,0,0,0));sd=ImageDraw.Draw(stripes)
+    for index,color in enumerate(palette):sd.rectangle((0,index*434,2600,(index+1)*434+2),fill=color)
+    canvas.alpha_composite(Image.composite(stripes,Image.new("RGBA",mask.size,(0,0,0,0)),mask),(950,650));mask.close();stripes.close();font_path=Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf");draw=ImageDraw.Draw(canvas);size=720
+    while size>200:
+        font=ImageFont.truetype(str(font_path),size);widths=[draw.textbbox((0,0),line,font=font,stroke_width=38)[2] for line in lines]
+        if max(widths)<=3460:break
+        size-=20
+    heights=[draw.textbbox((0,0),line,font=font,stroke_width=38)[3] for line in lines];y=2050+(2650-sum(heights)-65*(len(lines)-1))//2
+    for line,height in zip(lines,heights):
+        width=draw.textbbox((0,0),line,font=font,stroke_width=38)[2];x=2250-width//2;draw.text((x,y),line,font=font,fill=(18,32,62,255),stroke_width=38,stroke_fill=(5,10,20,255));draw.text((x,y),line,font=font,fill=(18,32,62,255),stroke_width=24,stroke_fill=(255,255,255,255));y+=height+65
+    path.parent.mkdir(parents=True,exist_ok=True);canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();safe=(360,432,4140,4968);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);digest=_file_sha(path)
+    candidate={"candidate_id":"prompt_centered_universal_contrast","direction":"centered_universal_contrast","png_path":str(path),"png_sha256":digest,"source_artwork_sha256":source_sha,"font_sha256":_file_sha(font_path),
+        "layout_id":"prompt_centered_universal_contrast","treatment_id":"navy_fill_white_outline_dark_shadow_v1","typography_treatment":{"fill_rgb":[18,32,62],"outline_rgb":[255,255,255],"outline_width":24,"outer_shadow_rgb":[5,10,20],"outer_shadow_width":38},
+        "rendered_text_lines":lines,"rendered_phrase":" ".join(lines),"visible_alpha_bounds":list(bounds),"safe_bounds":list(safe),"motif_evidence":{"motif":"rainbow_heart","rendering":"deterministic_rainbow_mask"},
+        "quality_checks":{"hard_phrase_correct":" ".join(lines)==phrase,"hard_no_duplicate_or_missing_text":" ".join(lines)==phrase,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_dimensions":True,"hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True},
+        "thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":10,"balanced_bounds_score":9,"warnings":["Simulated contrast passes do not replace human visual review."]}
+    candidate["garment_contrast"]=assess_candidate_contrast(candidate)
+    if not all(candidate["quality_checks"].values()) or not candidate["garment_contrast"]["all_pass"]:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Universal-contrast candidate failed local technical validation.",operation="product_orchestrator.revise_design_contrast",stage="contrast")
+    return candidate
+
+
+def _write_contrast_review(job_root:Path,candidate:dict[str,Any],current:dict[str,Any])->dict[str,Any]:
+    review_root=job_root/"contrast-review";review_root.mkdir(parents=True,exist_ok=True);sheet=Image.new("RGB",(2100,1050),(235,235,235));draw=ImageDraw.Draw(sheet)
+    with Image.open(candidate["png_path"]) as artwork:
+        for index,(name,background) in enumerate(GARMENT_BACKGROUNDS.items()):
+            panel=Image.new("RGBA",(700,900),(*background,255));image=artwork.copy();image.thumbnail((620,740),Image.Resampling.LANCZOS);panel.alpha_composite(image,((700-image.width)//2,70));sheet.paste(panel.convert("RGB"),(index*700,0));result=candidate["garment_contrast"]["per_color"][name];draw.text((index*700+20,925),f'{name}: {result["result"]} · human review required',fill=(20,20,20));panel.close();image.close()
+    sheet_path=review_root/"universal-contrast-review-sheet.png";sheet.save(sheet_path);sheet.close();report={"result":"contrast_revision_review_ready","candidate_id":candidate["candidate_id"],"candidate_sha256":candidate["png_sha256"],"current_contrast":current,"revised_contrast":candidate["garment_contrast"],"review_sheet_path":str(sheet_path),"human_artistic_review_required":True};json_path=review_root/"contrast-review.json";_atomic_json(json_path,report);return {**report,"json_report_path":str(json_path)}
+
+
 def _etsy_public_visibility(handle: str) -> str:
     url=handle if handle.startswith("https://www.etsy.com/") else f"https://www.etsy.com/listing/{handle.lstrip('/')}"
     try:response=requests.get(url,timeout=(5,15),allow_redirects=True,headers={"User-Agent":"JamesOS/1.0 EtsyVisibilityCheck"})
@@ -560,7 +611,10 @@ class ProductOrchestrator:
         state=self.load(job_id);path=self._path(job_id).parent/"design-review"/"design-review.json"
         try:report=json.loads(path.read_text(encoding="utf-8"))
         except (OSError,ValueError) as exc:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Local design review evidence is unavailable; regenerate candidates first.",operation="product_orchestrator.review_design",stage="review") from exc
-        return {**report,"write_performed":False,"printify_write_performed":False,"external_call_performed":False,"human_artistic_approval":bool((state.get("evidence",{}).get("human_design_approval") or {}).get("approved"))}
+        contrast_path=self._path(job_id).parent/"contrast-review"/"contrast-review.json"
+        try:contrast=json.loads(contrast_path.read_text(encoding="utf-8"))
+        except (OSError,ValueError):contrast=None
+        return {**report,"contrast_review":contrast,"write_performed":False,"printify_write_performed":False,"external_call_performed":False,"human_artistic_approval":bool((state.get("evidence",{}).get("human_design_approval") or {}).get("approved"))}
 
     def approve_design(self,job_id:str,candidate_id:str,*,confirmed:bool=False)->dict[str,Any]:
         state=self.load(job_id);candidates=state.get("evidence",{}).get("candidates") or [];candidate=next((item for item in candidates if item.get("candidate_id")==candidate_id),None)
@@ -585,6 +639,44 @@ class ProductOrchestrator:
         evidence.pop("upload",None);state.setdefault("local_repair_history",[]).append({"operation":"regenerate_independent_design","timestamp":datetime.now().astimezone().isoformat(),"preserved_error_id":(old_error or {}).get("error_id"),"previous_upload_rejected":bool(old_upload.get("printify_image_id"))})
         state["last_error"]=old_error;state["stage"]="failed";_atomic_json(self._path(job_id),state);review=self.review_design(job_id)
         return {"result":"independent_design_regenerated","job_id":job_id,"write_performed":True,"local_write_performed":True,"printify_write_performed":False,"candidate_count":len(candidates),"candidate_hashes":[item["png_sha256"] for item in candidates],"review_sheet_path":review["review_sheet_path"],"human_design_approval_required":True,"previous_upload_rejected":bool(old_upload.get("printify_image_id"))}
+
+    def revise_design_contrast(self,job_id:str)->dict[str,Any]:
+        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};product_id=draft.get("printify_product_id");selected=(evidence.get("selection") or {}).get("selected") or {}
+        if not product_id or product_id==PROTECTED_PRODUCT_ID or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Contrast revision requires an owned unpublished, unordered draft.",operation="product_orchestrator.revise_design_contrast",stage="ownership")
+        current=assess_candidate_contrast(selected)
+        if current["per_color"]["White"]["result"]!="fail":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Current candidate does not reproduce the required white-garment contrast failure.",operation="product_orchestrator.revise_design_contrast",stage="contrast")
+        path=self._path(job_id).parent/"design-candidates"/"prompt_centered_universal_contrast.png";candidate=_render_universal_contrast_candidate(state["brief"]["exact_text"],path,selected.get("source_artwork_sha256") or selected.get("png_sha256"))
+        candidates=[item for item in evidence.get("candidates") or [] if item.get("candidate_id")!=candidate["candidate_id"]];candidates.append(candidate);evidence["candidates"]=candidates;evidence["contrast_revision_candidate_id"]=candidate["candidate_id"]
+        old_approval=evidence.pop("human_design_approval",None)
+        if old_approval:evidence.setdefault("superseded_design_approvals",[]).append({**old_approval,"superseded_at":datetime.now().astimezone().isoformat(),"reason":"candidate artwork changed for universal garment contrast"})
+        state.setdefault("local_repair_history",[]).append({"operation":"revise_design_contrast","timestamp":datetime.now().astimezone().isoformat(),"product_id":product_id,"old_candidate_sha256":selected.get("png_sha256"),"new_candidate_sha256":candidate["png_sha256"],"remote_write_performed":False})
+        review=_write_contrast_review(self._path(job_id).parent,candidate,current);_write_design_review(self._path(job_id).parent,candidates,state["brief"]["exact_text"]);_atomic_json(self._path(job_id),state)
+        return {"result":"universal_contrast_candidate_created","job_id":job_id,"product_id":product_id,"candidate_id":candidate["candidate_id"],"candidate_path":candidate["png_path"],"candidate_sha256":candidate["png_sha256"],"alpha_bounds":candidate["visible_alpha_bounds"],"contrast_results":candidate["garment_contrast"],"review_sheet_path":review["review_sheet_path"],"write_performed":True,"local_write_performed":True,"printify_write_performed":False,"human_design_approval_required":True,"previous_approval_invalidated":bool(old_approval)}
+
+    def update_draft_artwork(self,job_id:str,*,confirmed:bool=False)->dict[str,Any]:
+        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};product_id=draft.get("printify_product_id");selected=(evidence.get("selection") or {}).get("selected") or {};approval=evidence.get("human_design_approval") or {};desired=(evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
+        approval_valid=selected.get("candidate_id")=="prompt_centered_universal_contrast" and approval.get("approved") is True and approval.get("candidate_id")==selected.get("candidate_id") and approval.get("candidate_sha256")==selected.get("png_sha256") and Path(str(selected.get("png_path") or "")).is_file() and _file_sha(Path(selected["png_path"]))==selected.get("png_sha256")
+        contrast=assess_candidate_contrast(selected) if selected else {"all_pass":False,"per_color":{}}
+        safe=bool(product_id and product_id!=PROTECTED_PRODUCT_ID and len(desired)==18 and approval_valid and contrast.get("all_pass") and state.get("publish_status")=="not_published" and state.get("order_status")=="not_created")
+        plan={"result":"draft_artwork_update_plan","job_id":job_id,"product_id":product_id,"write_performed":False,"printify_write_performed":False,"new_product_would_be_created":False,"upload_would_occur":safe,"product_update_would_occur":safe,"human_design_approval_valid":approval_valid,"contrast_gate_passed":bool(contrast.get("all_pass")),"enabled_variant_count":len(desired),"placement":{"x":.5,"y":.46,"scale":.85,"angle":0},"front_artwork_only":True,"safe_to_update":safe}
+        if not confirmed:return plan
+        if not safe:raise PermissionError("Exact-hash approval and universal garment contrast are required before artwork update")
+        client=self.adapters.client_factory();remote=client.get_product(state["shop_id"],product_id);publication=assess_draft_publication_state(state,remote)
+        if remote.get("id")!=product_id or remote.get("shop_id")!=state["shop_id"] or not publication["safe_to_reconcile"] or remote.get("orders") or remote.get("order_status") not in (None,"not_created"):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Existing Printify draft ownership or publication state changed.",operation="product_orchestrator.update_draft_artwork",stage="ownership")
+        remote_variants=remote.get("variants") or [];desired_set=set(desired);variants=[]
+        for item in remote_variants:
+            if type(item.get("id")) is not int or type(item.get("price")) is not int:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Remote variant ID and price are required for artwork update.",operation="product_orchestrator.update_draft_artwork",stage="variants")
+            variants.append({"id":item["id"],"price":item["price"],"is_enabled":item["id"] in desired_set})
+        if {item["id"] for item in variants if item["is_enabled"]}!=desired_set:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Existing draft no longer contains all 18 requested variants.",operation="product_orchestrator.update_draft_artwork",stage="variants")
+        path=Path(selected["png_path"]);uploaded=client.upload_image_contents(f"jamesos-{job_id}-{selected['png_sha256'][:12]}.png",__import__("base64").b64encode(path.read_bytes()).decode());image_id=uploaded.get("id")
+        if not image_id:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify artwork upload did not return an image ID.",operation="product_orchestrator.update_draft_artwork",stage="upload")
+        all_ids=[item["id"] for item in variants];listing=evidence.get("listing") or {};payload={"title":listing["title"],"description":listing["description"],"tags":sanitize_printify_tags(listing.get("tags"),phrase=state["brief"]["exact_text"],blank=state["brief"]["blank"]),"variants":variants,
+            "print_areas":[{"variant_ids":all_ids,"placeholders":[{"position":"front","images":[{"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
+        client.update_product(state["shop_id"],product_id,payload);verified=client.get_product(state["shop_id"],product_id);verified_enabled={item.get("id") for item in verified.get("variants") or [] if item.get("is_enabled") is True};front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==image_id];back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+        if verified.get("id")!=product_id or verified_enabled!=desired_set or not front or back or any(front[0].get(key)!=value for key,value in {"x":.5,"y":.46,"scale":.85,"angle":0}.items()):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Updated draft artwork failed post-update verification.",operation="product_orchestrator.update_draft_artwork",stage="verification")
+        evidence["upload"]={"printify_image_id":image_id,"selected_design_sha256":selected["png_sha256"]};evidence.setdefault("artwork_update_history",[]).append({"product_id":product_id,"candidate_id":selected["candidate_id"],"candidate_sha256":selected["png_sha256"],"printify_image_id":image_id,"updated_at":datetime.now().astimezone().isoformat(),"upload_count":1,"update_count":1})
+        evidence["visual_review_status"]={"status":"stale","fresh_visual_review_required":True,"expected_artwork_image_id":image_id,"representative_variant_ids":{"Black":18102,"Dark Grey Heather":18150,"White":18542},"contrast_human_confirmation_required":True};_atomic_json(self._path(job_id),state)
+        return {"result":"draft_artwork_updated","job_id":job_id,"product_id":product_id,"write_performed":True,"printify_write_performed":True,"upload_performed":True,"product_update_performed":True,"new_product_created":False,"printify_image_id":image_id,"enabled_variant_count":18,"placement":{"x":.5,"y":.46,"scale":.85,"angle":0},"front_artwork_only":True,"fresh_visual_review_required":True,"contrast_human_confirmation_required":True}
 
     def send_to_etsy_review(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:

@@ -14,6 +14,7 @@ from jamesos.core.agents.models import AgentRequest
 from jamesos.core.agents.runner import AgentRunner
 from jamesos.core.profiles.bindings import ProfileBindingResolver
 from jamesos.core.profiles.migration import unitystitches_migration_plan
+from jamesos.core.profiles.approval import complete_proposal_hash,final_approval,final_approval_matches,publication_workflow
 from jamesos.core.profiles.models import AgentBinding,Profile
 from jamesos.core.profiles.store import ProfileStore
 
@@ -67,6 +68,9 @@ class AgentManagerTests(unittest.TestCase):
 class ProfileTests(unittest.TestCase):
     def test_unitystitches_is_generic_profile_with_handles_not_values(self):
         profile=unitystitches_migration_plan();self.assertEqual(profile.profile_type,"commerce_shop");self.assertEqual(profile.agent_bindings["marketplace"].agent_id,"etsy");self.assertEqual(profile.agent_bindings["fulfillment"].agent_id,"printify")
+        self.assertEqual(profile.configuration["approval_mode"],"single_final");self.assertEqual(profile.configuration["etsy_final_state"],"active")
+        self.assertEqual(profile.configuration["human_review_location"],"jamesos_listing_preview");self.assertTrue(profile.configuration["preapproval_printify_draft_allowed"])
+        self.assertEqual(profile.configuration["publish_policy"],"publish_active_after_approval")
         text=json.dumps(profile.to_dict());self.assertIn("etsy.unitystitches",text);self.assertNotIn("access_token",text);self.assertNotIn("shared_secret",text)
         self.assertFalse((ROOT/"jamesos/agents/unitystitches_agent.py").exists())
     def test_generic_agents_support_multiple_profiles_and_runner_uses_binding(self):
@@ -82,6 +86,24 @@ class ProfileTests(unittest.TestCase):
             store=ProfileStore(temporary);profile=unitystitches_migration_plan();path=store.save(profile);self.assertEqual(path.stat().st_mode&0o777,0o600)
             profile.configuration["access_token"]="bad"
             with self.assertRaises(ValueError):store.save(profile)
+    def test_approval_and_final_state_are_independent_validated_settings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store=ProfileStore(temporary)
+            for mode in ("single_final","staged"):
+                for state in ("active","inactive"):
+                    profile=Profile(f"p-{mode}-{state}".replace("_","-"),"commerce_shop","Profile","owner",configuration={"approval_mode":mode,"etsy_final_state":state})
+                    store.save(profile)
+            bad=Profile("bad-mode","commerce_shop","Bad","owner",configuration={"approval_mode":"candidate","etsy_final_state":"active"})
+            with self.assertRaisesRegex(ValueError,"approval mode"):store.save(bad)
+    def test_single_final_approval_binds_every_complete_proposal_component(self):
+        proposal={"artwork":{"sha256":"art"},"product_configuration":{"variants":[1]},"mockups":[{"sha256":"mock"}],
+            "listing_metadata":{"title":"Title"},"destination":{"shop_id":1},"expected_final_state":"active"}
+        approval=final_approval(proposal,approved=True);self.assertTrue(final_approval_matches(proposal,approval))
+        for field in proposal:
+            changed=json.loads(json.dumps(proposal));changed[field]={"changed":True}
+            self.assertNotEqual(complete_proposal_hash(changed),approval["proposal_sha256"]);self.assertFalse(final_approval_matches(changed,approval))
+        workflow=publication_workflow(unitystitches_migration_plan().configuration)
+        self.assertEqual(workflow["capability"],"commerce.workflow.publish_active_after_approval");self.assertEqual(workflow["approval_scope"],"final-proposal")
 
 class HelloAgentTests(unittest.TestCase):
     def test_example_manifest_and_agent_conform(self):

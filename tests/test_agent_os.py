@@ -56,6 +56,12 @@ class AgentCoreTests(unittest.TestCase):
         plan=registry.get("commerce").plan(request);self.assertEqual([item.requested_capability for item in plan.follow_up_tasks],["marketplace.listing.read","commerce.product.publish","marketplace.listing.deactivate"])
         source=Path(__file__).parents[1]/"jamesos/agents/commerce_agent.py";text=source.read_text();self.assertNotIn("PrintifyClient",text);self.assertNotIn("EtsyClient",text)
         proposal=registry.get("commerce").learn(None,None);self.assertFalse(proposal.persist)
+    def test_active_final_workflow_publishes_once_then_only_verifies_active(self):
+        agent=CommerceAgent();request=AgentRequest("task","run","flow","commerce.workflow.publish_active_after_approval","cli",input_payload={"job_id":"job","dry_run":False,"proposal_sha256":"abc"},idempotency_key="final")
+        plan=agent.plan(request);self.assertEqual([item.requested_capability for item in plan.follow_up_tasks],["commerce.product.publish","marketplace.listing.verify_state"])
+        self.assertEqual(plan.follow_up_tasks[0].approval_requirement.scope,"final-proposal");self.assertEqual(plan.follow_up_tasks[1].risk_level,RiskLevel.READ)
+        self.assertEqual(plan.follow_up_tasks[0].approval_requirement.reference,"abc")
+        self.assertFalse(plan.follow_up_tasks[1].approval_requirement.required);self.assertNotIn("marketplace.listing.deactivate",[item.requested_capability for item in plan.follow_up_tasks])
 
 class EtsyTests(unittest.TestCase):
     def test_client_headers_get_and_single_form_patch(self):
