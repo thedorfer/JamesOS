@@ -490,13 +490,13 @@ class ImageWorkerExecutionTests(unittest.TestCase):
 
         self.run_with_worker(scenario)
 
-    def test_unitystitches_draft_updated_to_ready_for_pod_review(self) -> None:
+    def test_commerce_shop_draft_updated_to_ready_for_pod_review(self) -> None:
         def scenario(root: Path, workflow: Path, checkpoint: Path) -> None:
             draft_path = root / "draft.json"
             draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "printify"}), encoding="utf-8")
             job = job_queue.create_job(
                 "image_generation",
-                {"image_plan": self.image_plan(workflow, checkpoint), "unitystitches_draft_path": str(draft_path)},
+                {"image_plan": self.image_plan(workflow, checkpoint), "commerce_shop_draft_path": str(draft_path)},
                 steps=["validation", "workflow prepared", "ComfyUI prompt queued", "image saved", "completed"],
             )
             job_queue.approve_job(job["job_id"])
@@ -523,7 +523,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             draft_path.write_text(json.dumps({"status": "needs_review", "pod_provider": "inkedjoy"}), encoding="utf-8")
             job = job_queue.create_job(
                 "image_generation",
-                {"image_plan": self.image_plan(workflow, checkpoint), "unitystitches_draft_path": str(draft_path)},
+                {"image_plan": self.image_plan(workflow, checkpoint), "commerce_shop_draft_path": str(draft_path)},
                 steps=["validation", "workflow prepared", "ComfyUI prompt queued", "image saved", "completed"],
             )
             job_queue.approve_job(job["job_id"])
@@ -585,7 +585,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             self.assertIn("design_recipe", payload["creative_spec"])
             self.assertEqual(payload["pod_provider"], "printify")
             self.assertIn("selected_assets", payload)
-            self.assertEqual(payload["brand_id"], "unitystitches")
+            self.assertEqual(payload["brand_id"], "commerce_shop")
             self.assertIn(payload["workflow_name"], {"product_art_basic", "print_design_basic", "transparent_print_design_basic"})
             self.assertEqual(payload["creative_spec"]["product_type"], "design_art")
             self.assertEqual(payload["creative_spec"]["layout"], "flat centered print artwork")
@@ -806,7 +806,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
             {"name": "Gay_Pride_Flag", "extension": ".svg"},
             {"name": "Transgender_Pride_flag", "extension": ".svg"},
             {"name": "Intersex-inclusive_pride_flag", "extension": ".svg"},
-            {"name": "unitystitches_logo", "extension": ".png"},
+            {"name": "commerce_shop_logo", "extension": ".png"},
         ]
         package = prompt_library.creative_spec_to_prompt_package({
             "stage": "design_art",
@@ -818,7 +818,7 @@ class ImageWorkerExecutionTests(unittest.TestCase):
                 "niche": "LGBTQ+ pride",
                 "artwork_type": "transparent print design",
                 "assets": assets,
-                "text": "Love Is Love",
+                "text": "Sample",
             },
         })
 

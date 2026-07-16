@@ -18,6 +18,21 @@ from jamesos.integrations.printify_client import PrintifyAPIError
 from jamesos.services import error_handler, product_orchestrator, sale_candidate_vector
 from scripts import product_from_prompt
 
+# Deployment values are injected as generic fixtures; production values come from
+# the selected private commerce profile outside Git.
+product_orchestrator.PROTECTED_PRODUCT_ID = "protected-product-fixture"
+product_orchestrator.RECOVERY_DELETED_PRODUCT_ID = "deleted-product-fixture"
+product_orchestrator.RECOVERY_UPLOAD_ID = "upload-fixture"
+product_orchestrator.RECOVERY_SHOP_ID = 1001
+product_orchestrator.RECOVERY_TITLE = "Sample Product"
+product_orchestrator.RECOVERY_DESCRIPTION = "A generic sample product on a soft unisex tee."
+product_orchestrator.RECOVERY_TAGS = ["sample product", "generic fixture", "test listing", "draft item", "unisex shirt", "fixture-marker"]
+product_orchestrator.RECOVERY_VARIANT_IDS = [*range(18100,18106),*range(18148,18154),*range(18540,18546)]
+product_orchestrator.LISTING_PRODUCT_ID = "listing-product-fixture"
+product_orchestrator.ETSY_TITLE = "Sample Product Listing for Integration Tests"
+product_orchestrator.ETSY_DESCRIPTION = "Generic product copy for a Bella+Canvas 3001 unisex tee in Black, Dark Grey Heather, and White, available in S, M, L, XL, 2XL, and 3XL."
+product_orchestrator.ETSY_TAGS = [f"sample tag {index}" for index in range(1, 14)]
+
 
 class ProductOrchestratorTests(unittest.TestCase):
     FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
@@ -48,8 +63,8 @@ class ProductOrchestratorTests(unittest.TestCase):
         return product_orchestrator.ProductOrchestrator(root/root.name,adapters)
 
     def test_prompt_normalization_and_listing_defaults(self):
-        brief=product_orchestrator.normalize_prompt('Create a playful LOVE IS LOVE retro shirt on black and white. Price it at $24.99.')
-        self.assertEqual(brief["exact_text"],"LOVE IS LOVE");self.assertEqual(brief["price_cents"],2499)
+        brief=product_orchestrator.normalize_prompt('Create a playful SAMPLE retro shirt on black and white. Price it at $24.99.')
+        self.assertEqual(brief["exact_text"],"SAMPLE");self.assertEqual(brief["price_cents"],2499)
         self.assertEqual(brief["blank"],"Bella+Canvas 3001");self.assertIn("Black",brief["garment_colors"])
         supportive=product_orchestrator.normalize_prompt("Create a warm retro shirt featuring the phrase YOU ARE SAFE WITH ME...")
         self.assertEqual(supportive["exact_text"],"YOU ARE SAFE WITH ME")
@@ -77,7 +92,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             root=Path(temporary);client_factory=Mock(side_effect=AssertionError("remote client must be blocked before approval"));orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=client_factory))
             prompt="Create a design featuring the exact phrase YOU ARE SAFE WITH ME. Include a rainbow heart and use a centered front design."
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
-                state=orchestrator.create(prompt=prompt,shop_id=9437076,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="design-gate")
+                state=orchestrator.create(prompt=prompt,shop_id=1001,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="design-gate")
             candidates=state["evidence"]["candidates"];self.assertEqual(state["brief"]["exact_text"],"YOU ARE SAFE WITH ME");self.assertEqual(len({item["png_sha256"] for item in candidates}),3)
             for item in candidates:
                 self.assertEqual(item["rendered_text_lines"],["YOU ARE","SAFE","WITH ME"]);self.assertEqual(item["rendered_phrase"],"YOU ARE SAFE WITH ME");self.assertEqual(item["motif_evidence"]["motif"],"rainbow_heart")
@@ -90,7 +105,7 @@ class ProductOrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);client_factory=Mock(side_effect=AssertionError("no remote call"));orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=client_factory));prompt="Shirt featuring the exact phrase YOU ARE SAFE WITH ME. Add a rainbow heart."
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
-                orchestrator.create(prompt=prompt,shop_id=9437076,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="approval")
+                orchestrator.create(prompt=prompt,shop_id=1001,garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES,confirm_printify_draft=True,job_id="approval")
             review=orchestrator.review_design("approval");self.assertFalse(review["write_performed"]);self.assertFalse(review["external_call_performed"]);client_factory.assert_not_called()
             plan=orchestrator.approve_design("approval","prompt_balanced");self.assertFalse(plan["write_performed"]);approved=orchestrator.approve_design("approval","prompt_balanced",confirmed=True);self.assertTrue(approved["human_artistic_approval"]);client_factory.assert_not_called()
             state=orchestrator.load("approval");candidate=state["evidence"]["selection"]["selected"];self.assertEqual(state["evidence"]["human_design_approval"]["candidate_sha256"],candidate["png_sha256"])
@@ -109,7 +124,7 @@ class ProductOrchestratorTests(unittest.TestCase):
     def contrast_job_fixture(self,root,*,revised=False,approved=False):
         original=root/"prompt_centered.png";candidate=product_orchestrator._render_universal_contrast_candidate("YOU ARE SAFE WITH ME",original,"source")
         if not revised:candidate={**candidate,"candidate_id":"prompt_centered","treatment_id":"deterministic_rainbow_heart_v2","png_sha256":sha256(original.read_bytes()).hexdigest()};candidate.pop("typography_treatment",None);candidate["garment_contrast"]=product_orchestrator.assess_candidate_contrast(candidate)
-        ids=product_orchestrator.RECOVERY_VARIANT_IDS;state={"job_id":"contrast","shop_id":9437076,"stage":"awaiting_human_approval","source_job_id":None,"original_prompt":"featuring the exact phrase YOU ARE SAFE WITH ME.","brief":{"exact_text":"YOU ARE SAFE WITH ME","blank":"Bella+Canvas 3001","visual_style":"playful bold retro","price_cents":2499,"currency":"USD","garment_colors":product_orchestrator.DEFAULT_COLORS,"sizes":product_orchestrator.DEFAULT_SIZES,"print_provider":"Monster Digital"},"publish_status":"not_published","order_status":"not_created","transitions":[],"evidence":{"selection":{"selected":candidate,"approval":{"human_artistic_approval":approved}},"candidates":[candidate],"draft":{"printify_product_id":"existing-product","publish_status":"not_published","order_status":"not_created"},"variant_selection":{"selected_variant_ids":ids},"listing":{"title":"You Are Safe With Me Unisex Tee","description":"Grounded unisex tee draft.","tags":["you are safe with me","unisex tee"]}}}
+        ids=product_orchestrator.RECOVERY_VARIANT_IDS;state={"job_id":"contrast","shop_id":1001,"stage":"awaiting_human_approval","source_job_id":None,"original_prompt":"featuring the exact phrase YOU ARE SAFE WITH ME.","brief":{"exact_text":"YOU ARE SAFE WITH ME","blank":"Bella+Canvas 3001","visual_style":"playful bold retro","price_cents":2499,"currency":"USD","garment_colors":product_orchestrator.DEFAULT_COLORS,"sizes":product_orchestrator.DEFAULT_SIZES,"print_provider":"Monster Digital"},"publish_status":"not_published","order_status":"not_created","transitions":[],"evidence":{"selection":{"selected":candidate,"approval":{"human_artistic_approval":approved}},"candidates":[candidate],"draft":{"printify_product_id":"existing-product","publish_status":"not_published","order_status":"not_created"},"variant_selection":{"selected_variant_ids":ids},"listing":{"title":"You Are Safe With Me Unisex Tee","description":"Grounded unisex tee draft.","tags":["you are safe with me","unisex tee"]}}}
         if approved:state["evidence"]["human_design_approval"]={"approved":True,"candidate_id":candidate["candidate_id"],"candidate_sha256":candidate["png_sha256"]}
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no external call"))));product_orchestrator._atomic_json(orchestrator._path("contrast"),state);return orchestrator,state,candidate
 
@@ -123,7 +138,7 @@ class ProductOrchestratorTests(unittest.TestCase):
     def test_confirmed_artwork_update_uses_existing_product_once_and_preserves_variants_placement(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);orchestrator,state,candidate=self.contrast_job_fixture(root,revised=True,approved=True);ids=product_orchestrator.RECOVERY_VARIANT_IDS;remote_variants=[{"id":item,"price":2499,"is_enabled":True} for item in ids]+[{"id":999,"price":1999,"is_enabled":False}]
-            remote={"id":"existing-product","shop_id":9437076,"visible":True,"is_locked":False,"variants":remote_variants,"print_areas":[{"variant_ids":[item["id"] for item in remote_variants],"placeholders":[{"position":"front","images":[{"id":"old"}]}]}],"order_status":"not_created","orders":[]}
+            remote={"id":"existing-product","shop_id":1001,"visible":True,"is_locked":False,"variants":remote_variants,"print_areas":[{"variant_ids":[item["id"] for item in remote_variants],"placeholders":[{"position":"front","images":[{"id":"old"}]}]}],"order_status":"not_created","orders":[]}
             verified=copy.deepcopy(remote);verified["print_areas"]=[{"variant_ids":[item["id"] for item in remote_variants],"placeholders":[{"position":"front","images":[{"id":"new-upload","x":.5,"y":.46,"scale":.85,"angle":0}]},{"position":"back","images":[]}]}]
             client=Mock();client.get_product.side_effect=[remote,verified];client.upload_image_contents.return_value={"id":"new-upload"};orchestrator.adapters.client_factory=lambda:client
             dry=orchestrator.update_draft_artwork("contrast");self.assertTrue(dry["safe_to_update"]);client.get_product.assert_not_called();client.upload_image_contents.assert_not_called();client.update_product.assert_not_called()
@@ -138,7 +153,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             adapters=product_orchestrator.Adapters(evidence=source_lookup,candidates=self.candidates,independent_evidence=independent,independent_candidates=self.candidates,client_factory=Mock(side_effect=AssertionError("no external client")))
             orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
-                state=orchestrator.create(prompt='Create a retro shirt saying "YOU ARE SAFE WITH ME"',shop_id=9437076,job_id="new-independent")
+                state=orchestrator.create(prompt='Create a retro shirt saying "YOU ARE SAFE WITH ME"',shop_id=1001,job_id="new-independent")
             source_lookup.assert_not_called();independent.assert_called_once();self.assertIsNone(state["source_job_id"]);self.assertEqual(state["job_id"],"new-independent")
             self.assertIn("design_candidates_ready",{item["stage"] for item in state["transitions"]});adapters.client_factory.assert_not_called()
 
@@ -158,12 +173,12 @@ class ProductOrchestratorTests(unittest.TestCase):
             adapters=product_orchestrator.Adapters(evidence=source_lookup,candidates=self.candidates,independent_evidence=independent,client_factory=Mock())
             orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
-                state=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="  source-job-123  ",shop_id=1,job_id="source-backed")
+                state=orchestrator.create(prompt="SAMPLE",source_job_id="  source-job-123  ",shop_id=1,job_id="source-backed")
             source_lookup.assert_called_once_with("source-job-123");independent.assert_not_called();self.assertEqual(state["source_job_id"],"source-job-123")
 
     def test_exact_cli_repeated_colors_and_sizes_reaches_normal_create(self):
         orchestrator=Mock();orchestrator.create.return_value={"job_id":"new-job","stage":"awaiting_human_approval","publish_status":"not_published","order_status":"not_created","last_error":None,"recovered_errors":[]};orchestrator._path.return_value=Path("/tmp/new-job/orchestrator-state.json")
-        argv=["product_from_prompt.py","create","--prompt","Create a warm, supportive retro shirt design featuring the phrase YOU ARE SAFE WITH ME...","--shop-id","9437076","--mode","printify-draft",
+        argv=["product_from_prompt.py","create","--prompt","Create a warm, supportive retro shirt design featuring the phrase YOU ARE SAFE WITH ME...","--shop-id","1001","--mode","printify-draft",
             "--garment-color","Black","--garment-color","Dark Grey Heather","--garment-color","White","--size","S","--size","M","--size","L","--size","XL","--size","2XL","--size","3XL","--confirm-printify-draft"]
         output=StringIO()
         with patch.object(sys,"argv",argv),patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),redirect_stdout(output):result=product_from_prompt._main()
@@ -186,7 +201,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             adapters=product_orchestrator.Adapters(evidence=lambda _:evidence,candidates=self.candidates,client_factory=client_factory)
             orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
-                state=orchestrator.create(prompt="LOVE IS LOVE on grey",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="unresolved")
+                state=orchestrator.create(prompt="SAMPLE on grey",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="unresolved")
             self.assertEqual(state["stage"],"failed");self.assertEqual(state["last_error"]["code"],"VALIDATION_FAILED");client_factory.assert_not_called()
 
     def test_three_real_v4_refinements_and_correct_opaque_check(self):
@@ -195,7 +210,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             manifest={"fonts":[{"font_id":"lilita-one-regular","family":"Lilita One","style":"Regular","font_path":str(self.FONT),
                 "font_sha256":sha256(self.FONT.read_bytes()).hexdigest(),"license_path":str(self.FONT),"license_sha256":"x"*64}]}
             (font_root/"acquired-fonts.json").write_text(json.dumps(manifest))
-            candidates=sale_candidate_vector.generate_v4_refinements(evidence["candidate"],root/"v4",phrase="LOVE IS LOVE",font_root=font_root)
+            candidates=sale_candidate_vector.generate_v4_refinements(evidence["candidate"],root/"v4",phrase="SAMPLE",font_root=font_root)
             self.assertEqual({x["candidate_id"] for x in candidates},{"integrated_shadow_centered","integrated_shadow_curved_caption","integrated_shadow_compact"})
             self.assertTrue(all(not x["quality_checks"]["unexpected_opaque_background"] for x in candidates))
             self.assertEqual(sha256(evidence["candidate"].read_bytes()).hexdigest(),evidence["candidate_sha"])
@@ -205,7 +220,7 @@ class ProductOrchestratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);evidence=self.fixture(root);orchestrator=self.orchestrator(root,evidence)
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
-                state=orchestrator.create(prompt="LOVE IS LOVE retro shirt",source_job_id="source",shop_id=9437076,job_id="job")
+                state=orchestrator.create(prompt="SAMPLE retro shirt",source_job_id="source",shop_id=1001,job_id="job")
             self.assertEqual(state["stage"],"failed");self.assertIn("error_id",state["last_error"])
             self.assertIn("listing_ready",{x["stage"] for x in state["transitions"]});self.assertEqual(state["brief"],orchestrator.load("job")["brief"])
             approval=state["evidence"]["selection"]["approval"]
@@ -222,7 +237,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             adapters=product_orchestrator.Adapters(evidence=lambda _:evidence,candidates=blocked,client_factory=lambda:client)
             orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
-                state=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="blocked")
+                state=orchestrator.create(prompt="SAMPLE",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="blocked")
             self.assertEqual(state["stage"],"failed");client.upload_image_contents.assert_not_called()
             self.assertEqual(state["evidence"]["candidates"][0]["quality_checks"]["soft_warning"],"human review")
 
@@ -236,13 +251,13 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.get_product.return_value={"id":"draft-1","images":[{"src":"https://mock/image.jpg","variant_ids":[101]}]}
             client.timeout=(1,1);client.session.get.return_value=Mock(content=b"mockup");client.session.get.return_value.raise_for_status.return_value=None
             orchestrator=self.orchestrator(root,evidence,client)
-            state=orchestrator.create(prompt="LOVE IS LOVE black shirt size S",source_job_id="source",shop_id=9437076,
+            state=orchestrator.create(prompt="SAMPLE black shirt size S",source_job_id="source",shop_id=1001,
                 garment_colors=["Black"],sizes=["S"],confirm_printify_draft=True,job_id="live-mocked")
             self.assertEqual(state["stage"],"awaiting_human_approval");self.assertEqual(state["publish_status"],"not_published");self.assertEqual(state["order_status"],"not_created")
             transitions=len(state["transitions"]);resumed=orchestrator.resume("live-mocked",confirm_printify_draft=True)
             self.assertEqual(len(resumed["transitions"]),transitions);self.assertEqual(client.upload_image_contents.call_count,1);self.assertEqual(client.create_product.call_count,1)
             self.assertNotEqual(resumed["evidence"]["draft"]["printify_product_id"],product_orchestrator.PROTECTED_PRODUCT_ID)
-            report=orchestrator.report("live-mocked");text=report.read_text();self.assertIn("DRAFT · NOT PUBLISHED · NO ORDER CREATED",text);self.assertIn("LOVE IS LOVE",text)
+            report=orchestrator.report("live-mocked");text=report.read_text();self.assertIn("DRAFT · NOT PUBLISHED · NO ORDER CREATED",text);self.assertIn("SAMPLE",text)
 
     def test_realistic_variant_dictionary_selects_exact_eighteen(self):
         rows=[];variant_id=100
@@ -267,7 +282,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
             client.upload_image_contents.return_value={"id":"existing-upload"};client.get_variants.return_value={"variants":[]}
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
-                failed=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="source",shop_id=9437076,confirm_printify_draft=True,job_id="resume-job")
+                failed=orchestrator.create(prompt="SAMPLE",source_job_id="source",shop_id=1001,confirm_printify_draft=True,job_id="resume-job")
             self.assertEqual(failed["stage"],"failed");self.assertEqual(failed["last_error"]["code"],"VALIDATION_FAILED")
             self.assertNotIn("upload",failed["evidence"]);client.upload_image_contents.assert_not_called()
             rows=[{"id":index+1,"title":f"{color} / {size}","is_available":True} for index,(color,size) in enumerate(
@@ -288,7 +303,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             root=Path(temporary);evidence=self.fixture(root);client=Mock();orchestrator=self.orchestrator(root,evidence,client)
             client.upload_image_contents.return_value={"id":"upload-1"};client.get_variants.return_value={"variants":[]}
             with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diagnostics",log=False,**kw)):
-                orchestrator.create(prompt="LOVE IS LOVE black size S",source_job_id="source",shop_id=9437076,
+                orchestrator.create(prompt="SAMPLE black size S",source_job_id="source",shop_id=1001,
                     garment_colors=["Black"],sizes=["S"],confirm_printify_draft=True,job_id="reconcile")
             client.get_variants.return_value={"variants":[{"id":101,"title":"Black / S","is_available":True}]}
             def products(_shop):
@@ -305,7 +320,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.upload_image_contents.return_value={"id":"upload-1"};client.get_variants.return_value={"variants":[{"id":101,"title":"Black / S","is_available":True}]}
             client.list_products.return_value={"data":[]};client.create_product.return_value={"id":"draft-1"};client.get_product.return_value={"id":"draft-1","images":[]}
             orchestrator=self.orchestrator(root,evidence,client)
-            state=orchestrator.create(prompt="LOVE IS LOVE",source_job_id="source",shop_id=9437076,garment_colors=["Black"],sizes=["S"],confirm_printify_draft=True,job_id="stale")
+            state=orchestrator.create(prompt="SAMPLE",source_job_id="source",shop_id=1001,garment_colors=["Black"],sizes=["S"],confirm_printify_draft=True,job_id="stale")
             stale={"error_id":"err-old","code":"UNEXPECTED_INTERNAL_ERROR","user_message":"safe","retryable":False,
                 "suggested_action":"inspect","diagnostic_path":"/protected/err-old.json"}
             failed_at="2026-07-15T17:32:48-05:00";state["last_error"]=stale;state.pop("recovered_errors",None)
@@ -342,14 +357,14 @@ class ProductOrchestratorTests(unittest.TestCase):
         for row in current_rows: row["is_enabled"]=row["id"] in black+white
         placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0,"src":"https://example.invalid/image.png",
             "imageId":image_id,"layerType":"image","name":"response-only","type":"image","width":4500,"height":5400,"flipX":False,"flipY":False}
-        current={"id":product_id,"shop_id":9437076,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
+        current={"id":product_id,"shop_id":1001,"title":"Sample","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
             "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[
                 {"position":"front","decoration_method":"dtg","variant_ids":black+white,"images":[placement]},
                 {"position":"back","decoration_method":"dtg","variant_ids":black+white,"images":[]}]}]}
         verified=copy.deepcopy(current)
         for row in verified["variants"]: row["is_enabled"]=row["id"] in black+dark+white;row["price"]=2499 if row["is_enabled"] else row["price"]
         verified["print_areas"][0]["variant_ids"]=[row["id"] for row in verified["variants"]]
-        state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":9437076,"original_prompt":"LOVE IS LOVE on black, dark heather, and white",
+        state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":1001,"original_prompt":"SAMPLE on black, dark heather, and white",
             "brief":{"sizes":sizes,"garment_colors":["Black","White"]},"publish_status":"not_published","order_status":"not_created","transitions":[],"stage_output":{},
             "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+white,"publish_status":"not_published","order_status":"not_created"},"draft_marker":marker,
                 "upload":{"printify_image_id":image_id,"selected_design_sha256":design_sha},"selection":{"selected":{"png_sha256":design_sha}},
@@ -475,7 +490,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.update_product.assert_not_called();self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
 
     def review_fixture(self, root: Path, *, with_mockups: bool = True):
-        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root);image_id="6a580a8e43d9a89162f792a7"
+        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root);image_id="upload-fixture"
         desired={*range(18100,18106),*dark,*range(18540,18546)}
         for item in remote["variants"]:item["is_enabled"]=item["id"] in desired
         remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=image_id
@@ -668,7 +683,7 @@ class ProductOrchestratorTests(unittest.TestCase):
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
         for item in remote["variants"]:item["is_default"]=item["id"]==18542
         remote["images"]=[{"id":f"mock-{item}","mockup_id":f"front-{item}","src":f"https://mock.test/{item}.png"} for item in (18102,18150,18542)]
-        remote["external"]={};client.list_shops.return_value=[{"id":9437076,"sales_channel":"etsy"}];client.get_product.return_value=remote
+        remote["external"]={};client.list_shops.return_value=[{"id":1001,"sales_channel":"etsy"}];client.get_product.return_value=remote
         client.get_product_gpsr.return_value={"sections":[{"title":"Manufacturer","text":"Exact manufacturer text"},{"title":"Warnings","text":"Exact warning text"}]} if gpsr else {"sections":[]}
         ready=copy.deepcopy(remote)
         for item in ready["variants"]:item["is_default"]=item["id"]==18102
@@ -685,7 +700,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["current_default_variant_id"],18542);self.assertEqual(result["proposed_default_variant_id"],18102)
             self.assertEqual(result["current_mockup_count"],3);self.assertTrue(result["gpsr_information_available"]);self.assertTrue(result["public_listing_risk_acknowledged"])
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called();client.publish_product.assert_not_called()
-            client.get_product_gpsr.assert_called_once_with(9437076,product_orchestrator.LISTING_PRODUCT_ID)
+            client.get_product_gpsr.assert_called_once_with(1001,product_orchestrator.LISTING_PRODUCT_ID)
 
     def test_etsy_channel_confirmed_updates_default_once_and_publishes_once(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -762,7 +777,7 @@ class ProductOrchestratorTests(unittest.TestCase):
         client=Mock();client.get_product.side_effect=[deleted];client.get_upload.return_value={"id":product_orchestrator.RECOVERY_UPLOAD_ID,
             "mime_type":"image/png","width":4500,"height":5400};client.list_products.return_value={"data":[]};client.get_variants.return_value=catalog
         orchestrator.adapters.client_factory=lambda:client
-        replacement={"id":"replacement-draft","shop_id":9437076,"blueprint_id":12,"print_provider_id":29,
+        replacement={"id":"replacement-draft","shop_id":1001,"blueprint_id":12,"print_provider_id":29,
             "title":product_orchestrator.RECOVERY_TITLE,"tags":product_orchestrator.RECOVERY_TAGS,"visible":True,"is_locked":False,
             "variants":[{"id":item,"price":2499,"is_enabled":True} for item in product_orchestrator.RECOVERY_VARIANT_IDS],
             "print_areas":[{"variant_ids":product_orchestrator.RECOVERY_VARIANT_IDS,"placeholders":[{"position":"front","decoration_method":"dtg",
@@ -775,7 +790,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             root=Path(temporary);orchestrator,state,client,replacement,deleted=self.recovery_fixture(root);before=orchestrator._path("reconcile-job").read_bytes()
             result=orchestrator.recover_draft("reconcile-job")
             self.assertEqual(result,{"result":"draft_recovery_plan","write_performed":False,"printify_write_performed":False,"job_id":"reconcile-job",
-                "deleted_product_id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID,"shop_id":9437076,"upload_id":product_orchestrator.RECOVERY_UPLOAD_ID,
+                "deleted_product_id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID,"shop_id":1001,"upload_id":product_orchestrator.RECOVERY_UPLOAD_ID,
                 "reuse_existing_upload":True,"new_upload_required":False,"replacement_product_required":True,"enabled_variant_count":18,"price_cents":2499,
                 "placement":{"x":.5,"y":.46,"scale":.85,"angle":0},"publish_status":"not_published","order_status":"not_created","safe_to_recover":True})
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.create_product.assert_not_called();client.update_product.assert_not_called()
@@ -783,7 +798,7 @@ class ProductOrchestratorTests(unittest.TestCase):
 
     def independent_recovery_fixture(self,root,*,upload=True,approved=False):
         selected_path=root/"selected.png";Image.new("RGBA",(4500,5400),(0,0,0,0)).save(selected_path);selected_sha=sha256(selected_path.read_bytes()).hexdigest();ids=list(range(1,19))
-        state={"job_id":"independent","shop_id":9437076,"stage":"failed","source_job_id":None,"original_prompt":"Create a design featuring the exact phrase YOU ARE SAFE WITH ME. Use a centered front design.",
+        state={"job_id":"independent","shop_id":1001,"stage":"failed","source_job_id":None,"original_prompt":"Create a design featuring the exact phrase YOU ARE SAFE WITH ME. Use a centered front design.",
             "brief":{"price_cents":2499,"garment_colors":product_orchestrator.DEFAULT_COLORS,"sizes":product_orchestrator.DEFAULT_SIZES},"publish_status":"not_published","order_status":"not_created","transitions":[],
             "last_error":{"error_id":"err-original","code":"PRINTIFY_PRODUCT_CREATE_FAILED","diagnostic_path":"/protected/original.json"},"evidence":{"selection":{"selected":{"candidate_id":"prompt_centered","png_path":str(selected_path),"png_sha256":selected_sha}},
                 "variant_selection":{"selected_variant_ids":ids},"draft_marker":"marker-independent"}}

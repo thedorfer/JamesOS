@@ -59,7 +59,7 @@ class DesignRunTests(unittest.TestCase):
     def test_design_dna_created_from_recipe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             recipe = recipe_library.get_recipe("underwear/pride_pattern", Path(tmp) / "Recipes")["recipe"]
-            dna = design_dna_from_recipe(recipe, brand_id="unitystitches", product_type="womens_underwear", niche="trans pride")
+            dna = design_dna_from_recipe(recipe, brand_id="commerce_shop", product_type="womens_underwear", niche="trans pride")
 
             self.assertEqual(dna["design_family"], recipe["design_family"])
             self.assertIn("womens_underwear", dna["target_products"])
@@ -68,7 +68,7 @@ class DesignRunTests(unittest.TestCase):
     def test_design_run_creates_exactly_four_variations_with_layers_and_prompts(self) -> None:
         def scenario(root: Path) -> None:
             result = design_variation_service.create_design_run(
-                brand_id="unitystitches",
+                brand_id="commerce_shop",
                 product_type="womens_underwear",
                 niche="trans pride",
                 recipe_id="underwear/pride_pattern",
@@ -114,7 +114,7 @@ class DesignRunTests(unittest.TestCase):
     def test_promotion_requires_score_90_or_best_candidate_review(self) -> None:
         def scenario(root: Path) -> None:
             good = design_variation_service.create_design_run(
-                brand_id="unitystitches",
+                brand_id="commerce_shop",
                 product_type="womens_underwear",
                 niche="trans pride",
                 recipe_id="underwear/pride_pattern",
@@ -126,7 +126,7 @@ class DesignRunTests(unittest.TestCase):
             self.assertEqual(winner["status"], "ready_for_printify_review")
 
             weak = design_variation_service.create_design_run(
-                brand_id="unitystitches",
+                brand_id="commerce_shop",
                 product_type="womens_underwear",
                 niche="trans pride",
                 recipe_id="pride/typography_badge",

@@ -27,7 +27,7 @@ def normalize_intent(intent: str = "", prompt: str = "") -> str:
     text = f"{value} {prompt}".lower()
     if value in SUPPORTED_INTENTS:
         return value
-    if "unitystitches" in text or "product" in text:
+    if "commerce_shop" in text or "product" in text:
         return "daily_product_generation"
     if "image" in text or "art" in text or "prompt" in text:
         return "creative_image_generation"
@@ -44,8 +44,8 @@ def _job_for_intent(intent: str, payload: dict[str, Any]) -> dict[str, Any]:
     jobs = {
         "daily_product_generation": {
             "type": "creative_pipeline",
-            "title": "Prepare UnityStitches daily product draft pipeline",
-            "payload": {"pipeline": "unitystitches_daily_products", **payload},
+            "title": "Prepare Commerce Shop daily product draft pipeline",
+            "payload": {"pipeline": "commerce_shop_daily_products", **payload},
             "steps": ["idea", "prompt", "image", "mockup", "listing", "review"],
         },
         "creative_image_generation": {

@@ -216,7 +216,7 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
             workflow_manager.build_workflow_inventory(workflow_roots=[workflow_root])
 
             plan = image_worker.plan({
-                "brand_id": "unitystitches",
+                "brand_id": "commerce_shop",
                 "creative_spec": {
                     "stage": "design_art",
                     "product_type": "design_art",
@@ -225,7 +225,7 @@ class WorkflowManagerPhaseBTests(unittest.TestCase):
                         "product_type": "design_art",
                         "niche": "LGBTQ+ pride",
                         "artwork_type": "flat print design",
-                        "text": "Love Is Love",
+                        "text": "Sample",
                     },
                 },
             })

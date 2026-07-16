@@ -16,7 +16,7 @@ POST /planner/plan
 ```json
 {
   "intent": "daily_product_generation",
-  "prompt": "Generate today's UnityStitches drafts",
+  "prompt": "Generate today's Commerce Shop drafts",
   "payload": {}
 }
 ```

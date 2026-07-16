@@ -16,8 +16,8 @@ class ProductPlan(BaseModel):
     score: float = 0.0
     keywords: list[str] = Field(default_factory=list)
     prompts: list[str] = Field(default_factory=list)
-    brand_id: str = "unitystitches"
-    brand_name: str = "UnityStitches"
+    brand_id: str = "commerce_shop"
+    brand_name: str = "Commerce Shop"
     brand_voice: str = ""
     brand_compatibility_status: str = "unknown"
     brand_compatibility_reason: str = ""

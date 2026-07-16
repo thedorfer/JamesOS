@@ -14,10 +14,23 @@ from jamesos.services.planner import create_plan
 from creative_intelligence.services.compatibility_service import assess_compatibility, select_compatible_package
 
 
-CONFIG_PATH = VAULT / "JamesOS" / "Config" / "unitystitches_products.yaml"
-DRAFTS_ROOT = VAULT / "JamesOS" / "Products" / "UnityStitches" / "Drafts"
-REPORT_PATH = VAULT / "JamesOS" / "Reports" / "UnityStitches Product Drafts.md"
-BRAND_ID = "unitystitches"
+PROFILE_ROOT = VAULT / "JamesOS" / "Profiles"
+DEFAULT_PROFILE_ID = "commerce_shop"
+
+
+def _profile_id() -> str:
+    pointer = PROFILE_ROOT / "selected_commerce_profile"
+    return pointer.read_text(encoding="utf-8").strip() if pointer.is_file() else DEFAULT_PROFILE_ID
+
+
+def _profile_root() -> Path:
+    return PROFILE_ROOT / _profile_id()
+
+
+CONFIG_PATH = _profile_root() / "product_pipeline.yaml"
+DRAFTS_ROOT = _profile_root() / "Drafts"
+REPORT_PATH = _profile_root() / "Reports" / "Product Drafts.md"
+BRAND_ID = DEFAULT_PROFILE_ID
 
 ROTATING_OPTIONS = ["shirt", "sweatshirt", "hoodie", "tote", "mug", "seasonal_accessory"]
 INTIMATE_POD_PRODUCT_TERMS = {"womens_underwear", "panties", "panty", "thong", "thongs"}
@@ -162,8 +175,8 @@ def _draft(product_type: str, niche: str, run_date: str, index: int) -> dict[str
         "inclusive gift",
         niche.lower().replace("/", " "),
         product_type.replace("_", " "),
-        "unitystitches",
-        "love is love",
+        "commerce_shop",
+        "sample",
         "affirmation",
         "needs review",
     ][:13]
@@ -250,18 +263,18 @@ def generate_daily_product_drafts(run_date: str | None = None) -> dict[str, Any]
         package = _compatible_package(config, product_type, selected_date, index)
         drafts.append(_draft(package["product_type"], package["niche"], selected_date, index))
     if len(drafts) != 2:
-        raise ValueError("UnityStitches daily generation must produce exactly 2 drafts")
+        raise ValueError("Commerce Shop daily generation must produce exactly 2 drafts")
 
     planner_result = create_plan(
         "daily_product_generation",
-        "Generate today's UnityStitches product drafts",
+        "Generate today's Commerce Shop product drafts",
         {"date": selected_date, "draft_count": len(drafts)},
     )
     draft_paths = _write_drafts(selected_date, drafts)
     pipeline_job = create_pipeline({
-        "title": f"UnityStitches daily product drafts {selected_date}",
+        "title": f"Commerce Shop daily product drafts {selected_date}",
         "brand_id": BRAND_ID,
-        "product_line": "UnityStitches",
+        "product_line": "Commerce Shop",
         "draft_count": len(drafts),
         "draft_paths": draft_paths,
         "planner": planner_result,
@@ -325,7 +338,7 @@ def health() -> dict[str, Any]:
     cfg = load_config()
     return {
         "status": "ok",
-        "name": "UnityStitches Product Pipeline",
+        "name": "Commerce Shop Product Pipeline",
         "enabled": bool(cfg.get("enabled", True)),
         "draft_root": str(DRAFTS_ROOT),
         "report": str(REPORT_PATH),
@@ -345,7 +358,7 @@ def write_report() -> dict[str, Any]:
     drafts = list_drafts().get("drafts", [])
     needs_review = [draft for draft in drafts if draft.get("status") == "needs_review"]
     lines = [
-        "# UnityStitches Product Drafts",
+        "# Commerce Shop Product Drafts",
         "",
         f"Updated: {now_timestamp()}",
         "",

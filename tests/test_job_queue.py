@@ -42,7 +42,7 @@ class JobQueueTests(unittest.TestCase):
     def test_create_list_and_get_job(self) -> None:
         def scenario(root: Path) -> None:
             created = job_queue.create_job(
-                "unitystitches.draft",
+                "commerce_shop.draft",
                 {"niche": "Pride Month"},
                 priority=2,
                 steps=["draft", "review"],
@@ -53,7 +53,7 @@ class JobQueueTests(unittest.TestCase):
 
             self.assertEqual(len(listed), 1)
             self.assertEqual(loaded["job_id"], created["job_id"])
-            self.assertEqual(loaded["type"], "unitystitches.draft")
+            self.assertEqual(loaded["type"], "commerce_shop.draft")
             self.assertEqual(loaded["status"], "pending")
             self.assertTrue(loaded["requires_approval"])
             self.assertFalse(loaded["approved"])

@@ -13,10 +13,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from jamesos.integrations.printify_client import PrintifyClient
 from jamesos.services import job_queue, printify_product
+from jamesos.core.profiles.selection import protected_resources
 
 
 CANVAS = (4500, 5400)
-PHRASE = "LOVE IS LOVE"
+PHRASE = "SAMPLE"
 FONT_LIBRARY_PATH = Path(__file__).resolve().parents[1] / "config" / "sale_candidate_fonts.json"
 
 
@@ -179,7 +180,7 @@ def build_font_preview_report(manifest: dict[str, Any], output_path: Path, appro
             f"<pre>{html.escape(json.dumps({'font': option['font'], 'rendering': option['rendering']}, indent=2))}</pre></article>")
     selected_text = approval.get("font_option_id") if approval else "None — approval required"
     document = "<!doctype html><html><head><meta charset='utf-8'><title>Font Preview Selection</title><style>body{font-family:sans-serif;background:#eee}main{display:grid;grid-template-columns:1fr 1fr;gap:18px}article{background:white;padding:15px}.selected{outline:8px solid #28a86b}img{max-width:48%}pre{white-space:pre-wrap}.warning{font-weight:bold;color:#a00}</style></head><body>"
-    document += f"<h1>LOVE IS LOVE — Font Options</h1><p class='warning'>DRAFT · NOT PUBLISHED · NO ORDER CREATED</p><p>Selected font option: {html.escape(selected_text)}</p><p>Next required action: {'generate listing' if approval else 'approve one font option'}</p><h2>Original base heart artwork</h2><img style='max-width:300px' src='{html.escape(manifest['approved_base_artwork_path'])}'><main>{''.join(cards)}</main></body></html>"
+    document += f"<h1>SAMPLE — Font Options</h1><p class='warning'>DRAFT · NOT PUBLISHED · NO ORDER CREATED</p><p>Selected font option: {html.escape(selected_text)}</p><p>Next required action: {'generate listing' if approval else 'approve one font option'}</p><h2>Original base heart artwork</h2><img style='max-width:300px' src='{html.escape(manifest['approved_base_artwork_path'])}'><main>{''.join(cards)}</main></body></html>"
     output_path.write_text(document, encoding="utf-8"); return output_path
 
 
@@ -304,11 +305,11 @@ def generate_listing(composition_root: Path, profile_path: Path, *, confirmed: b
         composition = json.loads(composition_path.read_text(encoding="utf-8")); font_approval = None; design_approval = None; manifest = None; selected = None
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
     listing = composition_root / "listing"; listing.mkdir(exist_ok=False)
-    title = "Love Is Love Rainbow Heart Unisex Tee"
-    description = ("Celebrate colorful, positive love with a bold rainbow heart and an easy-to-read LOVE IS LOVE headline.\n\n"
+    title = "Sample Rainbow Heart Unisex Tee"
+    description = ("Celebrate colorful, positive love with a bold rainbow heart and an easy-to-read SAMPLE headline.\n\n"
                    "Printed on a soft Bella+Canvas 3001 unisex tee in Black, Dark Grey Heather, and White, sizes S–3XL.\n\n"
                    "Care: machine wash cold, inside out; tumble dry low; do not iron directly on the design.")
-    tags = ["love is love", "rainbow heart", "pride shirt", "positive tee", "unisex shirt", "colorful heart"]
+    tags = ["sample", "rainbow heart", "pride shirt", "positive tee", "unisex shirt", "colorful heart"]
     pricing = {"currency": "USD", "default_retail_cents": 2499, "estimated_base_cost_cents": None,
                "estimated_shipping_cents": None, "estimated_gross_margin_cents": None}
     variants = {"colors": ["Black", "Dark Grey Heather", "White"], "sizes": ["S", "M", "L", "XL", "2XL", "3XL"],
@@ -392,7 +393,7 @@ def create_composition_product_draft(job_id: str, composition_id: str, *, client
     product = client.create_product(shop_id, payload)
     if not product.get("id"): raise job_queue.JobQueueError("Printify did not return a new product ID.")
     result = {"composition_id": composition_id, "plan_sha256": plan_sha, "shop_id": shop_id, "product_id": product["id"],
-              "baseline_product_id_reused": product["id"] == "6a57eaa752f2c3e4700dbf23", "publish_status": "not_published",
+              "baseline_product_id_reused": product["id"] in {item.split(":",2)[-1] for item in protected_resources()}, "publish_status": "not_published",
               "order_status": "not_created", "response": product, "idempotent": False}
     if result["baseline_product_id_reused"]: raise job_queue.JobQueueError("Printify unexpectedly returned the protected baseline product ID.")
     _write_json(output_path, result, immutable=True); return result

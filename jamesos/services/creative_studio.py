@@ -243,7 +243,7 @@ def create_sample_product_job() -> dict[str, Any]:
         "creative_product_draft",
         {
             "title": "Sample product draft placeholder",
-            "product_line": "UnityStitches",
+            "product_line": "Commerce Shop",
             "notes": "Draft-only product package placeholder. Do not call Printify or Etsy.",
         },
     )

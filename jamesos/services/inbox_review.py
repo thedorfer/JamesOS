@@ -46,8 +46,8 @@ def _suggest_destination(matches: list[str], text: str) -> str:
     if any(word in lower for word in ["gcu", "student", "grade", "rubric", "class"]):
         return "GCU"
 
-    if any(word in lower for word in ["etsy", "unitystitches", "shirt", "design", "listing"]):
-        return "UnityStitches"
+    if any(word in lower for word in ["etsy", "commerce_shop", "shirt", "design", "listing"]):
+        return "Commerce Shop"
 
     if any(word in lower for word in ["trip", "hotel", "flight", "family", "school"]):
         return "Personal"

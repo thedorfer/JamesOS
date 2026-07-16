@@ -202,7 +202,7 @@ Composition metadata requires centered artwork, about 75% canvas coverage, safe 
 Asset metadata is selected into `selected_assets`. JamesOS scans general Creative Studio assets plus brand assets such as:
 
 ```text
-~/JamesOSData/JamesOS/Brands/UnityStitches/Assets/
+~/JamesOSData/JamesOS/Brands/Commerce Shop/Assets/
 ```
 
 Pride/LGBTQ/trans/intersex queries prefer matching flag assets when present. Font files remain metadata-only and do not expose file paths or binary content.

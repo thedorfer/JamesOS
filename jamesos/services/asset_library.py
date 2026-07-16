@@ -15,7 +15,7 @@ METADATA_ONLY_EXTENSIONS = FONT_EXTENSIONS | {".ai", ".eps", ".pdf"}
 
 def semantic_asset_metadata(name: str) -> dict[str, Any]:
     normalized = name.lower().replace("-", "_").replace(" ", "_")
-    if "unitystitches" in normalized and "logo" in normalized:
+    if "commerce_shop" in normalized and "logo" in normalized:
         return {
             "semantic_role": "brand_mark",
             "motif": "optional small brand mark space",

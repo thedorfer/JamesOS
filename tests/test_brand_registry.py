@@ -26,12 +26,12 @@ class BrandRegistryTests(unittest.TestCase):
                 for item in reversed(patches):
                     item.stop()
 
-    def test_registry_initializes_with_unitystitches_and_degen(self) -> None:
+    def test_registry_initializes_with_commerce_shop_and_degen(self) -> None:
         def scenario(root: Path) -> None:
             result = brand_registry.list_brands()
             ids = {brand["brand_id"] for brand in result["brands"]}
 
-            self.assertIn("unitystitches", ids)
+            self.assertIn("commerce_shop", ids)
             self.assertIn("bagholder_supply_co", ids)
             self.assertIn("cheeky_peach_prints", ids)
             self.assertIn("degen_market_chaos", ids)
@@ -39,19 +39,19 @@ class BrandRegistryTests(unittest.TestCase):
 
         self.run_with_registry(scenario)
 
-    def test_default_brand_is_unitystitches(self) -> None:
+    def test_default_brand_is_commerce_shop(self) -> None:
         def scenario(root: Path) -> None:
             brand = brand_registry.get_default_brand()
 
-            self.assertEqual(brand["brand_id"], "unitystitches")
+            self.assertEqual(brand["brand_id"], "commerce_shop")
             self.assertTrue(brand["default"])
 
         self.run_with_registry(scenario)
 
-    def test_teacher_womens_underwear_blocked_for_unitystitches(self) -> None:
+    def test_teacher_womens_underwear_blocked_for_commerce_shop(self) -> None:
         def scenario(root: Path) -> None:
             result = brand_registry.validate_brand_product_niche(
-                "unitystitches",
+                "commerce_shop",
                 "womens_underwear",
                 "teacher classroom gift",
             )
@@ -61,10 +61,10 @@ class BrandRegistryTests(unittest.TestCase):
 
         self.run_with_registry(scenario)
 
-    def test_pride_womens_underwear_allowed_for_unitystitches(self) -> None:
+    def test_pride_womens_underwear_allowed_for_commerce_shop(self) -> None:
         def scenario(root: Path) -> None:
             result = brand_registry.validate_brand_product_niche(
-                "unitystitches",
+                "commerce_shop",
                 "womens_underwear",
                 "LGBTQ+ pride",
             )
@@ -76,7 +76,7 @@ class BrandRegistryTests(unittest.TestCase):
 
     def test_underwear_product_rules_prefer_printify_for_now(self) -> None:
         def scenario(root: Path) -> None:
-            for brand_id in ["unitystitches", "cheeky_peach_prints"]:
+            for brand_id in ["commerce_shop", "cheeky_peach_prints"]:
                 brand = brand_registry.get_brand(brand_id)
 
                 self.assertEqual(brand["preferred_pod_provider"], "printify")
@@ -146,12 +146,12 @@ class BrandRegistryTests(unittest.TestCase):
                 patch.object(api, "validate_brand_product_niche", brand_registry.validate_brand_product_niche),
             ):
                 self.assertEqual(api.brands_health_route()["status"], "ok")
-                self.assertEqual(api.brands_default_route()["brand"]["brand_id"], "unitystitches")
+                self.assertEqual(api.brands_default_route()["brand"]["brand_id"], "commerce_shop")
                 self.assertGreaterEqual(api.brands_route()["brand_count"], 4)
-                self.assertEqual(api.brand_detail_route("unitystitches")["brand"]["brand_id"], "unitystitches")
+                self.assertEqual(api.brand_detail_route("commerce_shop")["brand"]["brand_id"], "commerce_shop")
                 request = api.BrandValidateRequest(product_type="womens_underwear", niche="teacher gift")
                 self.assertEqual(
-                    api.brand_validate_route("unitystitches", request)["brand_compatibility_status"],
+                    api.brand_validate_route("commerce_shop", request)["brand_compatibility_status"],
                     "blocked",
                 )
 

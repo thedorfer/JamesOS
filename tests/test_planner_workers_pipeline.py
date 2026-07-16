@@ -65,7 +65,7 @@ class PlannerWorkersPipelineTests(unittest.TestCase):
 
     def test_planner_creates_plan_but_does_not_execute(self) -> None:
         def scenario(vault: Path) -> None:
-            result = planner.create_plan("daily_product_generation", "Generate UnityStitches drafts")
+            result = planner.create_plan("daily_product_generation", "Generate Commerce Shop drafts")
 
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["intent"], "daily_product_generation")

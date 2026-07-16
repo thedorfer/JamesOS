@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 from jamesos.integrations.printify_client import PrintifyClient
 from jamesos.services.error_handler import cli_error, handle_error
 from jamesos.services import printify_product, sale_candidate, sale_candidate_vector
+from jamesos.core.profiles.selection import commerce_configuration
 
 
 def _main() -> int:
@@ -21,10 +22,10 @@ def _main() -> int:
         "approve-design-concept", "show-design-selection", "replay", "profile-store", "compose", "approve-composition", "list-fonts", "preview-fonts",
         "approve-font", "show-font-selection", "generate-listing", "approve-listing", "upload", "create-draft", "download-mockups", "build-report"))
     parser.add_argument("--job-id"); parser.add_argument("--composition-id"); parser.add_argument("--font-path", type=Path)
-    parser.add_argument("--phrase", default="LOVE IS LOVE"); parser.add_argument("--font-option-id"); parser.add_argument("--preview-run-id")
+    parser.add_argument("--phrase", default="SAMPLE"); parser.add_argument("--font-option-id"); parser.add_argument("--preview-run-id")
     parser.add_argument("--concept-id"); parser.add_argument("--design-run-id")
     parser.add_argument("--run-path", type=Path); parser.add_argument("--report-path", type=Path)
-    parser.add_argument("--shop-id", type=int, default=9437076); parser.add_argument("--product-id")
+    parser.add_argument("--shop-id", type=int); parser.add_argument("--product-id")
     parser.add_argument("--blueprint-id", type=int); parser.add_argument("--print-provider-id", type=int)
     parser.add_argument("--variant-id", type=int, action="append", default=[]); parser.add_argument("--price", type=int, default=2499)
     parser.add_argument("--scale", type=float, default=.85); parser.add_argument("--approved-by", default="James")
@@ -43,10 +44,12 @@ def _main() -> int:
     run_path = args.run_path or evidence["job_root"] / "commerce" / "sale-candidates" / (args.composition_id or "baseline") / "sale-candidate-run.json"
     report_path = args.report_path or run_path.with_name("sale-candidate-report.html")
     if args.mode == "replay":
-        run = sale_candidate.replay_baseline(args.job_id, args.product_id or "6a57eaa752f2c3e4700dbf23", args.shop_id, client=client, report_path=report_path)
+        config=commerce_configuration();product_id=args.product_id or config.get("baseline_product_id");shop_id=args.shop_id or config.get("printify_shop_id")
+        if not product_id or not shop_id:parser.error("replay requires profile IDs or explicit --product-id and --shop-id")
+        run = sale_candidate.replay_baseline(args.job_id, str(product_id), int(shop_id), client=client, report_path=report_path)
         print(json.dumps({"result": "replayed", "report_path": str(report_path), "run": run}, indent=2)); return 0
     composition_root = evidence["job_root"] / "commerce" / "product-compositions" / (args.composition_id or "")
-    profile_path = evidence["job_root"] / "commerce" / "printify" / "unitystitches-style-profile.json"
+    profile_path = evidence["job_root"] / "commerce" / "printify" / "commerce_shop-style-profile.json"
     if args.mode == "profile-store": result = sale_candidate.profile_store(client, args.shop_id, profile_path)
     elif args.mode == "preview-design-concepts": result = sale_candidate_vector.generate_design_concepts(args.job_id, args.composition_id or "",
         phrase=args.phrase, confirmed=args.confirm_preview_generation, run_id=args.design_run_id)
@@ -100,7 +103,7 @@ def _main() -> int:
     elif args.mode == "approve-font": run["font_selection"] = result; run.setdefault("approvals", {})["font_selection"] = result
     elif args.mode == "compose":
         run["composition"] = result; run["approved_artwork_path"] = result["approved_source_candidate_path"]
-        run["product_brief"] = {"product_type": "unisex_t_shirt", "exact_text": "LOVE IS LOVE",
+        run["product_brief"] = {"product_type": "unisex_t_shirt", "exact_text": "SAMPLE",
             "layout": "arched_headline_above_artwork", "preferred_mockup_color": "Black"}
     elif args.mode == "approve-composition": run.setdefault("approvals", {})["composition"] = result
     elif args.mode == "generate-listing": run["listing"] = result; run["listing_package_id"] = result["listing_package_id"]

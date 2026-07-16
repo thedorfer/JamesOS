@@ -45,7 +45,7 @@ Printify is the preferred provider for current MVP planning:
 
 - Bagholder Supply Co uses Printify for now.
 - Cheeky Peach Prints uses Printify for now.
-- UnityStitches underwear/panty/thong provider rules prefer Printify for now.
+- Commerce Shop underwear/panty/thong provider rules prefer Printify for now.
 
 Status:
 

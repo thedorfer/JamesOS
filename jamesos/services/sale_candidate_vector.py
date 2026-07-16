@@ -27,7 +27,7 @@ TREATMENT_CONFIG = CONFIG_ROOT / "sale_candidate_text_treatments.json"
 LAYOUT_CONFIG = CONFIG_ROOT / "sale_candidate_layouts.json"
 FONT_ROOT = VAULT / "JamesOS" / "Fonts" / "sale-candidate"
 CANVAS = (4500, 5400)
-PHRASE = "LOVE IS LOVE"
+PHRASE = "SAMPLE"
 ENGINE = {"vector_model": "SVG 1.1", "text_metadata_engine": "Pango/Fontconfig 1.52.1",
           "rasterizer": f"Pillow {PIL.__version__} FreeType", "curved_text": "tangential_glyph_rotation_on_recorded_path"}
 
@@ -262,8 +262,8 @@ def _svg(layout: dict[str, Any], treatment: dict[str, Any], font: dict[str, Any]
         text = "<text><textPath href='#upper' startOffset='50%' text-anchor='middle'>LOVE</textPath></text><text><textPath href='#lower' startOffset='50%' text-anchor='middle'>IS LOVE</textPath></text>"
     elif concept == "stacked_groovy": text = "<text x='2250' y='850' text-anchor='middle'>LOVE</text><text x='2250' y='1350' text-anchor='middle'>IS LOVE</text>"
     elif concept == "integrated_shadow": text = "<text x='2250' y='850' text-anchor='middle' font-size='720'>LOVE</text><text x='3000' y='1800' text-anchor='middle' font-size='360'>IS LOVE</text>"
-    elif concept == "ribbon_caption": text = "<path d='M500 950 Q2250 650 4000 950 L3900 1450 Q2250 1150 600 1450 Z' fill='#fff1b8'/><text x='2250' y='1170' text-anchor='middle'>LOVE IS LOVE</text>"
-    else: text = "<path d='M500 600 V1450' stroke='#d93686' stroke-width='45'/><text x='650' y='1050'>LOVE IS LOVE</text>"
+    elif concept == "ribbon_caption": text = "<path d='M500 950 Q2250 650 4000 950 L3900 1450 Q2250 1150 600 1450 Z' fill='#fff1b8'/><text x='2250' y='1170' text-anchor='middle'>SAMPLE</text>"
+    else: text = "<path d='M500 600 V1450' stroke='#d93686' stroke-width='45'/><text x='650' y='1050'>SAMPLE</text>"
     return f"""<svg xmlns='http://www.w3.org/2000/svg' width='4500' height='5400' viewBox='0 0 4500 5400'><defs>{paths}</defs><image href='{source.as_uri()}' x='{heart['x']}' y='{heart['y']}' width='{heart['width']}' height='{heart['height']}'/><g font-family='{font['family']}' font-size='560' font-weight='bold' letter-spacing='4' fill='{treatment['fill']}' stroke='{treatment['outline']}' stroke-width='{treatment['outline_width']}' paint-order='stroke fill'><g transform='translate({shadow_x} {shadow_y})' fill='{treatment['shadow']}'>{text}</g>{text}</g></svg>"""
 
 

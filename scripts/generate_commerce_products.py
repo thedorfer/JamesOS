@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from jamesos.services.unitystitches_product_pipeline import (
+from jamesos.services.commerce_product_pipeline import (
     drafts_for_date,
     generate_daily_product_drafts,
     health,
@@ -13,7 +13,7 @@ from jamesos.services.unitystitches_product_pipeline import (
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate UnityStitches draft-only product packages.")
+    parser = argparse.ArgumentParser(description="Generate profile-driven commerce draft product packages.")
     sub = parser.add_subparsers(dest="command")
 
     generate = sub.add_parser("generate", help="Generate daily draft packages")

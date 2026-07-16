@@ -25,12 +25,15 @@ from jamesos.core.structured_logging import redact
 from jamesos.integrations.printify_client import PrintifyAPIError, PrintifyClient
 from jamesos.services import printify_product, sale_candidate_vector
 from jamesos.services.error_handler import handle_error
+from jamesos.core.profiles.selection import commerce_configuration, protected_resources
 
 
 ROOT = VAULT / "JamesOS" / "Commerce" / "product-orchestrator"
 MODE = "printify-draft"
 POLICY = "draft_only_autopilot"
-PROTECTED_PRODUCT_ID = "6a57eaa752f2c3e4700dbf23"
+_COMMERCE = commerce_configuration()
+_PROTECTED = [item.split(":",2)[-1] for item in protected_resources() if item.startswith("printify:product:")]
+PROTECTED_PRODUCT_ID = _PROTECTED[0] if _PROTECTED else ""
 STAGES = ("prompt_received", "brief_ready", "artwork_ready", "production_artifact_ready", "design_candidates_ready",
           "design_selected", "listing_ready", "printify_image_uploaded", "printify_draft_created", "mockups_downloaded",
           "awaiting_human_approval", "awaiting_printify_human_review", "awaiting_etsy_human_review", "awaiting_etsy_visibility_confirmation", "failed")
@@ -39,53 +42,17 @@ DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
 COLOR_EXACT = {"black":"Black", "dark grey heather":"Dark Grey Heather", "white":"White"}
 COLOR_ALIASES = {"dark heather":"Dark Grey Heather", "dark gray heather":"Dark Grey Heather"}
 COLOR_WORDS = re.compile(r"\b(?:black|white|grey|gray|heather|charcoal|navy|red|blue|green|yellow|purple|pink|orange)\b", re.I)
-RECOVERY_DELETED_PRODUCT_ID = "6a580c6594f352520e06f440"
-RECOVERY_UPLOAD_ID = "6a580a8e43d9a89162f792a7"
-RECOVERY_SHOP_ID = 9437076
-RECOVERY_TITLE = "Love Is Love Rainbow Heart Unisex Tee"
-RECOVERY_DESCRIPTION = "A playful bold retro Love Is Love design on a soft Bella+Canvas 3001 unisex tee."
-RECOVERY_TAGS = ["love is love","rainbow heart","inclusive shirt","retro tee","unisex shirt","jamesos-orchestrator-00f7f20a52144d9306ff"]
-RECOVERY_VARIANT_IDS = [*range(18100,18106),*range(18148,18154),*range(18540,18546)]
-LISTING_PRODUCT_ID = "6a5902f1c777748ffa050166"
-ETSY_TITLE = "Love Is Love Rainbow Heart Shirt: LGBTQ+ Pride Unisex Tee, Inclusive Gift"
-ETSY_DESCRIPTION = """Celebrate equality, pride, and authentic self-expression with this Love Is Love rainbow heart shirt. The bold retro artwork makes this LGBTQ+ pride tee a colorful everyday statement and a thoughtful inclusive gift for Pride Month, friends, partners, allies, and anyone who believes love belongs to everyone.
-
-🌈 WHY YOU'LL LOVE IT
-
-• Bold rainbow heart artwork featuring the words LOVE IS LOVE
-• Bella+Canvas 3001 Unisex Jersey Short Sleeve Tee
-• Front artwork only with no back design
-• Available in Black, Dark Grey Heather, and White
-• Sizes S through 3XL
-
-👕 SIZE OPTIONS
-
-Available sizes are S, M, L, XL, 2XL, and 3XL. Please review the current size chart in the listing images before ordering.
-
-🎁 PERFECT FOR
-
-Pride Month, LGBTQ+ celebrations, equality advocates, queer pride gifts, ally gifts, birthdays, festivals, partners, friends, and colorful everyday wear.
-
-🖨️ MADE TO ORDER
-
-This product is created after purchase through our production partner. Colors displayed on a screen may vary slightly from the finished product.
-
-COLORS
-
-Black
-Dark Grey Heather
-White
-
-SIZES
-
-S
-M
-L
-XL
-2XL
-3XL"""
-ETSY_TAGS = ["love is love shirt","lgbtq pride shirt","rainbow heart tee","queer pride gift","equality t shirt","inclusive clothing",
-    "retro rainbow tee","pride month gift","gay pride shirt","lgbtq ally gift","unisex graphic tee","pride festival tee","colorful heart tee"]
+RECOVERY_DELETED_PRODUCT_ID = str(_COMMERCE.get("recovery_deleted_product_id") or "")
+RECOVERY_UPLOAD_ID = str(_COMMERCE.get("recovery_upload_id") or "")
+RECOVERY_SHOP_ID = int(_COMMERCE.get("printify_shop_id") or 0)
+RECOVERY_TITLE = str(_COMMERCE.get("recovery_title") or "")
+RECOVERY_DESCRIPTION = str(_COMMERCE.get("recovery_description") or "")
+RECOVERY_TAGS = list(_COMMERCE.get("recovery_tags") or [])
+RECOVERY_VARIANT_IDS = [int(item) for item in _COMMERCE.get("recovery_variant_ids") or []]
+LISTING_PRODUCT_ID = str(_COMMERCE.get("listing_product_id") or "")
+ETSY_TITLE = str(_COMMERCE.get("listing_title") or "")
+ETSY_DESCRIPTION = str(_COMMERCE.get("listing_description") or "")
+ETSY_TAGS = list(_COMMERCE.get("listing_tags") or [])
 
 
 def _json_sha(value: Any) -> str:
@@ -143,7 +110,7 @@ def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: l
     if not cleaned: raise ValidationError("VALIDATION_FAILED", diagnostic_message="Product prompt is empty.", operation="product_orchestrator", stage="prompt_received")
     quoted = re.search(r"[\"“](.+?)[\"”]", cleaned)
     labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:…|[.,;!?]|$))", cleaned)
-    exact = quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else "LOVE IS LOVE" if "love is love" in cleaned.lower() else ""
+    exact = quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else "SAMPLE" if "sample" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
     lower = cleaned.lower(); color_resolution = resolve_garment_colors(garment_colors if garment_colors is not None else cleaned)
@@ -179,7 +146,7 @@ def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[st
     phrase=str(brief.get("exact_text") or "").strip()
     if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Product exact phrase is required before listing metadata can be generated.",operation="product_orchestrator",stage="listing_ready")
     exact = phrase.title()
-    pride=brief["exact_text"]=="LOVE IS LOVE"
+    pride=brief["exact_text"]=="SAMPLE"
     tags=sanitize_printify_tags([phrase.lower(),"rainbow heart" if pride else "supportive message","inclusive shirt","retro tee","unisex shirt"],phrase=phrase,blank=brief.get("blank"))
     return {"title": f"{exact} {'Rainbow Heart ' if pride else ''}Unisex Tee".strip(), "description": f"A {brief['visual_style']} {exact} design on a {brief['blank']} unisex tee.".strip(),
         "tags":tags,

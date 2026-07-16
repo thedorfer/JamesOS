@@ -107,7 +107,7 @@ assistant:
   include_work: true
   include_personal: true
   include_gcu: true
-  include_unitystitches: true
+  include_commerce_shop: true
 """,
     "creative_studio.yaml": """enabled: true
 image_provider: comfyui
@@ -165,7 +165,7 @@ integrations:
     execution_enabled: false
     publish_enabled: false
     notes: Future sales platform. No live listings are created yet.
-  unitystitches:
+  commerce_shop:
     enabled: false
     status: roadmap
     draft_only: true

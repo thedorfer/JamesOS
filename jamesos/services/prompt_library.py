@@ -222,7 +222,7 @@ def describe_asset_for_prompt(asset: Any) -> str:
         return "pastel blue, pink, and white trans pride colors"
     if "intersex" in normalized:
         return "inclusive pride flag color palette"
-    if "unitystitches" in normalized and "logo" in normalized:
+    if "commerce_shop" in normalized and "logo" in normalized:
         return "optional small brand mark space, do not recreate exact logo"
     if "rainbow" in normalized:
         return "rainbow pride color accents"

@@ -147,7 +147,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "output_paths": {
         "root": "~/JamesOSData/JamesOS/AI/ComfyUI/Outputs",
-        "drafts": "~/JamesOSData/JamesOS/Products/UnityStitches/Assets",
+        "drafts": "~/JamesOSData/JamesOS/Products/Commerce Shop/Assets",
     },
     "safety": {
         "execution_enabled": False,

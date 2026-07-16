@@ -110,7 +110,7 @@ class DesignPlannerCriticTests(unittest.TestCase):
                 item.start()
             try:
                 run = design_variation_service.create_design_run(
-                    brand_id="unitystitches",
+                    brand_id="commerce_shop",
                     product_type="womens_underwear",
                     niche="trans pride",
                     recipe_id="underwear/pride_pattern",

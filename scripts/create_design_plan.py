@@ -9,7 +9,7 @@ from jamesos.services.design_planner import create_design_plan
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create a local Design Planner artifact.")
-    parser.add_argument("--brand", "--brand-id", dest="brand_id", default="unitystitches")
+    parser.add_argument("--brand", "--brand-id", dest="brand_id", default="commerce_shop")
     parser.add_argument("--product", "--product-type", dest="product_type", default="womens_underwear")
     parser.add_argument("--niche", default="trans pride")
     parser.add_argument("--recipe", "--recipe-id", dest="recipe_id", default="underwear/pride_pattern")

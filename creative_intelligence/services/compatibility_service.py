@@ -69,7 +69,7 @@ UNDERWEAR_SAFE_NICHE_TERMS = {
     "valentines love-is-love",
     "valentine",
     "love-is-love",
-    "love is love",
+    "sample",
     "pride month",
     "spouse",
     "partner",
@@ -132,7 +132,7 @@ def is_school_safe_product(product_type: str) -> bool:
     return bool(_matched_terms(product_type, SCHOOL_SAFE_PRODUCT_TERMS)) and not is_intimate_product(product_type)
 
 
-DEFAULT_BRAND_ID = "unitystitches"
+DEFAULT_BRAND_ID = "commerce_shop"
 
 
 def _brand_validation(brand_id: str, product_type: str, niche: str) -> dict[str, Any] | None:

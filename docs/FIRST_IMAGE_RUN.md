@@ -73,7 +73,7 @@ curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/image-wo
 
 The job requires approval and does not execute automatically.
 
-The helper creates a `creative_spec` with a `design_recipe` for UnityStitches pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered vector-style print artwork with no person, no product mockup, and no lifestyle background.
+The helper creates a `creative_spec` with a `design_recipe` for Commerce Shop pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered vector-style print artwork with no person, no product mockup, and no lifestyle background.
 
 The prompt is built from the design recipe first and uses professional sections: `STYLE`, `SUBJECT`, `TYPOGRAPHY`, `LAYOUT`, and `PRINT`.
 

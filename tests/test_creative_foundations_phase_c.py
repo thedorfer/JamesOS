@@ -82,14 +82,14 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
 
             result = image_worker.plan(
                 {
-                    "brand_id": "unitystitches",
+                    "brand_id": "commerce_shop",
                     "product_type": "shirt",
                     "niche": "Pride Month",
                     "design_prompt": "bold typography pride shirt",
                 }
             )
 
-            self.assertEqual(result["brand_id"], "unitystitches")
+            self.assertEqual(result["brand_id"], "commerce_shop")
             self.assertIn("brand_voice", result)
             self.assertIn("selected_prompt_template", result)
             self.assertIn("selected_style", result)
@@ -101,7 +101,7 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
 
     def test_creative_spec_converts_to_prompt_package(self) -> None:
         spec = {
-            "brand_id": "unitystitches",
+            "brand_id": "commerce_shop",
             "brand_voice": "warm and inclusive",
             "product_type": "design_art",
             "stage": "design_art",
@@ -110,12 +110,12 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
             "emotional_hook": "joyful pride",
             "style": "bold typography",
             "colors": ["rainbow", "white"],
-            "text": "Love Is Love",
+            "text": "Sample",
             "typography": "bold readable sans",
             "layout": "centered",
         }
         package = prompt_library.creative_spec_to_prompt_package(spec)
-        self.assertIn("Love Is Love", package["positive_prompt"])
+        self.assertIn("Sample", package["positive_prompt"])
         self.assertIn("Pride Month", package["positive_prompt"])
         self.assertIn("flat centered print artwork", package["positive_prompt"])
         self.assertTrue(package["negative_prompt"])
@@ -135,7 +135,7 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
 
     def test_design_recipe_renders_into_prompt_package(self) -> None:
         package = prompt_library.creative_spec_to_prompt_package({
-            "brand_id": "unitystitches",
+            "brand_id": "commerce_shop",
             "stage": "design_art",
             "design_recipe": {
                 "product_type": "design_art",
@@ -144,7 +144,7 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
                 "background": "white or transparent-background-friendly",
                 "layout": "centered",
                 "palette": ["rainbow", "white", "black accent"],
-                "text": "Love Is Love",
+                "text": "Sample",
                 "typography": "bold readable rounded sans",
                 "motifs": ["hearts", "sparkles", "pride rainbow"],
                 "effects": "clean vector-like print art",
@@ -153,7 +153,7 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
             },
         })
 
-        self.assertIn("Love Is Love", package["positive_prompt"])
+        self.assertIn("Sample", package["positive_prompt"])
         self.assertIn("clean vector-like print art", package["positive_prompt"])
         self.assertIn("Print notes", package["positive_prompt"])
         self.assertIn("STYLE", package["positive_prompt"])
@@ -179,7 +179,7 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
                 "product_type": "design_art",
                 "niche": "LGBTQ+ pride",
                 "background": "transparent background",
-                "text": "LOVE IS LOVE",
+                "text": "SAMPLE",
             },
         })
 
@@ -216,26 +216,26 @@ class CreativeFoundationsPhaseCTests(unittest.TestCase):
 
     def test_selected_assets_include_pride_assets_and_hide_fonts(self) -> None:
         def scenario(root: Path) -> None:
-            brand_assets = root / "Brands" / "UnityStitches" / "Assets"
+            brand_assets = root / "Brands" / "Commerce Shop" / "Assets"
             brand_assets.mkdir(parents=True)
             (brand_assets / "pride_rainbow_flag.svg").write_text("<svg></svg>", encoding="utf-8")
-            (brand_assets / "unitystitches_logo.png").write_bytes(b"png")
+            (brand_assets / "commerce_shop_logo.png").write_bytes(b"png")
             (brand_assets / "brand_font.ttf").write_bytes(b"font")
 
             result = image_worker.plan({
-                "brand_id": "unitystitches",
+                "brand_id": "commerce_shop",
                 "creative_spec": {
-                    "brand_id": "unitystitches",
+                    "brand_id": "commerce_shop",
                     "stage": "design_art",
                     "product_type": "design_art",
                     "niche": "LGBTQ+ pride",
-                    "text": "Love Is Love",
+                    "text": "Sample",
                 },
             })
 
             names = {asset["name"] for asset in result["selected_assets"]}
             self.assertIn("pride_rainbow_flag", names)
-            self.assertIn("unitystitches_logo", names)
+            self.assertIn("commerce_shop_logo", names)
             font = next(asset for asset in result["selected_assets"] if asset["extension"] == ".ttf")
             self.assertEqual(font["path"], "")
             self.assertTrue(font["metadata_only"])

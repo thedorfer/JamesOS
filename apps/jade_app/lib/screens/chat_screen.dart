@@ -563,7 +563,7 @@ class _ChatScreenState extends State<ChatScreen> {
       'GCU grading',
       'Malcolm paving',
       'Colorado move',
-      'UnityStitches',
+      'Commerce Shop',
       'phone ingestion',
     ];
     return Container(

@@ -46,11 +46,11 @@ INTIMATE_PRODUCT_TERMS = [
 
 DEFAULT_REGISTRY: dict[str, Any] = {
     "brands": {
-        "unitystitches": {
-            "brand_id": "unitystitches",
-            "display_name": "UnityStitches",
+        "commerce_shop": {
+            "brand_id": "commerce_shop",
+            "display_name": "Commerce Shop",
             "shop_type": "Etsy/Printify apparel and gifts",
-            "etsy_shop_name": "UnityStitches",
+            "etsy_shop_name": "Commerce Shop",
             "printify_shop_id": "",
             "preferred_pod_provider": "printify",
             "fallback_pod_provider": "inkedjoy_manual_future",
@@ -137,7 +137,7 @@ DEFAULT_REGISTRY: dict[str, Any] = {
                 "send_enabled": False,
             },
             "integrations": {
-                "etsy": {"enabled": False, "readonly": True, "shop_id": "", "shop_name": "UnityStitches", "writes_enabled": False},
+                "etsy": {"enabled": False, "readonly": True, "shop_id": "", "shop_name": "Commerce Shop", "writes_enabled": False},
                 "printify": {"enabled": True, "readonly": True, "shop_id": "", "writes_enabled": False, "draft_creation_enabled": False, "order_enabled": False},
                 "comfyui": {"enabled": False, "execution_enabled": False},
             },
@@ -318,7 +318,7 @@ def _contains_any(value: str, terms: list[str]) -> list[str]:
 
 def _apply_current_provider_defaults(brand_id: str, brand: dict[str, Any]) -> dict[str, Any]:
     """Keep current MVP provider decision stable even if older YAML has InkedJoy defaults."""
-    if brand_id in {"unitystitches", "cheeky_peach_prints"}:
+    if brand_id in {"commerce_shop", "cheeky_peach_prints"}:
         brand["preferred_pod_provider"] = "printify"
         brand["fallback_pod_provider"] = "inkedjoy_manual_future"
         brand["provider_rules"] = {**(brand.get("provider_rules") or {}), **PRINTIFY_INTIMATE_PROVIDER_RULES}

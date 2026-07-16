@@ -10,7 +10,7 @@ from creative_intelligence.services.scoring_service import score_candidate
 from creative_intelligence.storage.sqlite import save_product_plan
 
 
-def build_product_plans(query: str = "", *, limit: int = 6, brand_id: str = "unitystitches") -> list[ProductPlan]:
+def build_product_plans(query: str = "", *, limit: int = 6, brand_id: str = "commerce_shop") -> list[ProductPlan]:
     niches = suggest_niches(query, limit=limit * 2)
     plans: list[ProductPlan] = []
     index = 0

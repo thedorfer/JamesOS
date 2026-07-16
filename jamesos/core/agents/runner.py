@@ -17,7 +17,10 @@ class AgentRunner:
         if request.task_id in self._tasks:raise RuntimeError("duplicate task detected")
         profile_id=request.input_payload.get("profile_id")
         agent=self.registry.resolve(request.requested_capability,profile_id)
-        if set(request.target_resources.values())&set(agent.manifest.protected_resources):raise PermissionError("protected resource")
+        protected=set(agent.manifest.protected_resources)
+        if profile_id and self.registry.profile_resolver:
+            protected.update(item.split(":",2)[-1] for item in self.registry.profile_resolver.protected_resources_for(profile_id))
+        if set(request.target_resources.values())&protected:raise PermissionError("protected resource")
         if request.attempt_limit>agent.manifest.maximum_automatic_attempts:raise RuntimeError("attempt limit exceeds agent policy")
         self._active.append(request.task_id);self._capabilities.append(request.requested_capability)
         try:

@@ -99,26 +99,26 @@ def _score_retrieval(bundle: RetrievalBundle, intent: str, mode: str) -> int:
 
 
 class JadeReasoner:
-    def _unitystitches_command(self, question: str) -> dict | None:
+    def _commerce_shop_command(self, question: str) -> dict | None:
         lower = question.strip().lower().replace("’", "'")
         generate_phrases = [
-            "generate today's unitystitches product drafts",
-            "generate today’s unitystitches product drafts",
-            "generate today unitystitches product drafts",
-            "generate unitystitches drafts",
+            "generate today's commerce_shop product drafts",
+            "generate today’s commerce_shop product drafts",
+            "generate today commerce_shop product drafts",
+            "generate commerce_shop drafts",
         ]
         show_phrases = [
-            "show unitystitches drafts needing review",
+            "show commerce_shop drafts needing review",
             "show product drafts needing review",
-            "show unitystitches drafts",
+            "show commerce_shop drafts",
         ]
         if any(phrase in lower for phrase in generate_phrases):
-            from jamesos.services.unitystitches_product_pipeline import generate_daily_product_drafts
+            from jamesos.services.commerce_shop_product_pipeline import generate_daily_product_drafts
 
             result = generate_daily_product_drafts()
             drafts = result.get("drafts", [])
             lines = [
-                f"Generated {len(drafts)} UnityStitches draft packages for {result.get('date')}.",
+                f"Generated {len(drafts)} Commerce Shop draft packages for {result.get('date')}.",
                 "",
             ]
             for draft in drafts:
@@ -133,18 +133,18 @@ class JadeReasoner:
             return {
                 "question": question,
                 "answer": "\n".join(lines),
-                "action": "unitystitches_generate_daily_drafts",
+                "action": "commerce_shop_generate_daily_drafts",
                 "confidence": 95,
                 "confidence_label": "🟢 High",
-                "working_memory": ["UnityStitches", "Creative Studio", "Job Queue"],
+                "working_memory": ["Commerce Shop", "Creative Studio", "Job Queue"],
                 "result": result,
             }
         if any(phrase in lower for phrase in show_phrases):
-            from jamesos.services.unitystitches_product_pipeline import list_drafts
+            from jamesos.services.commerce_shop_product_pipeline import list_drafts
 
             result = list_drafts(status="needs_review")
             drafts = result.get("drafts", [])
-            lines = [f"UnityStitches drafts needing review: {len(drafts)}", ""]
+            lines = [f"Commerce Shop drafts needing review: {len(drafts)}", ""]
             if not drafts:
                 lines.append("- None")
             for draft in drafts[:20]:
@@ -154,10 +154,10 @@ class JadeReasoner:
             return {
                 "question": question,
                 "answer": "\n".join(lines),
-                "action": "unitystitches_show_drafts",
+                "action": "commerce_shop_show_drafts",
                 "confidence": 95,
                 "confidence_label": "🟢 High",
-                "working_memory": ["UnityStitches", "Creative Studio"],
+                "working_memory": ["Commerce Shop", "Creative Studio"],
                 "result": result,
             }
         return None
@@ -330,7 +330,7 @@ class JadeReasoner:
             )
 
     def run(self, question: str, use_ai: bool = True, mode: str | None = None) -> dict:
-        command_result = self._unitystitches_command(question)
+        command_result = self._commerce_shop_command(question)
         if command_result is not None:
             return command_result
         plan = self.understand(question, mode=mode)

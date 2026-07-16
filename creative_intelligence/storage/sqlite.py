@@ -52,8 +52,8 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
                 score REAL NOT NULL,
                 keywords_json TEXT NOT NULL,
                 prompts_json TEXT NOT NULL,
-                brand_id TEXT NOT NULL DEFAULT 'unitystitches',
-                brand_name TEXT NOT NULL DEFAULT 'UnityStitches',
+                brand_id TEXT NOT NULL DEFAULT 'commerce_shop',
+                brand_name TEXT NOT NULL DEFAULT 'Commerce Shop',
                 brand_voice TEXT NOT NULL DEFAULT '',
                 brand_compatibility_status TEXT NOT NULL DEFAULT 'unknown',
                 brand_compatibility_reason TEXT NOT NULL DEFAULT '',
@@ -139,8 +139,8 @@ def init_db(db_path: Path = DB_PATH) -> dict[str, Any]:
         _ensure_column(conn, "product_plans", "compatibility_status", "TEXT NOT NULL DEFAULT 'unknown'")
         _ensure_column(conn, "product_plans", "compatibility_reason", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "product_plans", "blocked_terms_json", "TEXT NOT NULL DEFAULT '[]'")
-        _ensure_column(conn, "product_plans", "brand_id", "TEXT NOT NULL DEFAULT 'unitystitches'")
-        _ensure_column(conn, "product_plans", "brand_name", "TEXT NOT NULL DEFAULT 'UnityStitches'")
+        _ensure_column(conn, "product_plans", "brand_id", "TEXT NOT NULL DEFAULT 'commerce_shop'")
+        _ensure_column(conn, "product_plans", "brand_name", "TEXT NOT NULL DEFAULT 'Commerce Shop'")
         _ensure_column(conn, "product_plans", "brand_voice", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "product_plans", "brand_compatibility_status", "TEXT NOT NULL DEFAULT 'unknown'")
         _ensure_column(conn, "product_plans", "brand_compatibility_reason", "TEXT NOT NULL DEFAULT ''")

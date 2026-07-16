@@ -66,8 +66,8 @@ WORKERS: dict[str, dict[str, Any]] = {
         "supported_job_types": ["comfyui_health_check"],
         "safety_notes": "Health and system_stats only. No prompt queue execution is implemented.",
     },
-    "unitystitches_worker": {
-        "name": "unitystitches_worker",
+    "commerce_shop_worker": {
+        "name": "commerce_shop_worker",
         "status": "planned",
         "enabled": False,
         "execution_enabled": False,

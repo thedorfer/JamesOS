@@ -148,10 +148,10 @@ class ErrorHandlerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             token=Path(temporary)/"token";token.write_text("secret");token.chmod(0o600);session=Mock()
             ok=Mock(status_code=200);ok.json.return_value={"sections":[]};session.request.return_value=ok;client=PrintifyClient(token_path=token,session=session)
-            client.get_product_gpsr(9437076,"product");call=session.request.call_args
-            self.assertEqual(call.args[0],"GET");self.assertTrue(call.args[1].endswith("/shops/9437076/products/product/gpsr.json"))
+            client.get_product_gpsr(1001,"product");call=session.request.call_args
+            self.assertEqual(call.args[0],"GET");self.assertTrue(call.args[1].endswith("/shops/1001/products/product/gpsr.json"))
             failed=Mock(status_code=500,headers={});failed.json.return_value={"message":"failed"};session.reset_mock();session.request.return_value=failed
-            with self.assertRaises(PrintifyAPIError):client.publish_product(9437076,"product",{"images":True})
+            with self.assertRaises(PrintifyAPIError):client.publish_product(1001,"product",{"images":True})
             self.assertEqual(session.request.call_count,1);self.assertEqual(session.request.call_args.args[0],"POST")
 
 

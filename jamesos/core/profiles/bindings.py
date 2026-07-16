@@ -10,4 +10,5 @@ class ProfileBindingResolver:
     def connection_handle_for(self,profile_id,capability):
         agent_id=self.agent_id_for(profile_id,capability);profile=self.store.get(profile_id)
         return next(binding.connection_handle for binding in profile.agent_bindings.values() if binding.agent_id==agent_id)
-
+    def protected_resources_for(self,profile_id):
+        return tuple(self.store.get(profile_id).protected_resources)

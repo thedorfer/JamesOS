@@ -22,7 +22,7 @@ CLI:
 
 ```bash
 python3 scripts/create_design_plan.py \
-  --brand unitystitches \
+  --brand commerce_shop \
   --product womens_underwear \
   --niche "trans pride" \
   --recipe underwear/pride_pattern

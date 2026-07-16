@@ -27,7 +27,7 @@ PROJECT_KEYWORDS = {
     "CGI/WGL": ["cgi", "wgl", "washington gas", "paving", "ferc", "cpmp", "wr", "work request", "oracle", "pl/sql", "sfm", "r2qa", "malcolm", "kevin", "tom"],
     "GCU Teaching": ["gcu", "student", "grading", "dq", "cst", "sym", "dsc", "announcement", "rubric"],
     "Home Lab": ["desktop", "server", "docker", "linux", "mint", "ollama", "plex", "sunshine"],
-    "UnityStitches": ["etsy", "unitystitches", "unity stitches", "shop"],
+    "Commerce Shop": ["etsy", "commerce_shop", "commerce profile", "shop"],
     "Supreme Yard Signs": ["yard sign", "supreme yard signs", "graduation sign"],
     "Family": ["wife", "daughter", "kids", "family", "school", "camp", "birthday"],
 }

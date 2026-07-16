@@ -13,7 +13,7 @@ from jamesos.core.agents.ledger import RunLedger
 from jamesos.core.agents.models import AgentRequest
 from jamesos.core.agents.runner import AgentRunner
 from jamesos.core.profiles.bindings import ProfileBindingResolver
-from jamesos.core.profiles.migration import unitystitches_migration_plan
+from jamesos.core.profiles.migration import commerce_shop_migration_plan
 from jamesos.core.profiles.approval import complete_proposal_hash,final_approval,final_approval_matches,publication_workflow
 from jamesos.core.profiles.models import AgentBinding,Profile
 from jamesos.core.profiles.store import ProfileStore
@@ -50,9 +50,9 @@ class AgentManagerTests(unittest.TestCase):
             self.assertNotIn("token",store.path.read_text().lower());remove=manager.remove("thirdparty");self.assertTrue(remove["dry_run"]);self.assertFalse(remove["details"]["package_uninstall_performed"]);self.assertIn("thirdparty",store.load())
     def test_disabled_agents_do_not_load_and_bindings_survive_disable(self):
         with tempfile.TemporaryDirectory() as temporary:
-            store=InstalledAgentStore(Path(temporary)/"state.json");states={"etsy":InstalledAgent("etsy","jamesos","0.1.0","JamesOS","builtin",enabled=True,configured_profile_bindings=["unitystitches"])};store.save(states)
+            store=InstalledAgentStore(Path(temporary)/"state.json");states={"etsy":InstalledAgent("etsy","jamesos","0.1.0","JamesOS","builtin",enabled=True,configured_profile_bindings=["commerce_shop"])};store.save(states)
             manager=AgentManager(store);self.assertEqual(manager.enabled_registry().find_capability("marketplace.listing.read")[0].agent_id,"etsy")
-            manager.set_enabled("etsy",False,True);self.assertEqual(manager.enabled_registry().find_capability("marketplace.listing.read"),[]);self.assertEqual(store.load()["etsy"].configured_profile_bindings,["unitystitches"])
+            manager.set_enabled("etsy",False,True);self.assertEqual(manager.enabled_registry().find_capability("marketplace.listing.read"),[]);self.assertEqual(store.load()["etsy"].configured_profile_bindings,["commerce_shop"])
             states=store.load();states["etsy"].enabled=True;states["etsy"].compatibility_status="incompatible_protocol";store.save(states);self.assertEqual(manager.enabled_registry().find_capability("marketplace.listing.read"),[])
     def test_duplicate_agent_ids_rejected(self):
         registry=AgentManager(InstalledAgentStore(Path(tempfile.mkdtemp())/"state.json")).enabled_registry();agent=discover_builtin()[0].agent
@@ -66,13 +66,13 @@ class AgentManagerTests(unittest.TestCase):
     def test_store_contract_pricing_types(self):self.assertEqual({item.value for item in PricingType},{"free","one_time","subscription","private"})
 
 class ProfileTests(unittest.TestCase):
-    def test_unitystitches_is_generic_profile_with_handles_not_values(self):
-        profile=unitystitches_migration_plan();self.assertEqual(profile.profile_type,"commerce_shop");self.assertEqual(profile.agent_bindings["marketplace"].agent_id,"etsy");self.assertEqual(profile.agent_bindings["fulfillment"].agent_id,"printify")
+    def test_commerce_shop_is_generic_profile_with_handles_not_values(self):
+        profile=commerce_shop_migration_plan();self.assertEqual(profile.profile_type,"commerce_shop");self.assertEqual(profile.agent_bindings["marketplace"].agent_id,"etsy");self.assertEqual(profile.agent_bindings["fulfillment"].agent_id,"printify")
         self.assertEqual(profile.configuration["approval_mode"],"single_final");self.assertEqual(profile.configuration["etsy_final_state"],"active")
         self.assertEqual(profile.configuration["human_review_location"],"jamesos_listing_preview");self.assertTrue(profile.configuration["preapproval_printify_draft_allowed"])
         self.assertEqual(profile.configuration["publish_policy"],"publish_active_after_approval")
-        text=json.dumps(profile.to_dict());self.assertIn("etsy.unitystitches",text);self.assertNotIn("access_token",text);self.assertNotIn("shared_secret",text)
-        self.assertFalse((ROOT/"jamesos/agents/unitystitches_agent.py").exists())
+        text=json.dumps(profile.to_dict());self.assertIn("etsy.commerce_shop",text);self.assertNotIn("access_token",text);self.assertNotIn("shared_secret",text)
+        self.assertFalse((ROOT/"jamesos/agents/commerce_shop_agent.py").exists())
     def test_generic_agents_support_multiple_profiles_and_runner_uses_binding(self):
         with tempfile.TemporaryDirectory() as temporary:
             store=ProfileStore(temporary)
@@ -83,7 +83,7 @@ class ProfileTests(unittest.TestCase):
             result=AgentRunner(registry,RunLedger(Path(temporary)/"ledger.jsonl")).run(request);self.assertEqual(result["execution"].public_output["etsy_listing_id"],1)
     def test_profile_store_is_atomic_and_rejects_secret_fields(self):
         with tempfile.TemporaryDirectory() as temporary:
-            store=ProfileStore(temporary);profile=unitystitches_migration_plan();path=store.save(profile);self.assertEqual(path.stat().st_mode&0o777,0o600)
+            store=ProfileStore(temporary);profile=commerce_shop_migration_plan();path=store.save(profile);self.assertEqual(path.stat().st_mode&0o777,0o600)
             profile.configuration["access_token"]="bad"
             with self.assertRaises(ValueError):store.save(profile)
     def test_approval_and_final_state_are_independent_validated_settings(self):
@@ -102,7 +102,7 @@ class ProfileTests(unittest.TestCase):
         for field in proposal:
             changed=json.loads(json.dumps(proposal));changed[field]={"changed":True}
             self.assertNotEqual(complete_proposal_hash(changed),approval["proposal_sha256"]);self.assertFalse(final_approval_matches(changed,approval))
-        workflow=publication_workflow(unitystitches_migration_plan().configuration)
+        workflow=publication_workflow(commerce_shop_migration_plan().configuration)
         self.assertEqual(workflow["capability"],"commerce.workflow.publish_active_after_approval");self.assertEqual(workflow["approval_scope"],"final-proposal")
 
 class HelloAgentTests(unittest.TestCase):

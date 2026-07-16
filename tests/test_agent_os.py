@@ -153,10 +153,7 @@ class CombinedWorkflowTests(unittest.TestCase):
             result=self.runtime(temporary,lambda:etsy,lambda:printify).run(self.request(),"approved:publish-and-deactivate");output=result["execution"].public_output
             self.assertEqual(result["execution"].status,"urgent_manual_review");self.assertTrue(output["possible_public_exposure"]);self.assertEqual(output["etsy_listing_id"],1)
             self.assertFalse(output["automatic_delete"]);self.assertFalse(output["automatic_unpublish"]);self.assertFalse(output["order_created"]);self.assertEqual(etsy.update_listing_state.call_count,1)
-    def test_protected_product_is_rejected_before_printify_tool_acquisition(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            etsy=Mock();etsy.get_listing.return_value={"listing_id":1,"shop_id":77,"title":"Title","state":"active"};printify_factory=Mock()
-            with self.assertRaises(PermissionError):self.runtime(temporary,lambda:etsy,printify_factory).run(self.request("6a57eaa752f2c3e4700dbf23"),"approved:publish-and-deactivate")
-            printify_factory.assert_not_called()
+    def test_public_agent_manifest_embeds_no_deployment_product_ids(self):
+        self.assertEqual(PrintifyAgent.manifest.protected_resources,())
 
 if __name__=="__main__":unittest.main()

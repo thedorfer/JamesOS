@@ -15,7 +15,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "pride/typography_badge": {
         "name": "Pride Typography Badge",
         "design_family": "pride_typography",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["shirt", "hoodie", "mug", "tote", "sticker"],
         "avoid_product_types": ["womens_underwear", "panties", "thong"],
         "niche_fit": ["LGBTQ+ pride", "trans pride", "ally"],
@@ -41,7 +41,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "pride/rainbow_heart_sticker": {
         "name": "Rainbow Heart Sticker",
         "design_family": "pride_sticker",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["shirt", "hoodie", "mug", "tote", "sticker"],
         "avoid_product_types": [],
         "niche_fit": ["LGBTQ+ pride", "ally"],
@@ -67,7 +67,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "pride/trans_pastel_cute": {
         "name": "Trans Pastel Cute",
         "design_family": "trans_pride_cute",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["shirt", "hoodie", "mug", "tote", "sticker", "womens_underwear", "panties", "thong"],
         "avoid_product_types": [],
         "niche_fit": ["trans pride"],
@@ -93,7 +93,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "underwear/pride_pattern": {
         "name": "Pride Pattern",
         "design_family": "underwear_pride_pattern",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["womens_underwear", "panties", "thong"],
         "avoid_product_types": [],
         "niche_fit": ["LGBTQ+ pride", "trans pride", "nonbinary pride"],
@@ -119,7 +119,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "underwear/coquette_hearts": {
         "name": "Coquette Hearts",
         "design_family": "underwear_coquette",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["womens_underwear", "panties", "thong"],
         "avoid_product_types": [],
         "niche_fit": ["self love", "pride", "seasonal"],
@@ -145,7 +145,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "underwear/subtle_pride_motif": {
         "name": "Subtle Pride Motif",
         "design_family": "underwear_subtle_pride",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["womens_underwear", "panties", "thong"],
         "avoid_product_types": [],
         "niche_fit": ["LGBTQ+ pride", "trans pride"],
@@ -171,7 +171,7 @@ DEFAULT_RECIPES: dict[str, dict[str, Any]] = {
     "underwear/seasonal_repeat_pattern": {
         "name": "Seasonal Repeat Pattern",
         "design_family": "underwear_seasonal",
-        "shop_fit": ["unitystitches"],
+        "shop_fit": ["commerce_shop"],
         "product_fit": ["womens_underwear", "panties", "thong"],
         "avoid_product_types": [],
         "niche_fit": ["seasonal", "holiday pride"],

@@ -24,12 +24,12 @@ from jamesos.integrations import etsy_oauth
 from jamesos.config import VAULT
 
 def agent_runtime(orchestrator=None,ledger=None):
-    secrets=SecretProvider({"etsy.unitystitches.app":VAULT/"JamesOS"/"Secrets"/"etsy-app.json","etsy.unitystitches.oauth":VAULT/"JamesOS"/"Secrets"/"etsy-oauth.json",
-        "etsy.unitystitches.oauth_pending":VAULT/"JamesOS"/"Secrets"/"etsy-oauth-pending.json"})
+    secrets=SecretProvider({"etsy.commerce_shop.app":VAULT/"JamesOS"/"Secrets"/"etsy-app.json","etsy.commerce_shop.oauth":VAULT/"JamesOS"/"Secrets"/"etsy-oauth.json",
+        "etsy.commerce_shop.oauth_pending":VAULT/"JamesOS"/"Secrets"/"etsy-oauth-pending.json"})
     def etsy_client(oauth):
         if not etsy_oauth.status()["ready_for_etsy_write"]:etsy_oauth.refresh()
-        return EtsyClient({**secrets.resolve("etsy.unitystitches.app"),**secrets.resolve("etsy.unitystitches.oauth")})
-    broker=ToolBroker(secrets);broker.register("etsy.client",etsy_client,"etsy.unitystitches.oauth")
+        return EtsyClient({**secrets.resolve("etsy.commerce_shop.app"),**secrets.resolve("etsy.commerce_shop.oauth")})
+    broker=ToolBroker(secrets);broker.register("etsy.client",etsy_client,"etsy.commerce_shop.oauth")
     broker.register("printify.orchestrator",lambda _secret:orchestrator or ProductOrchestrator())
     registry=AgentRegistry()
     for agent in (CommerceAgent(),PrintifyAgent(),EtsyAgent()):registry.register(agent)
@@ -41,7 +41,7 @@ def run_agent_command(orchestrator,job_id,capability,confirmed,combined=False):
     run_id=f"agent-run-{uuid4().hex[:12]}";scope="publish-and-deactivate" if combined else "etsy-deactivation"
     request=AgentRequest(task_id=f"task-{uuid4().hex[:12]}",run_id=run_id,workflow_id="printify-to-etsy-inactive-review",requested_capability=capability,
         requesting_agent_id="cli",target_resources={"job_id":job_id,"listing_id":listing,"product_id":state.get("evidence",{}).get("draft",{}).get("printify_product_id")},
-        input_payload={"job_id":job_id,"dry_run":not confirmed,"expected_title":"Love Is Love Rainbow Heart Shirt: LGBTQ+ Pride Unisex Tee, Inclusive Gift"},
+        input_payload={"job_id":job_id,"dry_run":not confirmed,"expected_title":"Sample Rainbow Heart Shirt: LGBTQ+ Pride Unisex Tee, Inclusive Gift"},
         risk_level=RiskLevel.PUBLICATION if combined and confirmed else RiskLevel.REMOTE_WRITE if confirmed else RiskLevel.READ,
         approval_requirement=ApprovalRequirement(confirmed,scope),idempotency_key=f"{job_id}:{capability}",attempt_limit=1)
     result=agent_runtime(orchestrator).run(request,f"approved:{scope}" if confirmed else None);public=result["execution"].public_output

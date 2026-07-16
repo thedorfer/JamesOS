@@ -116,11 +116,11 @@ from jamesos.services.server_config import (
     write_server_config_report,
 )
 from jamesos.services.style_registry import get_style, list_styles
-from jamesos.services.unitystitches_product_pipeline import (
-    drafts_for_date as unitystitches_drafts_for_date,
-    generate_daily_product_drafts as generate_unitystitches_daily_drafts,
-    health as unitystitches_health,
-    list_drafts as list_unitystitches_drafts,
+from jamesos.services.commerce_product_pipeline import (
+    drafts_for_date as commerce_shop_drafts_for_date,
+    generate_daily_product_drafts as generate_commerce_shop_daily_drafts,
+    health as commerce_shop_health,
+    list_drafts as list_commerce_shop_drafts,
 )
 from jamesos.services.worker_registry import get_worker, list_workers
 from jamesos.services.workflow_manager import get_workflow, list_workflows, scan_and_report as scan_workflows_and_report
@@ -210,7 +210,7 @@ class ImageWorkerPlanRequest(BaseModel):
 
 
 class DesignRunCreateRequest(BaseModel):
-    brand_id: str = "unitystitches"
+    brand_id: str = "commerce_shop"
     product_type: str = "womens_underwear"
     niche: str = "trans pride"
     recipe_id: str = "underwear/pride_pattern"
@@ -221,7 +221,7 @@ class DesignRunCreateRequest(BaseModel):
 
 
 class DesignPlanRequest(BaseModel):
-    brand_id: str = "unitystitches"
+    brand_id: str = "commerce_shop"
     product_type: str = "womens_underwear"
     niche: str = "trans pride"
     recipe_id: str = "underwear/pride_pattern"
@@ -243,12 +243,12 @@ class BrandValidateRequest(BaseModel):
 
 
 class TestImageJobRequest(BaseModel):
-    positive_prompt: str = "UnityStitches inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic"
+    positive_prompt: str = "Commerce Shop inclusive pride standalone print design, flat centered print artwork, no person, no mockup, clean bold typography, print-ready graphic"
     negative_prompt: str = "copyrighted logos, trademarked characters, hateful symbols, explicit content, watermark, blurry, misspelled text, person, human, model, wearing, product photo, lifestyle photo, room, mannequin, face, hands, body, portrait, mockup"
     seed: int = 1
     width: int = 768
     height: int = 768
-    brand_id: str = "unitystitches"
+    brand_id: str = "commerce_shop"
     draft_path: str = ""
 
 
@@ -1171,28 +1171,28 @@ def creative_studio_pipeline_detail(job_id: str, x_jamesos_key: str | None = Hea
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.get("/unitystitches/health")
-def unitystitches_health_route(x_jamesos_key: str | None = Header(default=None)):
+@app.get("/commerce_shop/health")
+def commerce_shop_health_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return unitystitches_health()
+    return commerce_shop_health()
 
 
-@app.post("/unitystitches/generate-daily-drafts")
-def unitystitches_generate_daily_drafts_route(x_jamesos_key: str | None = Header(default=None)):
+@app.post("/commerce_shop/generate-daily-drafts")
+def commerce_shop_generate_daily_drafts_route(x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return generate_unitystitches_daily_drafts()
+    return generate_commerce_shop_daily_drafts()
 
 
-@app.get("/unitystitches/drafts")
-def unitystitches_drafts_route(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
+@app.get("/commerce_shop/drafts")
+def commerce_shop_drafts_route(status: str | None = None, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return list_unitystitches_drafts(status=status)
+    return list_commerce_shop_drafts(status=status)
 
 
-@app.get("/unitystitches/drafts/{date}")
-def unitystitches_drafts_for_date_route(date: str, x_jamesos_key: str | None = Header(default=None)):
+@app.get("/commerce_shop/drafts/{date}")
+def commerce_shop_drafts_for_date_route(date: str, x_jamesos_key: str | None = Header(default=None)):
     require_key(x_jamesos_key)
-    return unitystitches_drafts_for_date(date)
+    return commerce_shop_drafts_for_date(date)
 
 
 @app.get("/creative-studio/jobs")

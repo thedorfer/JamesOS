@@ -36,7 +36,7 @@ PROJECT_KEYWORDS = {
     ),
     "JamesOS": ("jamesos", "jade"),
     "GCU Teaching": ("gcu", "grand canyon university"),
-    "UnityStitches": ("unitystitches", "unity stitches"),
+    "Commerce Shop": ("commerce_shop", "commerce profile"),
 }
 WGL_CGI_TERMS = (
     "WGL",

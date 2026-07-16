@@ -135,10 +135,9 @@ class SalesAssetsPhoneTests(unittest.TestCase):
             manifest = json.loads((root / "test_pack" / "asset_pack_manifest.json").read_text(encoding="utf-8"))
             self.assertFalse(manifest["binary_contents_exposed"])
 
-    def test_readme_does_not_mention_unitystitches(self) -> None:
+    def test_readme_documents_generic_commerce_profiles(self) -> None:
         readme = Path("README.md").read_text(encoding="utf-8")
-        self.assertNotIn("UnityStitches", readme)
-        self.assertNotIn("unitystitches", readme)
+        self.assertIn("commerce_shop", readme)
 
     def test_phone_ingestion_methods_include_linux_alternatives(self) -> None:
         result = phone_ingestion.methods()

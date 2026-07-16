@@ -19,7 +19,7 @@ def build_timeline() -> str:
         VAULT / "Daily",
         VAULT / "Work",
         VAULT / "GCU",
-        VAULT / "UnityStitches",
+        VAULT / "Commerce Shop",
         VAULT / "Personal",
     ]
 

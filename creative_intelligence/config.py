@@ -18,7 +18,7 @@ ETSY_REDIRECT_URI = os.getenv("ETSY_REDIRECT_URI", "")
 ETSY_ACCESS_TOKEN = os.getenv("ETSY_ACCESS_TOKEN", "")
 ETSY_REFRESH_TOKEN = os.getenv("ETSY_REFRESH_TOKEN", "")
 ETSY_SHOP_ID = os.getenv("ETSY_SHOP_ID", "")
-ETSY_SHOP_NAME = os.getenv("ETSY_SHOP_NAME", "UnityStitches")
+ETSY_SHOP_NAME = os.getenv("ETSY_SHOP_NAME", "Commerce Shop")
 
 ETSY_CONFIG_FIELDS = {
     "ETSY_ENABLED": ETSY_ENABLED,

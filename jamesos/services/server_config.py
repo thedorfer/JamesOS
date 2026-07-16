@@ -66,7 +66,7 @@ DEFAULT_INTEGRATIONS_CONFIG = {
             "publish_enabled": False,
             "notes": "Future sales platform. No live listings are created yet.",
         },
-        "unitystitches": {
+        "commerce_shop": {
             "enabled": False,
             "status": "roadmap",
             "draft_only": True,

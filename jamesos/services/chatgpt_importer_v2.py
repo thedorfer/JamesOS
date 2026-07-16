@@ -27,7 +27,7 @@ PROJECT_KEYWORDS = {
     "GCU Teaching": ["gcu", "student", "grading", "dq", "cst", "sym", "dsc", "announcement", "rubric"],
     "Home Lab": ["desktop", "server", "docker", "linux", "mint", "ollama", "plex", "sunshine"],
     "Family": ["wife", "daughter", "kids", "family", "school", "camp", "birthday"],
-    "UnityStitches": ["etsy", "unitystitches", "unity stitches", "shop"],
+    "Commerce Shop": ["etsy", "commerce_shop", "commerce profile", "shop"],
     "Supreme Yard Signs": ["yard sign", "supreme yard signs", "graduation sign"],
 }
 

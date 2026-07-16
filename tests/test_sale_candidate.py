@@ -32,7 +32,7 @@ class SaleCandidateTests(unittest.TestCase):
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
                 first = sale_candidate.create_composition("job", "love-1", font_path=self.FONT, confirmed=True)
                 second = sale_candidate.create_composition("job", "love-2", font_path=self.FONT, confirmed=True)
-            self.assertEqual(first["exact_text"], "LOVE IS LOVE"); self.assertEqual(first["output_sha256"], second["output_sha256"])
+            self.assertEqual(first["exact_text"], "SAMPLE"); self.assertEqual(first["output_sha256"], second["output_sha256"])
             self.assertEqual(first["typography"]["resolved_font_sha256"], sha256(self.FONT.read_bytes()).hexdigest())
             self.assertEqual(evidence["candidate"].read_bytes(), before); self.assertAlmostEqual(first["heart_scale"], .87)
             with Image.open(first["output_path"]) as image:
@@ -59,8 +59,8 @@ class SaleCandidateTests(unittest.TestCase):
             existing = "Existing Listing Wording That Must Not Be Copied"
             client.list_products.return_value = {"data": [{"id": "p1", "title": "Rainbow Tee", "description": existing,
                 "tags": ["rainbow"], "variants": [{"price": 1999}]}]}
-            profile_path = root / "style.json"; profile = sale_candidate.profile_store(client, 9437076, profile_path)
-            client.list_products.assert_called_once_with(9437076); self.assertEqual(profile["products_analyzed"], 1)
+            profile_path = root / "style.json"; profile = sale_candidate.profile_store(client, 1001, profile_path)
+            client.list_products.assert_called_once_with(1001); self.assertEqual(profile["products_analyzed"], 1)
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
                 composition = sale_candidate.create_composition("job", "love", font_path=self.FONT, confirmed=True)
                 sale_candidate.approve_composition("job", "love", approved_by="James", confirmed=True)
@@ -76,10 +76,10 @@ class SaleCandidateTests(unittest.TestCase):
     def test_replay_is_read_only_and_report_has_required_sections(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary); evidence = self.fixture(root); client = Mock()
-            client.get_product.return_value = {"id": "6a57eaa752f2c3e4700dbf23", "images": [{"src": "https://example.test/mockup.jpg"}]}
+            client.get_product.return_value = {"id": "protected-product-fixture", "images": [{"src": "https://example.test/mockup.jpg"}]}
             report = root / "sale-candidate-report.html"
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
-                run = sale_candidate.replay_baseline("job", "6a57eaa752f2c3e4700dbf23", 9437076, client=client, report_path=report)
+                run = sale_candidate.replay_baseline("job", "protected-product-fixture", 1001, client=client, report_path=report)
             client.get_product.assert_called_once(); client.upload_image_contents.assert_not_called(); client.create_product.assert_not_called()
             self.assertEqual(run["composition_id"], "baseline_without_text")
             document = report.read_text(encoding="utf-8")
@@ -106,7 +106,7 @@ class SaleCandidateTests(unittest.TestCase):
             sale_candidate.approve_listing(composition_root / "listing", approved_by="James", confirmed=True)
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
                 draft = sale_candidate.create_composition_product_draft("job", "love", client=client, confirmed=True,
-                    shop_id=9437076, blueprint_id=12, provider_id=29, variant_ids=[1, 2], price=2499, scale=.8)
+                    shop_id=1001, blueprint_id=12, provider_id=29, variant_ids=[1, 2], price=2499, scale=.8)
             self.assertEqual(upload["printify_image_id"], "new-image"); self.assertEqual(draft["product_id"], "new-product")
             self.assertFalse(draft["baseline_product_id_reused"]); self.assertEqual(draft["publish_status"], "not_published")
             self.assertTrue((composition_root / "printify" / "upload.json").is_file())
@@ -127,7 +127,7 @@ class SaleCandidateTests(unittest.TestCase):
             root = Path(temporary); evidence = self.fixture(root); before = evidence["candidate"].read_bytes()
             profile_path = root / "profile.json"; profile_path.write_text(json.dumps({"profile_sha256": "profile-sha"}), encoding="utf-8")
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
-                previews = sale_candidate.generate_font_previews("job", "love-v2", phrase="LOVE IS LOVE", confirmed=True, preview_run_id="preview-001")
+                previews = sale_candidate.generate_font_previews("job", "love-v2", phrase="SAMPLE", confirmed=True, preview_run_id="preview-001")
                 composition_root = evidence["job_root"] / "commerce" / "product-compositions" / "love-v2"
                 with self.assertRaisesRegex(job_queue.JobQueueError, "font/style selection"):
                     sale_candidate.generate_listing(composition_root, profile_path, confirmed=True)
@@ -230,7 +230,7 @@ class SaleCandidateTests(unittest.TestCase):
             (font_root / "acquired-fonts.json").write_text(json.dumps({"fonts": records}), encoding="utf-8")
             profile_path = root / "profile.json"; profile_path.write_text(json.dumps({"profile_sha256": "profile"}), encoding="utf-8")
             with patch("jamesos.services.printify_product._approved_evidence", return_value=evidence):
-                manifest = sale_candidate_vector.generate_design_concepts("job", "love-is-love-v3", phrase="LOVE IS LOVE",
+                manifest = sale_candidate_vector.generate_design_concepts("job", "love-is-love-v3", phrase="SAMPLE",
                     confirmed=True, font_root=font_root, run_id="design-001")
                 composition_root = evidence["job_root"] / "commerce" / "product-compositions" / "love-is-love-v3"
                 with self.assertRaisesRegex(job_queue.JobQueueError, "design concept"):
@@ -249,7 +249,7 @@ class SaleCandidateTests(unittest.TestCase):
             for concept in manifest["concepts"]:
                 self.assertTrue(Path(concept["svg_path"]).is_file()); self.assertEqual(len(concept["svg_sha256"]), 64)
                 self.assertTrue(Path(concept["png_path"]).is_file()); self.assertEqual(len(concept["png_sha256"]), 64)
-                self.assertEqual(concept["phrase"], "LOVE IS LOVE"); self.assertEqual(concept["status"], "needs_human_design_selection")
+                self.assertEqual(concept["phrase"], "SAMPLE"); self.assertEqual(concept["status"], "needs_human_design_selection")
                 self.assertTrue(Path(concept["thumbnail"]["path"]).is_file())
                 with Image.open(concept["png_path"]) as image: self.assertEqual(image.size, (4500, 5400)); self.assertEqual(image.mode, "RGBA")
                 self.assertEqual(set(concept["previews"]), {"black", "dark_heather", "white"})

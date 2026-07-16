@@ -203,7 +203,7 @@ def _design_artifact(
 
 def create_image_generation_plan(package: dict[str, Any]) -> dict[str, Any]:
     creative_spec = package.get("creative_spec") if isinstance(package.get("creative_spec"), dict) else None
-    brand_id = str(package.get("brand_id") or (creative_spec or {}).get("brand_id") or get_default_brand().get("brand_id", "unitystitches"))
+    brand_id = str(package.get("brand_id") or (creative_spec or {}).get("brand_id") or get_default_brand().get("brand_id", "commerce_shop"))
     brand = get_brand(brand_id)
     selected_style = style_registry.select_style(package)
     selected_assets = asset_library.suggest_assets({**package, "brand_id": brand_id, "style": selected_style.get("name", "")})
@@ -324,7 +324,7 @@ def _default_design_recipe(width: int, height: int, provider: str = "printify", 
         "layout": "centered",
         "composition": "single centered focal point occupying approximately 75% of canvas with safe margins and balanced spacing",
         "palette": ["rainbow", "white", "black accent"],
-        "text": "Love Is Love",
+        "text": "Sample",
         "typography": "bold readable rounded sans",
         "motifs": ["hearts", "sparkles", "pride rainbow"],
         "assets": [],
@@ -344,7 +344,7 @@ def create_test_image_job(
     seed: int = 1,
     width: int = 1024,
     height: int = 1024,
-    brand_id: str = "unitystitches",
+    brand_id: str = "commerce_shop",
     draft_path: str = "",
     quality: str = "production",
     transparent: bool = True,
@@ -367,7 +367,7 @@ def create_test_image_job(
         design_recipe["assets"] = selected_assets
     creative_spec = {
         "brand_id": brand_id,
-        "brand_name": "UnityStitches",
+        "brand_name": "Commerce Shop",
         "stage": "design_art",
         "product_type": "design_art",
         "niche": "LGBTQ+ pride",
@@ -375,7 +375,7 @@ def create_test_image_job(
         "emotional_hook": "joyful, affirming, printable pride",
         "style": "bold pride typography",
         "colors": ["rainbow", "white", "black accent"],
-        "text": "Love Is Love",
+        "text": "Sample",
         "typography": "bold readable sans with friendly rounded edges",
         "assets": [],
         "layout": "flat centered print artwork",
@@ -392,11 +392,11 @@ def create_test_image_job(
     prompt_package = prompt_library.creative_spec_to_prompt_package(creative_spec)
     asset_descriptions = prompt_package.get("asset_prompt_descriptions", [])
     positive_prompt = positive_prompt or (
-        "UnityStitches inclusive Pride standalone print design, standalone transparent background print design, "
+        "Commerce Shop inclusive Pride standalone print design, standalone transparent background print design, "
         "vector-style graphic, clean sticker-like artwork, centered composition, bold readable typography, "
         "Pride-themed hearts, sparkles, rainbow motifs, isolated design element only, "
         "no product, no person, no mockup, no model, no product photo. "
-        f"Text: Love Is Love. Reference motifs: {', '.join(asset_descriptions) or 'rainbow pride color accents'}."
+        f"Text: Sample. Reference motifs: {', '.join(asset_descriptions) or 'rainbow pride color accents'}."
     )
     negative_prompt = negative_prompt or (
         "copyrighted logos, trademarked characters, hateful symbols, explicit content, person, people, human, model, "
@@ -704,8 +704,8 @@ def _extract_comfy_detail(response_json: Any) -> str:
     return " | ".join(details)
 
 
-def _update_unitystitches_draft(payload: dict[str, Any], image_path: str) -> None:
-    draft_path = payload.get("unitystitches_draft_path") or payload.get("draft_path")
+def _update_commerce_shop_draft(payload: dict[str, Any], image_path: str) -> None:
+    draft_path = payload.get("commerce_shop_draft_path") or payload.get("draft_path")
     if not draft_path:
         return
     path = Path(str(draft_path)).expanduser()
@@ -963,7 +963,7 @@ def execute_approved_image_job(job_id: str) -> dict[str, Any]:
         mark_step(job_id, "image saved", "complete", image_path)
         original_payload = get_job(job_id).get("payload", {})
         update_job_payload(job_id, _creative_stage_updates(original_payload, image_path, saved))
-        _update_unitystitches_draft(payload, image_path)
+        _update_commerce_shop_draft(payload, image_path)
         append_job_log(job_id, "completed")
         mark_step(job_id, "completed", "complete")
         processed = update_job_status(job_id, "processed")

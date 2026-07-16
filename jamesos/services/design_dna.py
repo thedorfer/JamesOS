@@ -19,7 +19,7 @@ def design_dna_from_recipe(
         "typography_system": recipe.get("typography", ""),
         "motif_system": recipe.get("motifs", []),
         "pattern_system": recipe.get("pattern_strategy", ""),
-        "brand_voice": "warm, inclusive, practical, giftable" if brand_id == "unitystitches" else "brand-safe commercial",
+        "brand_voice": "warm, inclusive, practical, giftable" if brand_id == "commerce_shop" else "brand-safe commercial",
         "commercial_goal": recipe.get("commercial_goal", ""),
         "target_products": recipe.get("product_fit", []),
         "blocked_products": recipe.get("avoid_product_types", []),

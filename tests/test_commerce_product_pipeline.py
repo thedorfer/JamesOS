@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import yaml
 
-from jamesos.services import creative_studio, job_queue, unitystitches_product_pipeline as unity
+from jamesos.services import commerce_product_pipeline as commerce, creative_studio, job_queue
 
 
-class UnityStitchesProductPipelineTests(unittest.TestCase):
+class CommerceProductPipelineTests(unittest.TestCase):
     def run_with_pipeline(self, callback):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -18,7 +18,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
             queue_root = vault / "JamesOS" / "Queue"
             config_root = vault / "JamesOS" / "Config"
             reports_root = vault / "JamesOS" / "Reports"
-            drafts_root = vault / "JamesOS" / "Products" / "UnityStitches" / "Drafts"
+            drafts_root = vault / "JamesOS" / "Products" / "Commerce Shop" / "Drafts"
 
             creative_config = {
                 **creative_studio.DEFAULT_CONFIG,
@@ -35,9 +35,9 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
             )
 
             patches = [
-                patch.object(unity, "CONFIG_PATH", config_root / "unitystitches_products.yaml"),
-                patch.object(unity, "DRAFTS_ROOT", drafts_root),
-                patch.object(unity, "REPORT_PATH", reports_root / "UnityStitches Product Drafts.md"),
+                patch.object(commerce, "CONFIG_PATH", config_root / "commerce_shop_products.yaml"),
+                patch.object(commerce, "DRAFTS_ROOT", drafts_root),
+                patch.object(commerce, "REPORT_PATH", reports_root / "Commerce Shop Product Drafts.md"),
                 patch.object(job_queue, "QUEUE_ROOT", queue_root),
                 patch.object(job_queue, "PENDING", queue_root / "pending"),
                 patch.object(job_queue, "IN_PROGRESS", queue_root / "in_progress"),
@@ -57,7 +57,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_generates_exactly_two_drafts(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
 
             self.assertEqual(result["status"], "ok")
             self.assertEqual(result["draft_count"], 2)
@@ -67,7 +67,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_always_includes_one_womens_underwear_product(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
             product_types = [draft["product_type"] for draft in result["drafts"]]
 
             self.assertEqual(product_types.count("womens_underwear"), 1)
@@ -78,7 +78,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
         def scenario(vault: Path) -> None:
             rotating_types = set()
             for day in ["2026-07-07", "2026-07-08", "2026-07-09", "2026-07-10"]:
-                result = unity.generate_daily_product_drafts(day)
+                result = commerce.generate_daily_product_drafts(day)
                 rotating_types.add(result["drafts"][1]["product_type"])
 
             self.assertGreater(len(rotating_types), 1)
@@ -88,13 +88,13 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_all_drafts_are_needs_review_and_require_approval(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
 
             for draft in result["drafts"]:
                 self.assertEqual(draft["status"], "needs_review")
                 self.assertTrue(draft["approval_required"])
-                self.assertEqual(draft["brand_id"], "unitystitches")
-                self.assertEqual(draft["brand_name"], "UnityStitches")
+                self.assertEqual(draft["brand_id"], "commerce_shop")
+                self.assertEqual(draft["brand_name"], "Commerce Shop")
                 self.assertEqual(draft["brand_compatibility_status"], "allowed")
                 self.assertIn("pod_provider", draft)
                 self.assertEqual(draft["provider_status"], "needs_design")
@@ -103,7 +103,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_underwear_draft_prefers_printify_for_now(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
             underwear = next(draft for draft in result["drafts"] if draft["product_type"] == "womens_underwear")
 
             self.assertEqual(underwear["pod_provider"], "printify")
@@ -113,7 +113,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_external_execution_flags_remain_false(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
 
             self.assertFalse(result["safety"]["external_execution_enabled"])
             self.assertFalse(result["safety"]["comfyui_execution_enabled"])
@@ -133,7 +133,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_creates_creative_studio_pipeline_job(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
             job = result["creative_pipeline_job"]
 
             self.assertEqual(job["type"], "creative_pipeline")
@@ -145,7 +145,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
 
     def test_does_not_call_external_systems(self) -> None:
         def scenario(vault: Path) -> None:
-            result = unity.generate_daily_product_drafts("2026-07-07")
+            result = commerce.generate_daily_product_drafts("2026-07-07")
             pipeline_payload = result["creative_pipeline_job"]["payload"]
 
             self.assertFalse(pipeline_payload["external_execution"])
@@ -177,7 +177,7 @@ class UnityStitchesProductPipelineTests(unittest.TestCase):
                 "2026-07-20",
                 "2026-07-21",
             ]:
-                result = unity.generate_daily_product_drafts(day)
+                result = commerce.generate_daily_product_drafts(day)
                 for draft in result["drafts"]:
                     self.assertEqual(draft["compatibility_status"], "allowed")
                     self.assertEqual(draft["blocked_terms"], [])

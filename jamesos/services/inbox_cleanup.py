@@ -58,8 +58,8 @@ def _suggest_actions(text: str, entities: list[str]) -> list[str]:
     if any(word in lower for word in ["gcu", "student", "grade", "rubric", "class"]):
         actions.append("Possible GCU item.")
 
-    if any(word in lower for word in ["etsy", "unitystitches", "design", "listing", "shirt"]):
-        actions.append("Possible UnityStitches item.")
+    if any(word in lower for word in ["etsy", "commerce_shop", "design", "listing", "shirt"]):
+        actions.append("Possible Commerce Shop item.")
 
     if any(word in lower for word in ["trip", "travel", "hotel", "flight", "reservation"]):
         actions.append("Possible personal/travel item.")

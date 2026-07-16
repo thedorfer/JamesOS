@@ -25,8 +25,8 @@ def start_day() -> str:
 ## GCU
 - [[GCU/GCU Dashboard]]
 
-## UnityStitches
-- [[UnityStitches/UnityStitches Dashboard]]
+## Commerce Shop
+- [[Commerce Shop/Commerce Shop Dashboard]]
 
 ## Personal
 

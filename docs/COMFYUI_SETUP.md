@@ -63,13 +63,13 @@ The scanner checks local model folders only and keeps every discovered model `en
 Future generated assets:
 
 ```text
-~/JamesOSData/JamesOS/Products/UnityStitches/Assets/
+~/JamesOSData/JamesOS/Products/Commerce Shop/Assets/
 ```
 
 Future product draft packages:
 
 ```text
-~/JamesOSData/JamesOS/Products/UnityStitches/Drafts/
+~/JamesOSData/JamesOS/Products/Commerce Shop/Drafts/
 ```
 
 ## Planned Configuration

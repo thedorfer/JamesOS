@@ -20,7 +20,7 @@ GET /workers/{worker_name}
 - `model_registry`
 - `comfyui_client`
 - `comfyui_worker`
-- `unitystitches_worker`
+- `commerce_shop_worker`
 - `printify_worker`
 - `etsy_worker`
 - `phone_ingestion_worker`

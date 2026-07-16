@@ -22,7 +22,7 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--width", type=int, default=1024)
     parser.add_argument("--height", type=int, default=1024)
-    parser.add_argument("--brand-id", default="unitystitches")
+    parser.add_argument("--brand-id", default="commerce_shop")
     parser.add_argument("--draft-path", default="")
     parser.add_argument("--quality", choices=["draft", "production", "premium"], default="production")
     parser.add_argument("--transparent", action=argparse.BooleanOptionalAction, default=True)

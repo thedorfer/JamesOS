@@ -41,7 +41,7 @@ _KNOWN_PEOPLE = [
     "Jidapa",
 ]
 
-_KNOWN_PROJECTS = ["Paving", "JamesOS", "GCU", "CGI", "WGL", "UnityStitches"]
+_KNOWN_PROJECTS = ["Paving", "JamesOS", "GCU", "CGI", "WGL", "Commerce Shop"]
 
 _TICKET_RE = re.compile(r"\b(8\d{4})\b")
 

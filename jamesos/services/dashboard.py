@@ -61,7 +61,7 @@ def generate_home_dashboard() -> str:
         "## Main Areas",
         "- [[Work/Work]]",
         "- [[GCU/GCU Dashboard]]",
-        "- [[UnityStitches/UnityStitches Dashboard]]",
+        "- [[Commerce Shop/Commerce Shop Dashboard]]",
         "- [[Personal]]",
         "- [[JamesOS/People]]",
         "- [[JamesOS/Knowledge]]",
