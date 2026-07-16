@@ -4,31 +4,21 @@ This page summarizes JamesOS integration boundaries, configuration, and current 
 
 ## Configuration
 
-Integration settings live in:
+Integration settings live under the private runtime data root:
 
 ```text
 ~/JamesOSData/JamesOS/Config/integrations.yaml
-```
-
-Server settings live in:
-
-```text
 ~/JamesOSData/JamesOS/Config/server.yaml
 ```
 
-Health/config routes:
+Private commerce profiles, account identifiers, product identifiers, protected resources, OAuth files, and credentials must remain outside Git.
+
+## Health And Control Center
 
 ```text
 GET /server/config
 GET /server/health
 GET /server/page
-```
-
-These routes report local configuration and safety status. They do not call external services.
-
-Control Center routes provide the combined admin/readiness view:
-
-```text
 GET /control-center
 GET /control-center/integrations
 GET /control-center/jobs
@@ -36,64 +26,27 @@ GET /control-center/storage
 GET /control-center/summary
 ```
 
-Control Center also does not call external services.
+These routes report local configuration and safety status. They do not silently perform external actions.
 
 ## Current Integrations
 
-### Brand Registry
+### Brand And Profile Registry
 
 Status: active local foundation.
 
-Brand Registry stores shop-specific creative rules, approval rules, preferred POD providers, and integration safety flags for multiple future Etsy/POD shops. Default brands are UnityStitches and a disabled Degen Market Chaos placeholder.
-
-Routes:
-
-```text
-GET /brands
-GET /brands/health
-GET /brands/default
-GET /brands/{brand_id}
-POST /brands/{brand_id}/validate
-```
-
-It does not call Etsy, Printify, ComfyUI, upload, publish, order, or send anything.
+The registry stores shop-specific creative rules, approval policy, provider selection, and integration safety flags. Public code provides generic schemas and validation; identifying deployment data belongs in private local profiles.
 
 ### POD Provider Registry
 
-Status: active local foundation.
+Status: active foundation.
 
-POD Provider Registry lists Printify and InkedJoy as configurable provider targets. It is read-only and does not call either provider. Printify is the active planned POD provider for the MVP automated shop pipeline. InkedJoy remains a future/manual-upload provider foundation only.
-
-Current shop/provider defaults:
-
-- Bagholder Supply Co uses Printify for now.
-- Cheeky Peach Prints uses Printify for now.
-- UnityStitches underwear, panties, and thongs prefer Printify for now.
-
-Routes:
-
-```text
-GET /pod-providers
-GET /pod-providers/health
-GET /pod-providers/{provider_id}
-```
-
-All provider records force:
-
-```text
-readonly: true
-writes_enabled: false
-draft_creation_enabled: false
-order_enabled: false
-```
-
-InkedJoy status: future/manual-upload provider only; API access not confirmed; not active for current automation.
+The registry represents provider capabilities and safety policy. Provider records default to read-only or dry-run behavior until a private profile and explicit confirmation enable a supported operation.
 
 ### Jade Flutter App
 
 Status: active local client.
 
-Jade talks to the JamesOS API with an API key and presents chat, work, private, dashboard, attachment, and Knowledge Graph interactions.
+Jade talks to the JamesOS API and presents chat, work, private, dashboard, attachment, Knowledge Graph, and automation-review interactions.
 
 ### Tasker Phone Ingestion
 
@@ -105,127 +58,101 @@ Android Tasker can POST phone events to:
 POST /phone-ingest
 ```
 
-See [Phone Ingestion](PHONE_INGESTION.md) for Linux/MTP, Syncthing, KDE Connect, ADB, and optional Tasker approaches.
-
 ### Email And Calendar Imports
 
 Status: local import foundations exist.
 
-Email/calendar evidence can feed reports, timelines, search, Knowledge Graph, and reasoner context. Imported evidence remains local under JamesOSData.
+Imported evidence can feed reports, timelines, search, Knowledge Graph, and reasoner context.
 
 ### Job Queue
 
 Status: active foundation.
 
-The queue stores approval-gated automation jobs. Future integrations should use the queue before taking consequential action.
-
-### Control Center
-
-Status: active foundation.
-
-Control Center summarizes integration readiness, queue counts, approval-needed jobs, service health, and storage checks. It is meant to make automation readiness visible while keeping execution flags false until a later phase explicitly implements them.
+The queue stores approval-gated automation jobs and durable side-effect evidence.
 
 ### Planner And Workers
 
 Status: active foundation.
 
-Planner turns intent into proposed plans and recommended jobs. The worker registry lists future addon/worker capabilities. Neither layer executes work in this phase.
-
-```text
-GET /planner/health
-POST /planner/plan
-GET /workers
-GET /workers/{worker_name}
-```
-
-## Planned Integrations
+Planner turns intent into proposed plans. Worker and agent registries define bounded capabilities and route work without exposing credentials.
 
 ### ComfyUI
 
 Status: approval-gated local image execution.
 
-JamesOS may execute exactly one approved local image job against `http://127.0.0.1:8188` and save the PNG under JamesOSData. It does not call any external provider, upload the image, create a listing, or order anything. Control Center reports the configured API URL, one-image-at-a-time readiness, and external execution flags.
-
-### InkedJoy
-
-Status: planned/manual-upload foundation.
-
-JamesOS does not call InkedJoy, upload images, create products, place orders, or publish listings. Generated design PNGs are local draft assets for James review.
+JamesOS may execute an explicitly approved local image job and save the result under JamesOSData. It does not make that image public without a separate guarded commerce workflow.
 
 ### Printify
 
-Status: planned draft-only target.
+Status: guarded provider integration.
 
-Future placeholder operations:
+Implemented capabilities include:
 
-- list shops
-- list blueprints
-- find product blueprint
-- upload artwork
-- create product draft
+- shop and catalog reads
+- artwork upload
+- product draft creation and update
+- variant enforcement
+- mockup retrieval
+- guarded publication
+- recovery without duplicate completed side effects
 
 Rules:
 
-- do not publish
-- do not order
-- do not send to production
-- require James approval
-- keep Control Center execution and publish flags false until intentionally implemented
+- explicit confirmation for remote writes
+- one automatic attempt maximum
+- no hidden retries
+- protected resources enforced from private profiles
+- no order creation
 
 ### Etsy
 
-Status: read-only performance foundation plus planned approval-only sales platform.
+Status: guarded marketplace integration.
 
-Creative Intelligence exposes a read-only Etsy performance-history foundation for UnityStitches. It is designed for OAuth-backed shop/listing/order history later, but this phase does not create, edit, renew, deactivate, delete, publish, message, fulfill, upload, scrape, call Printify, or call ComfyUI.
+Implemented capabilities include:
 
-Routes:
+- OAuth authorization and refresh
+- listing reads
+- listing resolution after provider publication
+- deactivation for staged review
+- inactive-state verification
+- active-state verification
 
-```text
-GET /etsy/health
-GET /etsy/auth-status
-POST /etsy/sync-readonly
-GET /etsy/performance
-GET /etsy/top-products
-GET /etsy/underperforming-products
-```
+Rules:
 
-Every Etsy route reports:
+- no publication without the required approval reference
+- no hidden activation or deactivation
+- credentials remain outside Git
+- no order fulfillment from this workflow
 
-```text
-readonly: true
-writes_enabled: false
-publishing_enabled: false
-order_fulfillment_enabled: false
-```
+## Generic Commerce Profiles
 
-OAuth tokens and secrets must live outside Git. Missing credentials return `not_configured`.
-
-Future Etsy work may prepare draft metadata and review pages. No live listings should be created without explicit approval.
-
-### UnityStitches
-
-Status: active draft-only foundation.
-
-UnityStitches creates local product draft packages and a Creative Studio pipeline job for each daily run. It creates exactly one women's underwear draft and one rotating configured product draft. It does not create live products.
-
-Routes:
+A private `commerce_shop` profile can bind:
 
 ```text
-GET /unitystitches/health
-POST /unitystitches/generate-daily-drafts
-GET /unitystitches/drafts
-GET /unitystitches/drafts/{date}
+marketplace  → EtsyAgent
+fulfillment  → PrintifyAgent
+orchestrator → CommerceAgent
 ```
+
+It may independently configure:
+
+- `approval_mode`: `single_final` or `staged`
+- final marketplace state: `active` or `inactive`
+- review location
+- whether a non-public provider draft may be created before final approval
+- publication policy
+- protected resources
 
 ## Approval-First Safety
 
-Integrations must default to safe local reporting or draft creation. External side effects require a Job Queue record and James approval.
+Integrations must default to safe local reporting, dry plans, or non-public drafts. Consequential external side effects require the proper approval and explicit confirmation.
 
-Never implement hidden automatic calls for:
+Never commit:
 
-- Printify publishing
-- Etsy live listing creation
-- production orders
-- email sending
-- image generation intended for upload
-- external purchases
+- shop names
+- account IDs
+- product or listing IDs
+- protected resource IDs
+- OAuth tokens
+- shared secrets
+- private artwork or live job reports
