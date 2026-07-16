@@ -2,31 +2,29 @@
 
 _Last updated: July 16, 2026_
 
-JamesOS is a local-first personal operating system and agent platform. The project now includes a working, guarded Printify-to-Etsy commerce foundation in addition to its original evidence, memory, Knowledge Graph, Jade, Job Queue, and Creative Studio systems.
+JamesOS is a local-first personal operating system and agent platform. The project now includes a working, guarded provider-to-marketplace commerce foundation in addition to its original evidence, memory, Knowledge Graph, Jade, Job Queue, and Creative Studio systems.
 
 ## Snapshot
 
-- Main branch checkpoint: `e37313c`
 - Test suite at checkpoint: **362 passing tests**
-- Repository state at checkpoint: clean and pushed to `origin/master`
 - Runtime data root: `~/JamesOSData/JamesOS`
 - Human-authored notes root: `~/Notes`
-- Secrets remain outside Git under `~/JamesOSData/JamesOS/Secrets`
+- Secrets and deployment-specific profiles remain outside Git
 
 ## North Star
 
-The preferred UnityStitches experience is:
+The preferred commerce experience is:
 
 ```text
 idea
 → JamesOS generates and validates artwork
-→ JamesOS creates or updates a non-public Printify draft
+→ JamesOS creates or updates a non-public provider draft
 → JamesOS downloads real mockups
-→ JamesOS prepares the complete Etsy listing
-→ James reviews one immutable listing proposal
-→ James approves once
+→ JamesOS prepares the complete marketplace listing
+→ user reviews one immutable listing proposal
+→ user approves once
 → JamesOS publishes once
-→ JamesOS verifies the Etsy listing is active
+→ JamesOS verifies the listing reached the configured final state
 ```
 
 Candidate selection, design revisions, contrast fixes, and mockup review are editing steps. They are not final approval.
@@ -46,7 +44,7 @@ Candidate selection, design revisions, contrast fixes, and mockup review are edi
 
 ### Agent OS
 
-JamesOS now includes a reusable agent runtime with:
+JamesOS includes a reusable agent runtime with:
 
 - `AgentRegistry`
 - `AgentRunner`
@@ -66,7 +64,7 @@ Current commerce agents include:
 - `PrintifyAgent`
 - `EtsyAgent`
 
-UnityStitches is represented as a generic `commerce_shop` profile rather than a hard-coded agent.
+Private shops are represented as local `commerce_shop` profiles rather than hard-coded public agents.
 
 ## Creative Commerce Capabilities
 
@@ -75,25 +73,23 @@ UnityStitches is represented as a generic `commerce_shop` profile rather than a 
 The product orchestrator can:
 
 - parse a product idea into a structured brief
-- resolve Printify blueprint, provider, colors, sizes, and variants
+- resolve provider blueprint, provider, colors, sizes, and variants
 - generate multiple independent local design candidates
 - enforce exact phrase rendering
 - validate transparency, dimensions, safe bounds, and candidate uniqueness
 - generate human review sheets
 - bind human approval to an exact candidate SHA-256
-- create a Printify draft after explicit confirmation
-- recover from a failed product-create attempt without duplicating completed side effects
-- download exact Printify mockups for selected variants
+- create a non-public provider draft after explicit confirmation
+- recover from failed product creation without duplicating completed side effects
+- download exact provider mockups for selected variants
 - review placement, artwork IDs, enabled variants, and front-only configuration
 - prepare listing metadata
-- publish through Printify under explicit confirmation
-- resolve an Etsy listing ID
-- deactivate an Etsy listing for staged-review mode
-- verify an Etsy listing is active for direct-live mode
+- publish through the provider under explicit confirmation
+- resolve the marketplace listing ID
+- deactivate a listing for staged-review mode
+- verify an active listing for direct-live mode
 
 ### Current lower-level CLI
-
-The current diagnostic and expert workflow is exposed through:
 
 ```bash
 python scripts/product_from_prompt.py create
@@ -124,23 +120,21 @@ Supported approval modes:
 - `single_final`
 - `staged`
 
-Supported Etsy final states:
+Supported marketplace final states:
 
 - `active`
 - `inactive`
 
 These settings are independent.
 
-### UnityStitches policy
-
-UnityStitches currently uses:
+A generic private profile can configure:
 
 ```json
 {
   "approval_mode": "single_final",
-  "etsy_final_state": "active",
+  "marketplace_final_state": "active",
   "human_review_location": "jamesos_listing_preview",
-  "preapproval_printify_draft_allowed": true,
+  "preapproval_provider_draft_allowed": true,
   "publish_policy": "publish_active_after_approval"
 }
 ```
@@ -148,25 +142,25 @@ UnityStitches currently uses:
 The final approval is intended to bind to a canonical hash covering:
 
 - selected artwork and exact SHA-256
-- Printify product and artwork IDs
+- provider product and artwork IDs
 - product configuration
 - enabled variants
 - placement
 - real mockups
-- Etsy title
-- Etsy description
-- Etsy tags
+- listing title
+- listing description
+- marketplace tags
 - price
-- destination shop
-- expected final Etsy state
+- destination account
+- expected final state
 
 Changing any bound field invalidates approval.
 
-Staged publish-and-inactivate behavior remains available for other profiles and recovery workflows.
+Staged publish-and-inactivate behavior remains available for profiles and recovery workflows that require it.
 
-## Printify And Etsy Status
+## Provider And Marketplace Status
 
-### Printify
+### Provider integration
 
 Implemented and live-tested:
 
@@ -182,92 +176,37 @@ Implemented and live-tested:
 
 Remote actions are not automatically retried.
 
-### Etsy
+### Marketplace integration
 
 Implemented and live-tested:
 
 - OAuth authorization and refresh handling
 - listing reads
-- listing-ID resolution following Printify publication
+- listing-ID resolution following provider publication
 - listing deactivation
 - inactive-state verification
 - active-state verification capability
-
-The normal UnityStitches target is now `active` after one final approval. Deactivation remains available for staged mode, emergency handling, and recovery.
 
 ### Orders
 
 Order creation and fulfillment are not part of the current workflow. JamesOS must never create an order from the product-orchestration path.
 
-## Current Product Checkpoint
+## Private Runtime State
 
-Current job:
-
-```text
-product-20260716-143241-e28be82c
-```
-
-Current Printify draft:
-
-```text
-6a593931a0497a61da04aca4
-```
-
-Current state:
-
-- Printify product exists as a non-published draft
-- 18 enabled variants
-- Black, Dark Grey Heather, and White
-- sizes S through 3XL
-- front artwork only
-- placement: `x=0.5`, `y=0.46`, `scale=0.85`, `angle=0`
-- no Etsy listing has been created for this job
-- no order has been created
-
-The first approved artwork displayed poorly on White garments. A revised universal-contrast candidate has been generated locally:
-
-```text
-candidate: prompt_centered_universal_contrast
-sha256: b98ed53099a622195d1c8b9ad244bf119ce75b3d044a35614207f2fe9ffed4df
-```
-
-Treatment:
-
-- dark navy fill
-- white inner outline
-- dark outer stroke
-- exact phrase: `YOU ARE SAFE WITH ME`
-
-Automated contrast checks pass against Black, Dark Grey Heather, and White. Human visual review is still required. The revised artwork has not yet been uploaded to Printify, and the existing Printify draft has not yet been updated with it.
-
-Next read-only command:
-
-```bash
-python scripts/product_from_prompt.py review-design \
-  --job-id product-20260716-143241-e28be82c
-```
-
-## Protected Resources
-
-The protected Printify baseline product must never be modified:
-
-```text
-6a57eaa752f2c3e4700dbf23
-```
-
-Profile validation and orchestration safeguards must continue to enforce this boundary.
+Live product jobs, shop names, account identifiers, product identifiers, artwork hashes, protected-resource identifiers, OAuth files, review artifacts, and execution reports belong under `~/JamesOSData/JamesOS` or another private deployment store. They must not be committed to the public repository.
 
 ## Safety Invariants
 
 - Secrets never enter Git, proposals, reports, or public agent output.
+- Deployment-specific names and identifiers remain outside Git.
 - Remote writes require explicit confirmation.
 - Publication requires an approval reference appropriate to the profile policy.
 - Completed remote side effects are recorded and must not be repeated during recovery.
 - No automatic remote retry.
 - No automatic republish after an indeterminate publication result.
-- No hidden Etsy activation or deactivation.
+- No hidden marketplace activation or deactivation.
 - No order creation.
-- No protected-product modification.
+- No protected-resource modification.
 - Artwork changes invalidate exact-hash approval.
 - Final proposal changes invalidate final approval.
 
@@ -276,10 +215,10 @@ Profile validation and orchestration safeguards must continue to enforce this bo
 The main missing user-facing feature is a unified commerce command that chains the existing lower-level components into the preferred flow:
 
 ```text
-jamesos commerce create --profile unitystitches --idea "..."
+jamesos commerce create --profile PRIVATE_PROFILE_ID --idea "..."
 → review and revise one complete listing package
 jamesos commerce approve --job-id ... --proposal-sha256 ... --confirm
-→ publish once and verify active on Etsy
+→ publish once and verify the configured marketplace final state
 ```
 
 The implementation should add:
@@ -287,7 +226,7 @@ The implementation should add:
 - a complete immutable `CommerceProposal`
 - canonical proposal hashing
 - a listing-review HTML page with real mockups
-- one final approval for UnityStitches
+- profile-selected approval behavior
 - a durable execution state machine
 - idempotent recovery that never repeats completed remote writes
 - an execution report showing every attempted and completed side effect
@@ -304,4 +243,4 @@ git pull --ff-only origin master
 python -m unittest discover tests
 ```
 
-Runtime state, profiles, artwork, OAuth files, and reports live outside Git under `~/JamesOSData/JamesOS` and must be synchronized securely before continuing on another machine.
+Runtime state, private profiles, artwork, OAuth files, and reports live outside Git and must be synchronized securely before continuing on another machine.
