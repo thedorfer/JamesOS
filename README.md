@@ -1,8 +1,27 @@
 # JamesOS
 
-JamesOS is a local-first personal operating system and assistant layer built for James. It combines a Python/FastAPI backend, local evidence ingestion, a Knowledge Graph and Working Memory layer, a Flutter client named Jade, and an approval-first automation backbone.
+JamesOS is a local-first personal operating system and agent platform built for James. It combines a Python/FastAPI backend, local evidence ingestion, Knowledge Graph and Working Memory, a Flutter client named Jade, a durable Job Queue, an Agent OS runtime, and guarded automation for creative commerce.
 
-The project is intentionally personal and safety-oriented. JamesOS can collect and reason over local notes, imported ChatGPT history, work emails, phone events, reports, tickets, and future creative-product drafts, but consequential automation must pass through explicit review and approval.
+The project is intentionally personal, evidence-aware, and approval-first. JamesOS can reason over local notes, imported ChatGPT history, email and calendar evidence, work records, phone events, reports, tickets, creative assets, Printify drafts, and Etsy listing state. Consequential actions require explicit review, confirmation, and durable side-effect records.
+
+## Current Status
+
+At the July 16, 2026 checkpoint:
+
+- `362` tests pass
+- Printify draft creation, recovery, mockup review, metadata updates, and guarded publication are implemented
+- Etsy OAuth, listing reads, deactivation, inactive verification, and active-state verification are implemented
+- configurable `single_final` and `staged` approval modes are implemented
+- configurable Etsy final states `active` and `inactive` are implemented
+- UnityStitches is configured for one final approval followed by an active Etsy listing
+- order creation remains disabled
+- the preferred unified `idea → complete listing preview → approve once → live` CLI is the next major milestone
+
+Read these first:
+
+- [Current project status](docs/CURRENT_STATUS.md)
+- [Agent OS architecture](docs/AGENT_OS.md)
+- [Creative Studio roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
 
 ## What JamesOS Does
 
@@ -11,33 +30,72 @@ The project is intentionally personal and safety-oriented. JamesOS can collect a
 - Keeps machine-owned data in `~/JamesOSData`.
 - Builds local evidence into search indexes, reports, timelines, Working Memory, and Knowledge Graph pages.
 - Lets Jade answer from local context instead of guessing.
-- Uses Planner to turn intent into proposed work without executing it.
-- Provides a Job Queue for approval-first automation.
-- Registers future workers/addons through a non-executing worker registry.
-- Provides a Control Center API/report for health, integrations, jobs, storage, and automation readiness.
+- Uses Planner to turn intent into proposed work without silently executing it.
+- Provides a durable Job Queue for approval-first automation.
+- Provides a reusable Agent OS with capability routing, approval policies, run ledgers, tool brokering, and secret handles.
+- Provides a Control Center for health, integrations, jobs, storage, and automation readiness.
 - Supports Android phone ingestion through Tasker or desktop/laptop pull alternatives.
 - Provides a Flutter Jade app for Linux and Android.
-- Supports draft-only multi-brand POD and creative automation across local image generation, provider review, and Etsy sales intelligence.
-- Provides a read-only Etsy sales-history foundation for provider-agnostic creative learning.
-- Provides ComfyUI readiness, Model Registry, Workflow Manager, and Image Worker planning/execution foundations with local execution approval-gated.
-- Provides a Brand Registry and POD Provider Registry so creative/product/provider rules can support multiple shops safely.
-- Provides recipe-driven Design Runs, Design Planner, and Design Critic foundations for consistent commercial design generation.
+- Supports local design generation, candidate review, exact-hash approval, Printify drafts, real mockup retrieval, and Etsy channel workflows.
+- Supports generic commerce-shop profiles so shop policy is configuration rather than agent code.
+- Keeps Printify, Etsy, approval, and recovery logic independently testable.
 
 ## Core Architecture
 
-The central flow is:
+The local reasoning path is:
 
 ```text
-Evidence -> Knowledge Graph / Working Memory -> Reasoner -> Jade UI / API
+Evidence
+→ indexes / reports / timeline
+→ Knowledge Graph / Working Memory
+→ Reasoner
+→ Jade UI / API
 ```
 
-Evidence includes notes, imported ChatGPT exports, Outlook/Gmail archives, calendar imports, phone events, reports, timelines, attachments, and product draft packages.
+The guarded automation path is:
 
-Jade uses this local evidence to answer questions, show clickable Knowledge Graph details, and prepare draft-only automation jobs. The Reasoner should prefer local evidence over memory-like guesswork, especially for people, work tickets, family/private context, and product automation.
+```text
+User intent
+→ Planner / Commerce orchestration
+→ Job Queue or AgentRequest
+→ capability-routed agents
+→ approval policy
+→ explicit confirmation
+→ one-attempt external action
+→ verification and durable evidence
+```
+
+Evidence includes notes, imported ChatGPT exports, Outlook/Gmail archives, calendar imports, phone events, reports, timelines, attachments, design candidates, product draft packages, Printify identifiers, mockups, and Etsy listing state.
+
+## Agent OS
+
+The Agent OS foundation includes:
+
+- `AgentRegistry`
+- `AgentRunner`
+- `AgentRequest`
+- `AgentTaskRequest`
+- capability-based delegation
+- `ToolBroker`
+- `SecretProvider`
+- `RunLedger`
+- `ApprovalPolicy`
+- risk levels and approval requirements
+- one-attempt side-effect controls
+
+Current commerce agents:
+
+```text
+CommerceAgent
+├── PrintifyAgent
+└── EtsyAgent
+```
+
+The agents are bounded software components, not separate chatbots. The CommerceAgent coordinates workflows, the PrintifyAgent owns provider-facing capabilities, and the EtsyAgent owns marketplace reads and state transitions. UnityStitches is a generic `commerce_shop` profile bound to those agents.
+
+See [Agent OS architecture](docs/AGENT_OS.md) for capabilities, task graphs, approval behavior, and recovery rules.
 
 ## Approval-First Automation
-
-JamesOS is not an autopublisher.
 
 The Job Queue stores durable jobs under:
 
@@ -48,19 +106,109 @@ The Job Queue stores durable jobs under:
 ~/JamesOSData/JamesOS/Queue/failed
 ```
 
-Approval-gated jobs cannot complete unless approved. This model is intended to protect automations such as product generation, image generation, provider drafts, marketplace drafts, email actions, and phone-driven workflows.
+Remote writes require explicit confirmation. Remote attempts are recorded, limited to one automatic attempt, and are not silently retried.
+
+Approval modes are profile-configurable:
+
+- `single_final`
+- `staged`
+
+Etsy final states are independently configurable:
+
+- `active`
+- `inactive`
+
+UnityStitches currently uses:
+
+```json
+{
+  "approval_mode": "single_final",
+  "etsy_final_state": "active",
+  "human_review_location": "jamesos_listing_preview",
+  "preapproval_printify_draft_allowed": true,
+  "publish_policy": "publish_active_after_approval"
+}
+```
+
+The intended UnityStitches flow is:
+
+```text
+idea
+→ generate and validate artwork
+→ create or update a non-public Printify draft
+→ retrieve real mockups
+→ prepare complete Etsy listing metadata
+→ display one immutable listing proposal
+→ revise as needed
+→ approve once
+→ publish once
+→ verify Etsy is active
+```
+
+Candidate selection and revision requests are not final approval.
+
+## Creative Commerce
+
+The current product orchestrator supports:
+
+- prompt-to-brief parsing
+- Printify catalog and variant resolution
+- local design candidate generation
+- exact phrase enforcement
+- transparency, dimensions, safe-bound, and uniqueness checks
+- human review sheets
+- exact candidate SHA-256 approval
+- garment-specific contrast assessment
+- universal-contrast design repair
+- guarded Printify upload and product creation
+- failed-create recovery without duplicate side effects
+- exact mockup retrieval for selected variants
+- artwork-ID, placement, variant, and front-only verification
+- listing metadata preparation
+- guarded Printify publication
+- Etsy listing resolution
+- Etsy deactivation for staged mode
+- Etsy active-state verification for direct-live mode
+
+### Current diagnostic CLI
+
+```bash
+python scripts/product_from_prompt.py create
+python scripts/product_from_prompt.py resume
+python scripts/product_from_prompt.py status
+python scripts/product_from_prompt.py report
+python scripts/product_from_prompt.py reconcile-draft
+python scripts/product_from_prompt.py review-design
+python scripts/product_from_prompt.py approve-design
+python scripts/product_from_prompt.py revise-design-contrast
+python scripts/product_from_prompt.py recover-draft
+python scripts/product_from_prompt.py update-draft-artwork
+python scripts/product_from_prompt.py review-draft
+python scripts/product_from_prompt.py prepare-listing
+python scripts/product_from_prompt.py send-to-etsy-review
+python scripts/product_from_prompt.py deactivate-etsy-listing
+python scripts/product_from_prompt.py send-to-etsy-inactive-review
+```
+
+Mutating commands default to dry-run behavior unless their explicit confirmation flag is supplied.
+
+The next user-facing milestone is a unified commerce command with one complete listing preview and one final approval.
+
+## Safety Boundaries
+
+- Secrets live outside Git under `~/JamesOSData/JamesOS/Secrets`.
+- No automatic remote retries.
+- No duplicate product creation during recovery.
+- No automatic republish after an indeterminate result.
+- No hidden Etsy activation or deactivation.
+- No order creation from the product-orchestration path.
+- No modification of protected Printify product `6a57eaa752f2c3e4700dbf23`.
+- Artwork changes invalidate exact-hash artwork approval.
+- Proposal changes invalidate final proposal approval.
 
 ## Control Center
 
-The Control Center summarizes JamesOS readiness without taking external action:
-
-- API and server config status
-- Job Queue counts and approval-needed jobs
-- Knowledge Graph and Creative Studio status
-- integration readiness for ComfyUI, POD providers, Etsy, Tasker/phone ingestion, and Outlook import
-- storage paths for JamesOSData, Knowledge Graph, Queue, Creative Studio, Reports, Phone, Email, and ChatGPT data
-
-API routes:
+The Control Center summarizes readiness without taking external action:
 
 ```text
 GET /control-center
@@ -72,7 +220,7 @@ GET /control-center/storage
 GET /control-center/summary
 ```
 
-The generated report is:
+Generated report:
 
 ```text
 ~/JamesOSData/JamesOS/Reports/Control Center.md
@@ -80,132 +228,23 @@ The generated report is:
 
 ## Jade Modes
 
-The user-facing Jade modes are intentionally small:
-
-- `Chat`: default, conversational, with automatic local context detection.
+- `Chat`: default conversational mode with automatic local context detection.
 - `Work`: prioritizes work context, tickets, Knowledge Graph, email context, reports, and deployments.
 - `Private`: uses local context but should not persist chat or write memory notes.
-
-Hidden intent detection still routes local entity, system, memory, family/private, and work questions to the right context sources.
-
-## Creative Studio Roadmap
-
-Jade Creative Studio is an approval-first foundation for multi-brand POD and creative automation.
-
-Current flow:
-
-```text
-Reasoner / Planner -> Job Queue -> Recipe Library -> Design Planner -> Prompt Package -> Image Worker -> ComfyUI -> Design Critic -> Print Readiness -> POD review
-```
-
-The Creative Studio pipeline stages are designed around:
-
-```text
-idea -> recipe -> design_plan -> prompt -> image -> critique -> print_readiness -> review -> provider_review -> marketplace_review -> complete
-```
-
-The image stage can execute one approved local ComfyUI job and save a local PNG. InkedJoy, Printify, Etsy, publishing, uploads, ordering, and sending remain disabled.
-
-The Creative Studio direction is:
-
-- multi-brand POD and creative automation
-- brand registry and provider registry
-- recipe-driven design generation
-- design planning and critique
-- approval-first local automation
-
-ComfyUI readiness routes are available for local planning, health, and approval-gated image generation:
-
-```text
-GET /models
-GET /models/scan
-GET /models/{model_name}
-GET /workflows
-GET /workflows/scan
-GET /workflows/{workflow_name}
-GET /image-worker/health
-POST /image-worker/plan
-POST /image-worker/create-test-job
-POST /image-worker/jobs/{job_id}/execute-approved
-GET /image-worker/jobs/{job_id}/prepared-workflow
-GET /image-worker/jobs/{job_id}/comfy-response
-GET /comfyui/health
-```
-
-Brand Registry routes:
-
-```text
-GET /brands
-GET /brands/health
-GET /brands/default
-GET /brands/{brand_id}
-POST /brands/{brand_id}/validate
-```
-
-POD Provider Registry routes:
-
-```text
-GET /pod-providers
-GET /pod-providers/health
-GET /pod-providers/{provider_id}
-```
-
-Creative Foundation routes:
-
-```text
-GET /prompts
-GET /prompts/{template_name}
-GET /assets
-GET /styles
-GET /styles/{style_name}
-GET /recipes
-GET /recipes/{recipe_id}
-GET /recipes/by-product/{product_type}
-GET /design-planner/health
-POST /design-planner/plan
-GET /design-planner/plans/{plan_id}
-GET /design-critic/health
-POST /design-critic/critique-plan
-POST /design-critic/critique-artifact
-GET /design-critic/critiques/{critic_id}
-POST /design-runs/create
-GET /design-runs
-GET /design-runs/{run_id}
-POST /design-runs/{run_id}/score
-POST /design-runs/{run_id}/promote-best
-```
-
-Design runs create four recipe-driven variations, preserve Design DNA, Design Planner output, logical layer manifests, and pre-generation Design Critic output, score print readiness, and promote a single best candidate only when it reaches the `>= 90` threshold and critic review supports promotion. Product-specific recipes can favor typography, motifs, or pattern systems depending on product fit.
-
-The Model Registry scan is read-only. It inventories local files under `~/AI/Models`, `~/AI/ComfyUI/models`, and `~/JamesOSData/JamesOS/AI/Models`, writes `~/JamesOSData/JamesOS/AI/model_inventory.json`, and keeps all discovered models `enabled: false`.
-
-The Workflow Manager scan is also read-only. It inventories workflow JSON files under `~/AI/Workflows`, `~/AI/ComfyUI/user/default/workflows`, and `~/JamesOSData/JamesOS/AI/Workflows`, writes `~/JamesOSData/JamesOS/AI/workflow_inventory.json`, and keeps all discovered workflows `execution_enabled: false`.
-
-Current safety boundaries:
-
-- No unapproved ComfyUI execution; only one approved local image job may run at a time.
-- No Printify execution yet.
-- No InkedJoy execution yet.
-- No Etsy write execution yet. Etsy performance history is read-only and returns `not_configured` until OAuth/shop credentials are supplied outside Git.
-- No publishing.
-- No ordering.
-- No uploading to providers or marketplaces.
-- No sending to production.
-- No live listings without James approval.
 
 ## Repository Shape
 
 ```text
-jamesos/                 Python backend, services, FastAPI API
+jamesos/                 Python backend, services, agents, and integrations
 scripts/                 CLI helpers and maintenance commands
 apps/jade_app/           Flutter Jade client
-docs/                    Architecture, setup, integration, and roadmap docs
+docs/                    Architecture, setup, integration, status, and roadmap docs
 tests/                   Python regression tests
 ```
 
 ## Common Commands
 
-From repo root:
+From the repository root:
 
 ```bash
 python3 -m py_compile jamesos/services/*.py scripts/*.py
@@ -227,38 +266,10 @@ flutter analyze
 flutter run -d linux
 ```
 
-Job Queue:
-
-```bash
-python3 scripts/job_queue.py list
-python3 scripts/job_queue.py create creative.draft --payload '{"draft_only": true}'
-python3 scripts/job_queue.py approve JOB_ID
-```
-
-Design run example:
-
-```bash
-python3 scripts/create_design_run.py \
-  --brand default \
-  --product womens_underwear \
-  --niche "trans pride" \
-  --recipe underwear/pride_pattern \
-  --variations 4 \
-  --quality premium \
-  --provider printify
-```
-
-Planner and worker readiness:
-
-```text
-GET /planner/health
-POST /planner/plan
-GET /workers
-GET /workers/{worker_name}
-```
-
 ## Documentation
 
+- [Current Status](docs/CURRENT_STATUS.md)
+- [Agent OS](docs/AGENT_OS.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop setup](docs/SETUP_DESKTOP.md)
 - [ComfyUI setup](docs/COMFYUI_SETUP.md)
@@ -289,7 +300,3 @@ GET /workers/{worker_name}
 - [Etsy read-only performance](docs/ETSY_READONLY_PERFORMANCE.md)
 - [API](docs/api.md)
 - [CLI](docs/cli.md)
-
-## Current Status
-
-JamesOS is a local-first personal assistant and automation platform in active development. The stable foundation is local ingestion, memory/search, Knowledge Graph retrieval, Jade interaction, Job Queue safety, reports, and docs. The creative commerce system is recipe-driven, approval-first, and local-first; external provider and marketplace actions remain disabled until future explicitly approved phases.
