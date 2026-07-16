@@ -1,19 +1,18 @@
 # JamesOS
 
-JamesOS is a local-first personal operating system and agent platform built for James. It combines a Python/FastAPI backend, local evidence ingestion, Knowledge Graph and Working Memory, a Flutter client named Jade, a durable Job Queue, an Agent OS runtime, and guarded automation for creative commerce.
+JamesOS is a local-first personal operating system and agent platform. It combines a Python/FastAPI backend, local evidence ingestion, Knowledge Graph and Working Memory, a Flutter client named Jade, a durable Job Queue, an Agent OS runtime, and guarded automation for creative commerce.
 
-The project is intentionally personal, evidence-aware, and approval-first. JamesOS can reason over local notes, imported ChatGPT history, email and calendar evidence, work records, phone events, reports, tickets, creative assets, Printify drafts, and Etsy listing state. Consequential actions require explicit review, confirmation, and durable side-effect records.
+The project is evidence-aware and approval-first. JamesOS can reason over local notes, imported ChatGPT history, email and calendar evidence, work records, phone events, reports, tickets, creative assets, provider drafts, and marketplace listing state. Consequential actions require explicit review, confirmation, and durable side-effect records.
 
 ## Current Status
 
 At the July 16, 2026 checkpoint:
 
 - `362` tests pass
-- Printify draft creation, recovery, mockup review, metadata updates, and guarded publication are implemented
-- Etsy OAuth, listing reads, deactivation, inactive verification, and active-state verification are implemented
+- provider draft creation, recovery, mockup review, metadata updates, and guarded publication are implemented
+- marketplace OAuth, listing reads, deactivation, inactive verification, and active-state verification are implemented
 - configurable `single_final` and `staged` approval modes are implemented
-- configurable Etsy final states `active` and `inactive` are implemented
-- UnityStitches is configured for one final approval followed by an active Etsy listing
+- configurable marketplace final states `active` and `inactive` are implemented
 - order creation remains disabled
 - the preferred unified `idea → complete listing preview → approve once → live` CLI is the next major milestone
 
@@ -36,9 +35,9 @@ Read these first:
 - Provides a Control Center for health, integrations, jobs, storage, and automation readiness.
 - Supports Android phone ingestion through Tasker or desktop/laptop pull alternatives.
 - Provides a Flutter Jade app for Linux and Android.
-- Supports local design generation, candidate review, exact-hash approval, Printify drafts, real mockup retrieval, and Etsy channel workflows.
-- Supports generic commerce-shop profiles so shop policy is configuration rather than agent code.
-- Keeps Printify, Etsy, approval, and recovery logic independently testable.
+- Supports local design generation, candidate review, exact-hash approval, provider drafts, real mockup retrieval, and marketplace workflows.
+- Supports generic commerce-shop profiles so deployment policy remains configuration rather than agent code.
+- Keeps provider, marketplace, approval, and recovery logic independently testable.
 
 ## Core Architecture
 
@@ -65,7 +64,7 @@ User intent
 → verification and durable evidence
 ```
 
-Evidence includes notes, imported ChatGPT exports, Outlook/Gmail archives, calendar imports, phone events, reports, timelines, attachments, design candidates, product draft packages, Printify identifiers, mockups, and Etsy listing state.
+Evidence includes notes, imported ChatGPT exports, email archives, calendar imports, phone events, reports, timelines, attachments, design candidates, product draft packages, provider identifiers, mockups, and marketplace listing state.
 
 ## Agent OS
 
@@ -91,7 +90,7 @@ CommerceAgent
 └── EtsyAgent
 ```
 
-The agents are bounded software components, not separate chatbots. The CommerceAgent coordinates workflows, the PrintifyAgent owns provider-facing capabilities, and the EtsyAgent owns marketplace reads and state transitions. UnityStitches is a generic `commerce_shop` profile bound to those agents.
+The agents are bounded software components, not separate chatbots. The CommerceAgent coordinates workflows, the PrintifyAgent owns provider-facing capabilities, and the EtsyAgent owns marketplace reads and state transitions. Shops and deployments are represented by private local `commerce_shop` profiles rather than hard-coded public agent definitions.
 
 See [Agent OS architecture](docs/AGENT_OS.md) for capabilities, task graphs, approval behavior, and recovery rules.
 
@@ -113,46 +112,46 @@ Approval modes are profile-configurable:
 - `single_final`
 - `staged`
 
-Etsy final states are independently configurable:
+Marketplace final states are independently configurable:
 
 - `active`
 - `inactive`
 
-UnityStitches currently uses:
+A typical single-final profile can use:
 
 ```json
 {
   "approval_mode": "single_final",
-  "etsy_final_state": "active",
+  "marketplace_final_state": "active",
   "human_review_location": "jamesos_listing_preview",
-  "preapproval_printify_draft_allowed": true,
+  "preapproval_provider_draft_allowed": true,
   "publish_policy": "publish_active_after_approval"
 }
 ```
 
-The intended UnityStitches flow is:
+A typical single-final flow is:
 
 ```text
 idea
 → generate and validate artwork
-→ create or update a non-public Printify draft
+→ create or update a non-public provider draft
 → retrieve real mockups
-→ prepare complete Etsy listing metadata
+→ prepare complete marketplace listing metadata
 → display one immutable listing proposal
 → revise as needed
 → approve once
 → publish once
-→ verify Etsy is active
+→ verify the listing is active
 ```
 
-Candidate selection and revision requests are not final approval.
+Candidate selection and revision requests are editing steps, not final approval.
 
 ## Creative Commerce
 
 The current product orchestrator supports:
 
 - prompt-to-brief parsing
-- Printify catalog and variant resolution
+- provider catalog and variant resolution
 - local design candidate generation
 - exact phrase enforcement
 - transparency, dimensions, safe-bound, and uniqueness checks
@@ -160,15 +159,15 @@ The current product orchestrator supports:
 - exact candidate SHA-256 approval
 - garment-specific contrast assessment
 - universal-contrast design repair
-- guarded Printify upload and product creation
+- guarded artwork upload and product creation
 - failed-create recovery without duplicate side effects
 - exact mockup retrieval for selected variants
 - artwork-ID, placement, variant, and front-only verification
 - listing metadata preparation
-- guarded Printify publication
-- Etsy listing resolution
-- Etsy deactivation for staged mode
-- Etsy active-state verification for direct-live mode
+- guarded publication
+- marketplace listing resolution
+- listing deactivation for staged mode
+- active-state verification for direct-live mode
 
 ### Current diagnostic CLI
 
@@ -196,13 +195,13 @@ The next user-facing milestone is a unified commerce command with one complete l
 
 ## Safety Boundaries
 
-- Secrets live outside Git under `~/JamesOSData/JamesOS/Secrets`.
+- Secrets and deployment-specific profiles live outside Git under `~/JamesOSData/JamesOS`.
 - No automatic remote retries.
 - No duplicate product creation during recovery.
 - No automatic republish after an indeterminate result.
-- No hidden Etsy activation or deactivation.
+- No hidden marketplace activation or deactivation.
 - No order creation from the product-orchestration path.
-- No modification of protected Printify product `6a57eaa752f2c3e4700dbf23`.
+- Protected resource identifiers belong in private local profiles, not public documentation.
 - Artwork changes invalidate exact-hash artwork approval.
 - Proposal changes invalidate final proposal approval.
 
