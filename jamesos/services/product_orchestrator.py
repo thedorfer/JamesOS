@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import copy
 from datetime import datetime
 from hashlib import sha256
 import html
@@ -28,6 +29,9 @@ STAGES = ("prompt_received", "brief_ready", "artwork_ready", "production_artifac
           "awaiting_human_approval", "failed")
 DEFAULT_COLORS = ["Black", "Dark Grey Heather", "White"]
 DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
+COLOR_EXACT = {"black":"Black", "dark grey heather":"Dark Grey Heather", "white":"White"}
+COLOR_ALIASES = {"dark heather":"Dark Grey Heather", "dark gray heather":"Dark Grey Heather"}
+COLOR_WORDS = re.compile(r"\b(?:black|white|grey|gray|heather|charcoal|navy|red|blue|green|yellow|purple|pink|orange)\b", re.I)
 
 
 def _json_sha(value: Any) -> str:
@@ -50,6 +54,35 @@ def _atomic_json(path: Path, value: Any) -> None:
     temporary.replace(path)
 
 
+def resolve_garment_colors(value: str | list[str], *, configured_aliases: dict[str, str] | None = None) -> dict[str, Any]:
+    aliases = {**COLOR_ALIASES, **{key.casefold(): item for key, item in (configured_aliases or {}).items()}}
+    phrases = {**COLOR_EXACT, **aliases}; requested = []; occupied: list[tuple[int,int]] = []
+    inputs = [str(item).strip() for item in value] if isinstance(value, list) else None
+    if inputs is None:
+        text = value
+        matches: list[tuple[int,str]] = []
+        for phrase in sorted(phrases, key=len, reverse=True):
+            for match in re.finditer(rf"(?<!\w){re.escape(phrase)}(?!\w)", text, re.I):
+                if not any(match.start() < end and match.end() > start for start,end in occupied):
+                    occupied.append((match.start(),match.end()));matches.append((match.start(),match.group(0).casefold()))
+        matches.sort()
+        for match in COLOR_WORDS.finditer(text):
+            if not any(match.start() < end and match.end() > start for start,end in occupied): matches.append((match.start(),match.group(0).casefold()))
+        requested = [phrase for _,phrase in sorted(matches)]
+    else: requested = [item.casefold() for item in inputs if item]
+    resolved=[];unresolved=[];seen=set()
+    for phrase in requested:
+        canonical=phrases.get(phrase)
+        if canonical is None:
+            if phrase not in unresolved: unresolved.append(phrase)
+            continue
+        if canonical in seen: continue
+        seen.add(canonical);resolved.append({"requested":phrase,"canonical":canonical,
+            "resolution":"exact" if phrase in COLOR_EXACT else "configured_alias"})
+    return {"requested_color_phrases":requested,"resolved_colors":resolved,"unresolved_colors":unresolved,
+            "canonical_colors":[item["canonical"] for item in resolved]}
+
+
 def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: list[str] | None = None,
                      sizes: list[str] | None = None) -> dict[str, Any]:
     cleaned = " ".join(prompt.split())
@@ -58,10 +91,10 @@ def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: l
     exact = quoted.group(1).upper().strip() if quoted else "LOVE IS LOVE" if "love is love" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
-    lower = cleaned.lower()
-    colors = garment_colors or [color for color in DEFAULT_COLORS if color.lower().replace("grey", "gray") in lower.replace("grey", "gray")] or DEFAULT_COLORS
+    lower = cleaned.lower(); color_resolution = resolve_garment_colors(garment_colors if garment_colors is not None else cleaned)
+    colors = color_resolution["canonical_colors"] or (DEFAULT_COLORS if not color_resolution["requested_color_phrases"] else [])
     return {"exact_text": exact, "product_type": "unisex_t_shirt", "visual_style": "playful bold retro" if "retro" in lower else "bold graphic",
-        "garment_colors": colors, "sizes": sizes or DEFAULT_SIZES, "price_cents": price if price is not None else parsed_price,
+        "garment_colors": colors, "color_resolution": color_resolution, "sizes": sizes or DEFAULT_SIZES, "price_cents": price if price is not None else parsed_price,
         "currency": "USD", "preferred_layout": "integrated_shadow", "audience": "inclusive adults",
         "listing_tone": "playful positive", "blank": "Bella+Canvas 3001", "print_provider": "Monster Digital"}
 
@@ -186,6 +219,73 @@ class ProductOrchestrator:
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
 
+    def reconcile_draft(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
+        state = self.load(job_id)
+        if state.get("stage") != "awaiting_human_approval":
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Draft reconciliation requires awaiting_human_approval state.", operation="product_orchestrator.reconcile_draft", stage="preflight")
+        draft = state.get("evidence", {}).get("draft") or {}; upload = state.get("evidence", {}).get("upload") or {}
+        product_id = draft.get("printify_product_id")
+        if not product_id or product_id == PROTECTED_PRODUCT_ID:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="The recorded draft is missing or protected.", operation="product_orchestrator.reconcile_draft", stage="ownership")
+        client = self.adapters.client_factory(); remote = client.get_product(state["shop_id"], product_id)
+        if remote.get("id") != product_id: raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote product ID does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
+        marker = state.get("evidence", {}).get("draft_marker") or draft.get("draft_marker")
+        if not marker or marker not in {str(tag) for tag in remote.get("tags") or []}:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft marker does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
+        if remote.get("visible") is True or remote.get("is_published") is True or remote.get("published") is True:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Published products cannot be reconciled.", operation="product_orchestrator.reconcile_draft", stage="publication")
+        if state.get("order_status") != "not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="A product with order evidence cannot be reconciled.", operation="product_orchestrator.reconcile_draft", stage="order")
+        if remote.get("blueprint_id") != 12 or remote.get("print_provider_id") != 29:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote blueprint or provider differs from the orchestrator plan.", operation="product_orchestrator.reconcile_draft", stage="provider")
+        image_id = upload.get("printify_image_id"); placements = [image for area in remote.get("print_areas") or []
+            for placeholder in area.get("placeholders") or [] for image in placeholder.get("images") or [] if image.get("id") == image_id]
+        if not image_id or not placements:
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="The orchestrator image is not present in the remote draft.", operation="product_orchestrator.reconcile_draft", stage="artwork")
+        selected_sha = state.get("evidence", {}).get("selection", {}).get("selected", {}).get("png_sha256")
+        if upload.get("selected_design_sha256") != selected_sha:
+            raise ArtifactIntegrityError("ARTIFACT_SHA_MISMATCH", diagnostic_message="Uploaded image evidence no longer matches the selected design.", operation="product_orchestrator.reconcile_draft", stage="artwork")
+        resolution = resolve_garment_colors(state["original_prompt"])
+        if resolution["unresolved_colors"] or resolution["canonical_colors"] != DEFAULT_COLORS:
+            raise ValidationError("VALIDATION_FAILED", diagnostic_message="The prompt did not resolve to the required three exact garment colors.", operation="product_orchestrator.reconcile_draft", stage="color_resolution", context=resolution)
+        catalog = client.get_variants(12,29); desired = select_printify_variants(catalog,colors=resolution["canonical_colors"],sizes=state["brief"]["sizes"])
+        desired_ids = desired["selected_variant_ids"]; current_rows = normalize_printify_variants({"variants":remote.get("variants") or []})
+        current_ids = [row["variant_id"] for row in current_rows if row["is_available"] and next((item.get("is_enabled",True) for item in remote.get("variants") or [] if item.get("id")==row["variant_id"]),True)]
+        retain = [item for item in desired_ids if item in current_ids]; add = [item for item in desired_ids if item not in current_ids]; remove = [item for item in current_ids if item not in desired_ids]
+        current_scale = float(placements[0].get("scale") or 0); placement_plan = [{"label":"current","scale":current_scale,"inside_placeholder":0 < current_scale <= 1},
+            {"label":"current_plus_8_percent","scale":round(current_scale*1.08,4),"inside_placeholder":0 < current_scale*1.08 <= 1},
+            {"label":"current_plus_12_percent","scale":round(current_scale*1.12,4),"inside_placeholder":0 < current_scale*1.12 <= 1}]
+        plan = {"product_id":product_id,"selected_image_id":image_id,"requested_colors":resolution["canonical_colors"],
+            "color_resolution":resolution,"current_colors":list(dict.fromkeys(row["color"] for row in current_rows if row["variant_id"] in current_ids)),
+            "current_sizes":list(dict.fromkeys(row["size"] for row in current_rows if row["variant_id"] in current_ids)),
+            "desired_colors":resolution["canonical_colors"],"desired_sizes":state["brief"]["sizes"],"variant_ids_to_retain":retain,
+            "variant_ids_to_add":add,"variant_ids_to_remove":remove,"current_variant_count":len(current_ids),"resulting_variant_count":len(desired_ids),
+            "price_cents":state["evidence"]["listing"]["price_cents"],"placement":copy.deepcopy(placements[0]),"placement_adjustment_plan":placement_plan,
+            "placement_change_included":False,"publish_status":"not_published","order_status":"not_created","draft_marker":marker}
+        if not confirmed: return {"result":"draft_reconciliation_plan","write_performed":False,"plan":plan}
+        payload={"title":remote.get("title"),"description":remote.get("description"),"tags":remote.get("tags") or [],"blueprint_id":12,"print_provider_id":29,
+            "variants":[{"id":item,"price":plan["price_cents"],"is_enabled":True} for item in desired_ids],"print_areas":copy.deepcopy(remote.get("print_areas") or [])}
+        for area in payload["print_areas"]:
+            area["variant_ids"]=desired_ids
+            for placeholder in area.get("placeholders") or []: placeholder["variant_ids"]=desired_ids
+        write_performed=bool(add or remove)
+        if write_performed: client.update_product(state["shop_id"],product_id,payload)
+        verified=client.get_product(state["shop_id"],product_id)
+        verified_ids=sorted(item.get("id") for item in verified.get("variants") or [] if item.get("is_enabled"))
+        if verified.get("id")!=product_id or verified.get("visible") is True or verified_ids!=sorted(desired_ids):
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft verification did not match the reconciliation plan.", operation="product_orchestrator.reconcile_draft", stage="verification")
+        verified_placements=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            for image in placeholder.get("images") or [] if image.get("id")==image_id]
+        placement_keys=("x","y","scale","angle");placement_unchanged=bool(verified_placements and all(verified_placements[0].get(key)==placements[0].get(key) for key in placement_keys))
+        evidence={"status":"existing_draft_updated" if write_performed else "already_reconciled","previous_variant_ids":current_ids,
+            "resulting_variant_ids":desired_ids,"added_variant_ids":add,"removed_variant_ids":remove,"remote_product_verified":True,
+            "updated_at":datetime.now().astimezone().isoformat(),"no_new_upload":True,"no_new_product":True,
+            "publish_status":"not_published","order_status":"not_created","placement_unchanged":placement_unchanged,"plan":plan}
+        state["brief"]["garment_colors"]=resolution["canonical_colors"];state["brief"]["color_resolution"]=resolution
+        state["evidence"]["variant_selection"]=desired;state["evidence"]["draft_reconciliation"]=evidence;state["evidence"]["draft"]["variant_ids"]=desired_ids
+        self._transition(state,"awaiting_human_approval","reconcile_existing_draft_variants",evidence);self.report(job_id)
+        return {"result":evidence["status"],"write_performed":write_performed,"plan":plan,"reconciliation":evidence}
+
     def _normalize_recovered_error(self, state: dict[str, Any]) -> bool:
         current = state.get("last_error")
         if state.get("stage") != "awaiting_human_approval" or not current: return False
@@ -209,6 +309,10 @@ class ProductOrchestrator:
             if "brief_ready" not in completed:
                 state["brief"] = normalize_prompt(state["original_prompt"], price=price, garment_colors=garment_colors, sizes=sizes)
                 self._transition(state, "brief_ready", "normalize_prompt", state["brief"])
+            unresolved = (state["brief"].get("color_resolution") or {}).get("unresolved_colors") or []
+            if unresolved:
+                raise ValidationError("VALIDATION_FAILED", diagnostic_message="Requested garment colors could not be resolved to exact catalog colors.",
+                    operation="product_orchestrator", stage="brief_ready", context={"unresolved_colors":unresolved})
             evidence = self.adapters.evidence(state["source_job_id"] or "")
             if "artwork_ready" not in completed:
                 artwork = {"path": str(evidence["candidate"]), "sha256": evidence["candidate_sha"], "approval_sha256": evidence["approval_sha"]}
@@ -286,5 +390,7 @@ class ProductOrchestrator:
         cards = "".join(f"<section><h3>{html.escape(x['candidate_id'])}</h3><img src='{html.escape(x.get('thumbnail_path',''))}'><pre>{html.escape(json.dumps(scores.get(x['candidate_id']) or {}, indent=2))}</pre></section>" for x in candidates)
         recovered = state.get("recovered_errors") or []
         active = "None — the workflow is currently successful." if not state.get("last_error") else html.escape(json.dumps(state["last_error"], indent=2))
-        document = f"<!doctype html><html><body><h1>DRAFT · NOT PUBLISHED · NO ORDER CREATED · AWAITING HUMAN APPROVAL</h1><h2>Current workflow state</h2><p>{html.escape(state['stage'])}</p><h2>Active failure</h2><pre>{active}</pre><h2>Recovered error history</h2><pre>{html.escape(json.dumps(recovered, indent=2))}</pre><h2>Original prompt</h2><p>{html.escape(state['original_prompt'])}</p><h2>Normalized brief</h2><pre>{html.escape(json.dumps(state.get('brief'), indent=2))}</pre><h2>V4 candidates</h2>{cards}<h2>Complete evidence and current state</h2><pre>{html.escape(json.dumps(state, indent=2, default=str))}</pre></body></html>"
+        reconciliation=state.get("evidence",{}).get("draft_reconciliation") or {}; colors=state.get("brief",{}).get("garment_colors") or []
+        reconciliation_section=(f"<h2>EXISTING DRAFT UPDATED · NO NEW PRODUCT CREATED · NOT PUBLISHED · NO ORDER CREATED</h2><p>Requested colors:<br>{'<br>'.join(html.escape(x) for x in colors)}</p><p>Enabled variants: {len(reconciliation.get('resulting_variant_ids') or [])}</p><pre>{html.escape(json.dumps(reconciliation,indent=2))}</pre>" if reconciliation else "<h2>Draft reconciliation</h2><p>Not performed.</p>")
+        document = f"<!doctype html><html><body><h1>DRAFT · NOT PUBLISHED · NO ORDER CREATED · AWAITING HUMAN APPROVAL</h1>{reconciliation_section}<h2>Current workflow state</h2><p>{html.escape(state['stage'])}</p><h2>Active failure</h2><pre>{active}</pre><h2>Recovered error history</h2><pre>{html.escape(json.dumps(recovered, indent=2))}</pre><h2>Original prompt</h2><p>{html.escape(state['original_prompt'])}</p><h2>Normalized brief</h2><pre>{html.escape(json.dumps(state.get('brief'), indent=2))}</pre><h2>V4 candidates</h2>{cards}<h2>Complete evidence and current state</h2><pre>{html.escape(json.dumps(state, indent=2, default=str))}</pre></body></html>"
         path.write_text(document, encoding="utf-8"); return path

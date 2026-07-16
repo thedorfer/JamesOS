@@ -48,6 +48,25 @@ class ProductOrchestratorTests(unittest.TestCase):
         self.assertEqual(brief["exact_text"],"LOVE IS LOVE");self.assertEqual(brief["price_cents"],2499)
         self.assertEqual(brief["blank"],"Bella+Canvas 3001");self.assertIn("Black",brief["garment_colors"])
 
+    def test_color_aliases_order_longest_match_duplicates_and_unresolved(self):
+        for phrase in ("dark heather","dark gray heather","dark grey heather"):
+            self.assertEqual(product_orchestrator.resolve_garment_colors(phrase)["canonical_colors"],["Dark Grey Heather"])
+        ordered=product_orchestrator.resolve_garment_colors("black, dark grey heather, white, dark heather")
+        self.assertEqual(ordered["canonical_colors"],["Black","Dark Grey Heather","White"])
+        self.assertEqual(ordered["requested_color_phrases"][:3],["black","dark grey heather","white"])
+        ambiguous=product_orchestrator.resolve_garment_colors("grey");self.assertEqual(ambiguous["canonical_colors"],[]);self.assertEqual(ambiguous["unresolved_colors"],["grey"])
+        charcoal=product_orchestrator.resolve_garment_colors("charcoal heather",configured_aliases={"charcoal heather":"Dark Grey Heather"})
+        self.assertEqual(charcoal["resolved_colors"][0]["resolution"],"configured_alias")
+
+    def test_unresolved_color_blocks_before_client_creation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);evidence=self.fixture(root);client_factory=Mock(side_effect=AssertionError("no client"))
+            adapters=product_orchestrator.Adapters(evidence=lambda _:evidence,candidates=self.candidates,client_factory=client_factory)
+            orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",adapters)
+            with patch.object(product_orchestrator,"handle_error",side_effect=lambda exc,**kw:error_handler.handle_error(exc,diagnostic_root=root/"diag",log=False,**kw)):
+                state=orchestrator.create(prompt="LOVE IS LOVE on grey",source_job_id="source",shop_id=1,confirm_printify_draft=True,job_id="unresolved")
+            self.assertEqual(state["stage"],"failed");self.assertEqual(state["last_error"]["code"],"VALIDATION_FAILED");client_factory.assert_not_called()
+
     def test_three_real_v4_refinements_and_correct_opaque_check(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);evidence=self.fixture(root);font_root=root/"fonts";font_root.mkdir()
@@ -188,6 +207,56 @@ class ProductOrchestratorTests(unittest.TestCase):
         active={"error_id":"err-current","code":"VALIDATION_FAILED","user_message":"failed","retryable":False,"suggested_action":"fix","diagnostic_path":"/diag"}
         failure={**success,"stage":"failed","last_error":active}
         failed=product_from_prompt.response_summary(failure,orchestrator);self.assertEqual(failed["error_id"],"err-current");self.assertEqual(failed["last_error"],active)
+
+    def reconciliation_fixture(self, root: Path, *, product_id="draft-owned"):
+        marker="jamesos-orchestrator-marker";image_id="upload-owned";design_sha="d"*64
+        black=list(range(18100,18106));dark=list(range(18148,18154));white=list(range(18540,18546));sizes=product_orchestrator.DEFAULT_SIZES
+        def rows(ids,color):return [{"id":item,"title":f"{color} / {size}","is_available":True,"is_enabled":True,"price":2499} for item,size in zip(ids,sizes)]
+        current_rows=rows(black,"Black")+rows(white,"White");desired_rows=rows(black,"Black")+rows(dark,"Dark Grey Heather")+rows(white,"White")
+        placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0}
+        current={"id":product_id,"title":"Love Is Love","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
+            "visible":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[{"position":"front","variant_ids":black+white,"images":[placement]}]}]}
+        verified=copy.deepcopy(current);verified["variants"]=desired_rows;verified["print_areas"][0]["variant_ids"]=black+dark+white;verified["print_areas"][0]["placeholders"][0]["variant_ids"]=black+dark+white
+        state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":9437076,"original_prompt":"LOVE IS LOVE on black, dark heather, and white",
+            "brief":{"sizes":sizes,"garment_colors":["Black","White"]},"publish_status":"not_published","order_status":"not_created","transitions":[],"stage_output":{},
+            "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+white},"draft_marker":marker,
+                "upload":{"printify_image_id":image_id,"selected_design_sha256":design_sha},"selection":{"selected":{"png_sha256":design_sha}},
+                "listing":{"price_cents":2499},"variants":{"retained":True},"mockups":[{"local_path":"mock.jpg"}]}}
+        orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:None))
+        product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+        return orchestrator,state,current,verified,{"variants":desired_rows},dark
+
+    def test_reconciliation_plan_and_single_confirmed_update(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);client=Mock()
+            orchestrator.adapters.client_factory=lambda:client;client.get_product.return_value=current;client.get_variants.return_value=catalog
+            plan=orchestrator.reconcile_draft("reconcile-job")
+            self.assertFalse(plan["write_performed"]);client.update_product.assert_not_called();self.assertEqual(plan["plan"]["variant_ids_to_add"],dark)
+            self.assertEqual(plan["plan"]["current_variant_count"],12);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
+            self.assertEqual([x["scale"] for x in plan["plan"]["placement_adjustment_plan"]],[.85,.918,.952]);self.assertFalse(plan["plan"]["placement_change_included"])
+            client.get_product.side_effect=[current,verified]
+            result=orchestrator.reconcile_draft("reconcile-job",confirmed=True);client.update_product.assert_called_once()
+            payload=client.update_product.call_args.args[2];self.assertEqual(len(payload["variants"]),18);self.assertEqual({x["price"] for x in payload["variants"]},{2499})
+            self.assertEqual(payload["print_areas"][0]["placeholders"][0]["images"][0]["scale"],.85)
+            self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
+            client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
+            saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)
+            report=orchestrator.report("reconcile-job").read_text();self.assertIn("EXISTING DRAFT UPDATED",report);self.assertIn("Enabled variants: 18",report)
+
+    def test_reconciliation_rejects_unsafe_ownership_publication_and_order(self):
+        scenarios=(("wrong_id",lambda remote:remote.update(id="other")),("marker",lambda remote:remote.update(tags=[])),
+            ("published",lambda remote:remote.update(visible=True)),("order",lambda remote:remote.update(orders=[{"id":"order"}])) )
+        for name,mutate in scenarios:
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);mutate(current);client=Mock()
+                client.get_product.return_value=current;client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
+                with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.reconcile_draft("reconcile-job",confirmed=True)
+                client.update_product.assert_not_called();client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,*_=self.reconciliation_fixture(root,product_id=product_orchestrator.PROTECTED_PRODUCT_ID)
+            orchestrator.adapters.client_factory=Mock(side_effect=AssertionError("no client"))
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.reconcile_draft("reconcile-job",confirmed=True)
+            orchestrator.adapters.client_factory.assert_not_called()
 
 
 if __name__ == "__main__":unittest.main()

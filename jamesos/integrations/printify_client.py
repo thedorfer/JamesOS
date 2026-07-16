@@ -99,3 +99,4 @@ class PrintifyClient:
     def list_products(self, shop_id: int): return self._request("GET", f"/shops/{shop_id}/products.json", operation="list_products", safe_read=True)
     def get_product(self, shop_id: int, product_id: str): return self._request("GET", f"/shops/{shop_id}/products/{product_id}.json", operation="get_product", safe_read=True)
     def create_product(self, shop_id: int, payload: dict[str, Any]): return self._request("POST", f"/shops/{shop_id}/products.json", operation="create_product", payload=payload)
+    def update_product(self, shop_id: int, product_id: str, payload: dict[str, Any]): return self._request("PUT", f"/shops/{shop_id}/products/{product_id}.json", operation="update_product", payload=payload)
