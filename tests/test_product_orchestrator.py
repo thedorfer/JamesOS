@@ -361,12 +361,15 @@ class ProductOrchestratorTests(unittest.TestCase):
         remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=image_id
         state["evidence"]["upload"]["printify_image_id"]=image_id;product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
         if with_mockups:
-            groups=(range(18100,18106),dark,range(18540,18546));remote["images"]=[{"src":f"https://mock.test/{index}.png?token=private",
-                "variant_ids":list(ids),"position":"front","is_default":True} for index,ids in enumerate(groups)]
+            representatives=(18102,18150,18542);all_enabled=sorted(desired);remote["images"]=[{"src":f"https://mock.test/front/{variant_id}/preview.png?token=private",
+                "mockup_id":f"front-{variant_id}-mockup","variant_ids":all_enabled,"position":"front","is_default":True} for variant_id in representatives]
         else:remote["images"]=[]
         client=Mock();client.get_product.return_value=remote;client.timeout=(1,1)
-        image=Image.new("RGB",(320,480),(120,80,160));content=BytesIO();image.save(content,"PNG");image.close()
-        response=Mock(content=content.getvalue());response.raise_for_status.return_value=None;client.session.get.return_value=response
+        def response(url,**_kwargs):
+            variant_id=next(item for item in (18102,18150,18542) if str(item) in url);color={18102:(25,25,25),18150:(90,90,90),18542:(245,245,245)}[variant_id]
+            image=Image.new("RGB",(320,480),color);content=BytesIO();image.save(content,"PNG");image.close()
+            result=Mock(content=content.getvalue());result.raise_for_status.return_value=None;return result
+        client.session.get.side_effect=response
         orchestrator.adapters.client_factory=lambda:client
         return orchestrator,state,remote,client
 
@@ -381,6 +384,10 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertTrue(all(path.resolve().is_relative_to(orchestrator._path("reconcile-job").parent.resolve()) for path in review_root.iterdir()))
             report=json.loads(Path(result["json_report_path"]).read_text());checks=report["checks"]
             self.assertTrue(all(item["mockup_available"] for item in checks["mockups"]));self.assertTrue(checks["artwork_image_id_matches"])
+            self.assertEqual([item["selected_variant_id"] for item in checks["mockups"]],[18102,18150,18542])
+            self.assertEqual([item["selected_mockup_id"] for item in checks["mockups"]],["front-18102-mockup","front-18150-mockup","front-18542-mockup"])
+            self.assertTrue(all(item["selection_method"]=="exact_mockup_variant" and item["color_match_verified"] for item in checks["mockups"]))
+            self.assertEqual(len({item["downloaded_sha256"] for item in checks["mockups"]}),3);self.assertEqual(result["recommended_scale_action"],"keep_0.85")
             self.assertTrue(checks["front_artwork_present"]);self.assertTrue(checks["back_artwork_absent"]);self.assertEqual(checks["placement"]["scale"],.85)
             self.assertNotIn("mock.test",json.dumps(report));self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
             for method in (client.update_product,client.create_product,client.upload_image_contents,client.upload_image_url):method.assert_not_called()
@@ -406,6 +413,25 @@ class ProductOrchestratorTests(unittest.TestCase):
             result=orchestrator.review_draft("reconcile-job");self.assertEqual(result["recommended_scale_action"],"manual_review_required")
             report=json.loads(Path(result["json_report_path"]).read_text());self.assertTrue(all(not item["mockup_available"] for item in report["checks"]["mockups"]))
             client.session.get.assert_not_called();client.update_product.assert_not_called()
+
+    def test_review_draft_ignores_variant_membership_without_exact_mockup_variant(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,client=self.review_fixture(root)
+            for index,image in enumerate(remote["images"]):image.update(mockup_id=f"unrelated-{index}",src=f"https://mock.test/front/unrelated-{index}.png")
+            result=orchestrator.review_draft("reconcile-job");report=json.loads(Path(result["json_report_path"]).read_text())
+            self.assertEqual(result["recommended_scale_action"],"manual_review_required");client.session.get.assert_not_called()
+            self.assertTrue(all(not item["mockup_available"] and not item["color_match_verified"] for item in report["checks"]["mockups"]))
+            self.assertTrue(all("exact_mockup_variant_missing" in item["issues"] for item in report["checks"]["mockups"]))
+
+    def test_review_draft_duplicate_hashes_flag_color_mismatch(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,client=self.review_fixture(root)
+            image=Image.new("RGB",(320,480),(100,100,100));content=BytesIO();image.save(content,"PNG");image.close()
+            response=Mock(content=content.getvalue());response.raise_for_status.return_value=None;client.session.get.side_effect=None;client.session.get.return_value=response
+            result=orchestrator.review_draft("reconcile-job");report=json.loads(Path(result["json_report_path"]).read_text());records=report["checks"]["mockups"]
+            self.assertEqual(result["recommended_scale_action"],"manual_review_required");self.assertEqual(len({item["downloaded_sha256"] for item in records}),1)
+            self.assertTrue(all(item["mockup_available"] and not item["color_match_verified"] for item in records))
+            self.assertTrue(all("mockup_color_mismatch" in item["issues"] for item in records));self.assertIn("downloaded, not color-verified",Path(result["html_report_path"]).read_text())
 
     def test_reconciliation_verification_rejects_total_or_enabled_variant_drift(self):
         for name,mutate in (("total",lambda verified:verified["variants"].pop()),

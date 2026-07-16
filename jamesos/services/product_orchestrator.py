@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import tempfile
 from typing import Any, Callable
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from PIL import Image, ImageDraw
@@ -178,6 +179,16 @@ def build_full_variant_payload(remote_variants: list[dict[str, Any]], desired_en
     return payload,full_ids
 
 
+def mockup_identifies_variant(image: dict[str, Any], variant_id: int) -> bool:
+    front=str(image.get("position") or "").casefold()=="front" or str(image.get("camera_label") or "").casefold()=="front"
+    if not front: return False
+    pattern=rf"(?<!\d){variant_id}(?!\d)"
+    mockup_id=str(image.get("mockup_id") or "")
+    try: source_path=urlsplit(str(image.get("src") or "")).path
+    except ValueError: source_path=""
+    return bool(re.search(pattern,mockup_id) or re.search(pattern,source_path))
+
+
 def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(response, dict):
         raise ValidationError("VALIDATION_FAILED", diagnostic_message="Printify variants response must be an object.",
@@ -336,41 +347,55 @@ class ProductOrchestrator:
         placement_value={key:placement.get(key) for key in ("x","y","scale","angle")}
         review_root=self._path(job_id).parent/"visual-review";review_root.mkdir(parents=True,exist_ok=True)
         names={"Black":"black-front.png","Dark Grey Heather":"dark-grey-heather-front.png","White":"white-front.png"}
+        representative_ids={"Black":18102,"Dark Grey Heather":18150,"White":18542}
         records=[];panels=[]
         for color in DEFAULT_COLORS:
-            matching=[image for image in remote.get("images") or [] if image.get("position") in (None,"front")
-                and set(image.get("variant_ids") or [])&set(colors[color]) and str(image.get("src") or "").startswith("https://")]
-            matching.sort(key=lambda image:not bool(image.get("is_default")));available=False;panel=None
+            representative_id=representative_ids[color]
+            matching=[image for image in remote.get("images") or [] if mockup_identifies_variant(image,representative_id)
+                and str(image.get("src") or "").startswith("https://")]
+            matching.sort(key=lambda image:not bool(image.get("is_default")));available=False;panel=None;selected=matching[0] if matching else None
             if matching:
                 try:
-                    response=client.session.get(matching[0]["src"],timeout=client.timeout);response.raise_for_status()
+                    response=client.session.get(selected["src"],timeout=client.timeout);response.raise_for_status()
                     panel=Image.open(BytesIO(response.content)).convert("RGB");available=True
                 except Exception: panel=None
             if panel is None:
                 panel=Image.new("RGB",(900,1100),(235,235,235));draw=ImageDraw.Draw(panel)
                 draw.text((60,520),f"{color}\nMockup unavailable",fill=(35,35,35))
             target=review_root/names[color];panel.save(target,"PNG");panels.append((color,panel.copy()))
-            records.append({"color":color,"mockup_available":available,"local_path":str(target),"image_clipped":"unknown",
+            records.append({"color":color,"selected_variant_id":representative_id,"selected_mockup_id":selected.get("mockup_id") if selected else None,
+                "selection_method":"exact_mockup_variant" if selected else None,"mockup_available":available,"color_match_verified":available,
+                "downloaded_sha256":_file_sha(target) if available else None,"issues":[] if available else ["mockup_download_failed"] if selected else ["exact_mockup_variant_missing"],
+                "local_path":str(target),"image_clipped":"unknown",
                 "image_centered":"unknown","contrast_assessment":"manual_review_required",
                 "likely_white_shirt_visibility_issue":"unknown" if color=="White" else False})
             panel.close()
+        hashes={item["downloaded_sha256"] for item in records if item["downloaded_sha256"]}
+        for digest in hashes:
+            duplicates=[item for item in records if item["downloaded_sha256"]==digest]
+            if len(duplicates)>1:
+                for item in duplicates:
+                    item["color_match_verified"]=False
+                    if "mockup_color_mismatch" not in item["issues"]:item["issues"].append("mockup_color_mismatch")
+        for item in records:item["verified_mockup_available"]=bool(item["mockup_available"] and item["color_match_verified"])
         panel_width=700;label_height=80;sheet_height=max(image.height*panel_width//image.width for _,image in panels)+label_height
         sheet=Image.new("RGB",(panel_width*len(panels),sheet_height),(255,255,255));draw=ImageDraw.Draw(sheet)
         for index,(color,image) in enumerate(panels):
             resized=image.copy();resized.thumbnail((panel_width,sheet_height-label_height),Image.Resampling.LANCZOS)
             x=index*panel_width+(panel_width-resized.width)//2;y=label_height+(sheet_height-label_height-resized.height)//2
-            sheet.paste(resized,(x,y));draw.text((index*panel_width+20,25),color,fill=(20,20,20));resized.close();image.close()
+            record=records[index];status="verified" if record["verified_mockup_available"] else "downloaded, not color-verified" if record["mockup_available"] else "unavailable"
+            sheet.paste(resized,(x,y));draw.text((index*panel_width+20,25),f"{color} — {status}",fill=(20,20,20));resized.close();image.close()
         sheet_path=review_root/"visual-review-sheet.png";sheet.save(sheet_path,"PNG");sheet.close()
-        all_available=all(item["mockup_available"] for item in records)
-        recommendation="manual_review_required"
+        all_verified=all(item["verified_mockup_available"] for item in records)
+        recommendation="keep_0.85" if all_verified else "manual_review_required"
         checks={"mockups":records,"artwork_image_id":expected_image_id,"artwork_image_id_matches":bool(expected_image_id and placement.get("id")==expected_image_id),
             "placement":placement_value,"front_artwork_present":bool(front_images),"back_artwork_absent":not bool(back_images),
             "current_scale_recommendation":recommendation,"candidate_scales":{"current":.85,"plus_8_percent":.918,"plus_12_percent":.952},
-            "pixel_review_scope":"Mockups downloaded" if all_available else "One or more mockups unavailable; manual review required"}
+            "pixel_review_scope":"Three distinct color mockups downloaded and exact variants verified" if all_verified else "Mockup color identity incomplete; manual review required"}
         report={"job_id":job_id,"product_id":product_id,"colors_reviewed":DEFAULT_COLORS,"checks":checks,
             "recommended_scale_action":recommendation,"created_at":datetime.now().astimezone().isoformat()}
         json_path=review_root/"visual-review.json";_atomic_json(json_path,report)
-        rows_html="".join(f'<figure><img src="{html.escape(names[item["color"]])}" alt="{html.escape(item["color"])} front mockup"><figcaption>{html.escape(item["color"])} — {"available" if item["mockup_available"] else "unavailable"}</figcaption></figure>' for item in records)
+        rows_html="".join(f'<figure><img src="{html.escape(names[item["color"]])}" alt="{html.escape(item["color"])} front mockup"><figcaption>{html.escape(item["color"])} — {"verified" if item["verified_mockup_available"] else "downloaded, not color-verified" if item["mockup_available"] else "unavailable"}</figcaption></figure>' for item in records)
         html_path=review_root/"visual-review.html";html_path.write_text("<!doctype html><meta charset=\"utf-8\"><title>Draft visual review</title>"
             "<style>body{font-family:sans-serif;margin:2rem}main{display:flex;gap:1rem}figure{margin:0;flex:1}img{max-width:100%;height:auto}</style>"
             f"<h1>Draft visual review</h1><p>Product {html.escape(product_id)}</p><main>{rows_html}</main>",encoding="utf-8")
