@@ -36,6 +36,7 @@ def _main() -> int:
     report = commands.add_parser("report"); report.add_argument("--job-id", required=True)
     reconcile = commands.add_parser("reconcile-draft"); reconcile.add_argument("--job-id", required=True)
     reconcile.add_argument("--confirm-printify-draft-update", action="store_true")
+    review = commands.add_parser("review-draft"); review.add_argument("--job-id", required=True)
     args = parser.parse_args(); orchestrator = ProductOrchestrator()
     if args.command == "create":
         state = orchestrator.create(prompt=args.prompt, source_job_id=args.source_job_id, shop_id=args.shop_id, mode=args.mode,
@@ -45,6 +46,8 @@ def _main() -> int:
     elif args.command == "status": state = orchestrator.load(args.job_id)
     elif args.command == "reconcile-draft":
         result=orchestrator.reconcile_draft(args.job_id,confirmed=args.confirm_printify_draft_update);print(json.dumps(result,indent=2));return 0
+    elif args.command == "review-draft":
+        result=orchestrator.review_draft(args.job_id);print(json.dumps(result,indent=2));return 0
     else:
         path = orchestrator.report(args.job_id); print(json.dumps({"result":"report_ready","job_id":args.job_id,"report_path":str(path)},indent=2)); return 0
     result = response_summary(state, orchestrator)

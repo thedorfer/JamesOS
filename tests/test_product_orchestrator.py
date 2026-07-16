@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 import copy
+from contextlib import redirect_stdout
+from io import BytesIO, StringIO
 import json
 from pathlib import Path
 import tempfile
@@ -351,6 +353,59 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(plan["plan"]["update_payload_summary"]["catalog_ids_absent_from_remote_count"],1)
             self.assertEqual(plan["plan"]["update_payload_summary"]["payload_variant_count"],318)
             client.update_product.assert_not_called();self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
+
+    def review_fixture(self, root: Path, *, with_mockups: bool = True):
+        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root);image_id="6a580a8e43d9a89162f792a7"
+        desired={*range(18100,18106),*dark,*range(18540,18546)}
+        for item in remote["variants"]:item["is_enabled"]=item["id"] in desired
+        remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=image_id
+        state["evidence"]["upload"]["printify_image_id"]=image_id;product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+        if with_mockups:
+            groups=(range(18100,18106),dark,range(18540,18546));remote["images"]=[{"src":f"https://mock.test/{index}.png?token=private",
+                "variant_ids":list(ids),"position":"front","is_default":True} for index,ids in enumerate(groups)]
+        else:remote["images"]=[]
+        client=Mock();client.get_product.return_value=remote;client.timeout=(1,1)
+        image=Image.new("RGB",(320,480),(120,80,160));content=BytesIO();image.save(content,"PNG");image.close()
+        response=Mock(content=content.getvalue());response.raise_for_status.return_value=None;client.session.get.return_value=response
+        orchestrator.adapters.client_factory=lambda:client
+        return orchestrator,state,remote,client
+
+    def test_review_draft_creates_read_only_visual_package_and_safe_cli_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,client=self.review_fixture(root);state_before=orchestrator._path("reconcile-job").read_bytes()
+            result=orchestrator.review_draft("reconcile-job");self.assertFalse(result["write_performed"]);self.assertFalse(result["printify_write_performed"])
+            self.assertEqual(result["colors_reviewed"],product_orchestrator.DEFAULT_COLORS);self.assertEqual(result["placement"],{"x":.5,"y":.46,"scale":.85,"angle":0})
+            review_root=orchestrator._path("reconcile-job").parent/"visual-review"
+            expected={"black-front.png","dark-grey-heather-front.png","white-front.png","visual-review-sheet.png","visual-review.json","visual-review.html"}
+            self.assertEqual({path.name for path in review_root.iterdir()},expected)
+            self.assertTrue(all(path.resolve().is_relative_to(orchestrator._path("reconcile-job").parent.resolve()) for path in review_root.iterdir()))
+            report=json.loads(Path(result["json_report_path"]).read_text());checks=report["checks"]
+            self.assertTrue(all(item["mockup_available"] for item in checks["mockups"]));self.assertTrue(checks["artwork_image_id_matches"])
+            self.assertTrue(checks["front_artwork_present"]);self.assertTrue(checks["back_artwork_absent"]);self.assertEqual(checks["placement"]["scale"],.85)
+            self.assertNotIn("mock.test",json.dumps(report));self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
+            for method in (client.update_product,client.create_product,client.upload_image_contents,client.upload_image_url):method.assert_not_called()
+            output=StringIO()
+            with patch.object(product_from_prompt,"ProductOrchestrator",return_value=orchestrator),patch.object(product_from_prompt.sys,"argv",["product_from_prompt.py","review-draft","--job-id","reconcile-job"]),redirect_stdout(output):
+                self.assertEqual(product_from_prompt._main(),0)
+            cli=json.loads(output.getvalue());self.assertEqual(cli["result"],"draft_visual_review_created")
+            self.assertNotIn("mock.test",output.getvalue());self.assertNotIn("private",output.getvalue())
+
+    def test_review_draft_rejects_ownership_publication_and_lock_without_files_or_writes(self):
+        scenarios=(("ownership",lambda remote:remote.update(id="other")),("published",lambda remote:remote.update(is_published=True)),
+            ("locked",lambda remote:remote.update(is_locked=True)))
+        for name,mutate in scenarios:
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary:
+                root=Path(temporary);orchestrator,state,remote,client=self.review_fixture(root);mutate(remote)
+                with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.review_draft("reconcile-job")
+                self.assertFalse((orchestrator._path("reconcile-job").parent/"visual-review").exists())
+                client.session.get.assert_not_called();client.update_product.assert_not_called();client.create_product.assert_not_called()
+
+    def test_review_draft_missing_mockups_requires_manual_review(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator,state,remote,client=self.review_fixture(root,with_mockups=False)
+            result=orchestrator.review_draft("reconcile-job");self.assertEqual(result["recommended_scale_action"],"manual_review_required")
+            report=json.loads(Path(result["json_report_path"]).read_text());self.assertTrue(all(not item["mockup_available"] for item in report["checks"]["mockups"]))
+            client.session.get.assert_not_called();client.update_product.assert_not_called()
 
     def test_reconciliation_verification_rejects_total_or_enabled_variant_drift(self):
         for name,mutate in (("total",lambda verified:verified["variants"].pop()),

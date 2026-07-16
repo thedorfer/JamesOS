@@ -5,6 +5,7 @@ import copy
 from datetime import datetime
 from hashlib import sha256
 import html
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -12,6 +13,8 @@ import re
 import tempfile
 from typing import Any, Callable
 from uuid import uuid4
+
+from PIL import Image, ImageDraw
 
 from jamesos.config import VAULT
 from jamesos.core.errors import ArtifactIntegrityError, StateConflictError, ValidationError
@@ -294,6 +297,86 @@ class ProductOrchestrator:
 
     def resume(self, job_id: str, *, confirm_printify_draft: bool = False) -> dict[str, Any]:
         return self._run(self.load(job_id), confirmed=confirm_printify_draft)
+
+    def review_draft(self, job_id: str) -> dict[str, Any]:
+        if not job_id or Path(job_id).name!=job_id:
+            raise ValidationError("VALIDATION_FAILED",diagnostic_message="Draft review requires a single existing job ID.",operation="product_orchestrator.review_draft",stage="input")
+        state=self.load(job_id);draft=state.get("evidence",{}).get("draft") or {};product_id=draft.get("printify_product_id")
+        if not product_id or product_id==PROTECTED_PRODUCT_ID:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The recorded draft is missing or protected.",operation="product_orchestrator.review_draft",stage="ownership")
+        client=self.adapters.client_factory();remote=client.get_product(state["shop_id"],product_id)
+        marker=state.get("evidence",{}).get("draft_marker") or draft.get("draft_marker")
+        publication=assess_draft_publication_state(state,remote)
+        ownership_ok=(remote.get("id")==product_id and remote.get("shop_id")==state["shop_id"] and marker
+            and marker in {str(tag) for tag in remote.get("tags") or []})
+        if not ownership_ok:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote draft ownership evidence did not match the job.",operation="product_orchestrator.review_draft",stage="ownership")
+        if remote.get("blueprint_id")!=12 or remote.get("print_provider_id")!=29:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote blueprint or provider differs from the review target.",operation="product_orchestrator.review_draft",stage="provider")
+        if not publication["safe_to_reconcile"]:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Published or locked products cannot be reviewed as drafts.",operation="product_orchestrator.review_draft",stage="publication")
+        if state.get("order_status")!="not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="A product with order evidence cannot use draft review.",operation="product_orchestrator.review_draft",stage="order")
+        enabled_ids={item.get("id") for item in remote.get("variants") or [] if item.get("is_enabled") is True}
+        rows=normalize_printify_variants({"variants":remote.get("variants") or []});colors={color:[] for color in DEFAULT_COLORS}
+        enabled_review_rows=[]
+        for row in rows:
+            if row["variant_id"] in enabled_ids and row["color"] in colors:
+                colors[row["color"]].append(row["variant_id"]);enabled_review_rows.append(row)
+        expected_pairs={(color,size) for color in DEFAULT_COLORS for size in DEFAULT_SIZES}
+        enabled_pairs={(row["color"],row["size"]) for row in enabled_review_rows}
+        if len(enabled_review_rows)!=18 or enabled_pairs!=expected_pairs:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The draft does not contain enabled variants for every review color.",operation="product_orchestrator.review_draft",stage="variants")
+        expected_image_id=state.get("evidence",{}).get("upload",{}).get("printify_image_id")
+        front_images=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or []]
+        back_images=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")=="back" for image in placeholder.get("images") or []]
+        placement=next((image for image in front_images if image.get("id")==expected_image_id),front_images[0] if front_images else {})
+        placement_value={key:placement.get(key) for key in ("x","y","scale","angle")}
+        review_root=self._path(job_id).parent/"visual-review";review_root.mkdir(parents=True,exist_ok=True)
+        names={"Black":"black-front.png","Dark Grey Heather":"dark-grey-heather-front.png","White":"white-front.png"}
+        records=[];panels=[]
+        for color in DEFAULT_COLORS:
+            matching=[image for image in remote.get("images") or [] if image.get("position") in (None,"front")
+                and set(image.get("variant_ids") or [])&set(colors[color]) and str(image.get("src") or "").startswith("https://")]
+            matching.sort(key=lambda image:not bool(image.get("is_default")));available=False;panel=None
+            if matching:
+                try:
+                    response=client.session.get(matching[0]["src"],timeout=client.timeout);response.raise_for_status()
+                    panel=Image.open(BytesIO(response.content)).convert("RGB");available=True
+                except Exception: panel=None
+            if panel is None:
+                panel=Image.new("RGB",(900,1100),(235,235,235));draw=ImageDraw.Draw(panel)
+                draw.text((60,520),f"{color}\nMockup unavailable",fill=(35,35,35))
+            target=review_root/names[color];panel.save(target,"PNG");panels.append((color,panel.copy()))
+            records.append({"color":color,"mockup_available":available,"local_path":str(target),"image_clipped":"unknown",
+                "image_centered":"unknown","contrast_assessment":"manual_review_required",
+                "likely_white_shirt_visibility_issue":"unknown" if color=="White" else False})
+            panel.close()
+        panel_width=700;label_height=80;sheet_height=max(image.height*panel_width//image.width for _,image in panels)+label_height
+        sheet=Image.new("RGB",(panel_width*len(panels),sheet_height),(255,255,255));draw=ImageDraw.Draw(sheet)
+        for index,(color,image) in enumerate(panels):
+            resized=image.copy();resized.thumbnail((panel_width,sheet_height-label_height),Image.Resampling.LANCZOS)
+            x=index*panel_width+(panel_width-resized.width)//2;y=label_height+(sheet_height-label_height-resized.height)//2
+            sheet.paste(resized,(x,y));draw.text((index*panel_width+20,25),color,fill=(20,20,20));resized.close();image.close()
+        sheet_path=review_root/"visual-review-sheet.png";sheet.save(sheet_path,"PNG");sheet.close()
+        all_available=all(item["mockup_available"] for item in records)
+        recommendation="manual_review_required"
+        checks={"mockups":records,"artwork_image_id":expected_image_id,"artwork_image_id_matches":bool(expected_image_id and placement.get("id")==expected_image_id),
+            "placement":placement_value,"front_artwork_present":bool(front_images),"back_artwork_absent":not bool(back_images),
+            "current_scale_recommendation":recommendation,"candidate_scales":{"current":.85,"plus_8_percent":.918,"plus_12_percent":.952},
+            "pixel_review_scope":"Mockups downloaded" if all_available else "One or more mockups unavailable; manual review required"}
+        report={"job_id":job_id,"product_id":product_id,"colors_reviewed":DEFAULT_COLORS,"checks":checks,
+            "recommended_scale_action":recommendation,"created_at":datetime.now().astimezone().isoformat()}
+        json_path=review_root/"visual-review.json";_atomic_json(json_path,report)
+        rows_html="".join(f'<figure><img src="{html.escape(names[item["color"]])}" alt="{html.escape(item["color"])} front mockup"><figcaption>{html.escape(item["color"])} — {"available" if item["mockup_available"] else "unavailable"}</figcaption></figure>' for item in records)
+        html_path=review_root/"visual-review.html";html_path.write_text("<!doctype html><meta charset=\"utf-8\"><title>Draft visual review</title>"
+            "<style>body{font-family:sans-serif;margin:2rem}main{display:flex;gap:1rem}figure{margin:0;flex:1}img{max-width:100%;height:auto}</style>"
+            f"<h1>Draft visual review</h1><p>Product {html.escape(product_id)}</p><main>{rows_html}</main>",encoding="utf-8")
+        return {"result":"draft_visual_review_created","write_performed":False,"printify_write_performed":False,
+            "product_id":product_id,"colors_reviewed":DEFAULT_COLORS,"placement":placement_value,"recommended_scale_action":recommendation,
+            "review_sheet_path":str(sheet_path),"html_report_path":str(html_path),"json_report_path":str(json_path)}
 
     def reconcile_draft(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         state = self.load(job_id)
