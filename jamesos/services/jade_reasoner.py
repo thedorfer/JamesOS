@@ -113,7 +113,7 @@ class JadeReasoner:
             "show commerce_shop drafts",
         ]
         if any(phrase in lower for phrase in generate_phrases):
-            from jamesos.services.commerce_shop_product_pipeline import generate_daily_product_drafts
+            from jamesos.services.commerce_product_pipeline import generate_daily_product_drafts
 
             result = generate_daily_product_drafts()
             drafts = result.get("drafts", [])
@@ -140,7 +140,7 @@ class JadeReasoner:
                 "result": result,
             }
         if any(phrase in lower for phrase in show_phrases):
-            from jamesos.services.commerce_shop_product_pipeline import list_drafts
+            from jamesos.services.commerce_product_pipeline import list_drafts
 
             result = list_drafts(status="needs_review")
             drafts = result.get("drafts", [])
