@@ -1,0 +1,99 @@
+name: Agent proposal
+description: Propose a new JamesOS agent or a major capability expansion.
+title: "Agent proposal: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Propose a bounded, approval-first agent. Do not include credentials, private deployment names, account identifiers, customer data, product/listing IDs, private artwork, or personal records.
+  - type: input
+    id: agent_id
+    attributes:
+      label: Proposed agent ID
+      description: Use a stable namespaced ID such as publisher.agent-name.
+      placeholder: publisher.agent-name
+    validations:
+      required: true
+  - type: input
+    id: display_name
+    attributes:
+      label: Display name
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem and user value
+      description: What problem does the agent solve, and for whom?
+    validations:
+      required: true
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Proposed capabilities
+      description: List precise capability names, inputs, and outputs.
+      placeholder: |
+        - example.records.read
+        - example.summary.prepare
+    validations:
+      required: true
+  - type: textarea
+    id: permissions
+    attributes:
+      label: Required and optional permissions
+      description: Separate required from optional permissions and explain why each is needed.
+    validations:
+      required: true
+  - type: textarea
+    id: secrets
+    attributes:
+      label: Secret requirements
+      description: List requirement names only. Never paste secret values.
+  - type: textarea
+    id: side_effects
+    attributes:
+      label: Side effects and approval gates
+      description: Describe local writes, network reads, external writes, purchases, publication, sending, or other consequential behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: installation
+    attributes:
+      label: Installation and platform support
+      description: Describe the proposed package/source, supported OS/distributions/architectures, provenance, and rollback plan.
+    validations:
+      required: true
+  - type: textarea
+    id: storage
+    attributes:
+      label: Data and storage
+      description: Identify data sources, storage paths, retention, privacy boundaries, and redaction.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety, failure, and recovery behavior
+      description: Explain approval, retry, idempotency, prompt-injection, protected-resource, and recovery controls.
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Test plan
+      description: Include unit, API, UI, external-call-prevention, and private-data tests as applicable.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Proposal confirmations
+      options:
+        - label: I have not included credentials or private deployment data.
+          required: true
+        - label: I understand that code contributions require a separate contributor agreement before merge.
+          required: true
+        - label: I will keep installation, configuration, and execution as separate reviewed stages.
+          required: true
