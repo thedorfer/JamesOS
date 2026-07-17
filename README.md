@@ -45,6 +45,8 @@ account IDs, protected resources, credentials, and deployment data remain outsid
 public agent code. The public CommerceAgent, PrintifyAgent, and EtsyAgent
 implementations remain generic.
 
+Issue #15 introduces the read-only [unified commerce proposal workflow](docs/UNIFIED_COMMERCE_WORKFLOW.md), which compiles one immutable review package before any final approval or publication.
+
 ### Planned directions
 
 - HomeOps and household-management agents
@@ -194,6 +196,7 @@ flutter run -d linux
 - [Submitting Agents](docs/AGENT_SUBMISSIONS.md)
 - [Job Search Agent](docs/JOB_SEARCH_AGENT.md)
 - [Project Cleanup](docs/PROJECT_CLEANUP.md)
+- [Scheduler](docs/SCHEDULER.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop Setup](docs/SETUP_DESKTOP.md)
 - [Integrations](docs/INTEGRATIONS.md)

@@ -11,11 +11,12 @@ JamesOS is developed in priority order rather than by feature count. Safety, rec
 
 ## P1 — Make JamesOS usable and extensible
 
-1. Provide a unified `jamesos commerce` workflow with one complete preview and one final approval (#9).
+1. Provide a unified `jamesos commerce` workflow with an immutable Phase 1A proposal, followed by separately gated revision and final approval (#9, #15).
 2. Finish the Career Agent review dashboard and local application packet workflow (#13).
 3. Complete agent building, installation, configuration, and submission onboarding (#2).
 4. Add manifest validation and contributor-facing examples (#12).
 5. Improve Jade navigation, status visibility, and recovery guidance.
+6. Add the local-first scheduling foundation without installing a persistent runner (#16).
 
 ## P2 — Controlled integrations
 
@@ -60,3 +61,5 @@ JamesOS is developed in priority order rather than by feature count. Safety, rec
 - #12 Community agent submissions and trusted catalog
 - #13 Career Agent and human-approved job applications
 - #14 Job-local ownership blocker for listing preparation
+- #15 Unified immutable commerce proposal and review workflow
+- #16 Local-first scheduling service foundation
