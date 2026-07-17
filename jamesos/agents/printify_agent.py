@@ -1,12 +1,11 @@
 from jamesos.core.agents.models import *
 from datetime import datetime
 from jamesos.core.agents.protocol import AgentDefaults
-from jamesos.core.profiles.selection import protected_resources
 class PrintifyAgent(AgentDefaults):
     manifest=AgentManifest("printify","PrintifyAgent","0.1.0","Wraps guarded Printify product workflows",
         ("commerce.product.read","commerce.product.update","commerce.product.publish","commerce.external_listing.resolve"),
         accepted_task_types=("product_work",),emitted_result_types=("printify_product_result",),required_tool_permissions=("printify.orchestrator",),
-        required_secret_handles=("fulfillment.connection",),supported_side_effects=("printify.product.update","printify.product.publish"),maximum_automatic_attempts=1,protected_resources=protected_resources())
+        required_secret_handles=("fulfillment.connection",),supported_side_effects=("printify.product.update","printify.product.publish"),maximum_automatic_attempts=1,protected_resources=())
     def plan(self,request):return AgentPlan(request.task_id,self.manifest.agent_id,[AgentStep("printify",request.requested_capability,"Use guarded product orchestrator",request.risk_level)],{"request":request.input_payload,"targets":request.target_resources})
     def execute(self,plan,context):
         request=plan.public_summary["request"]

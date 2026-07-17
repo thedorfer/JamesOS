@@ -1,13 +1,14 @@
 from jamesos.core.agents.models import *
 from jamesos.core.agents.protocol import AgentDefaults
+from jamesos.core.profiles.selection import selected_profile_id
 class CommerceAgent(AgentDefaults):
     manifest=AgentManifest("commerce","CommerceAgent","0.1.0","Coordinates profile-selected final publication workflows",("commerce.workflow.publish_to_inactive_review","commerce.workflow.publish_active_after_approval"),
         accepted_task_types=("commerce.workflow.publish_to_inactive_review","commerce.workflow.publish_active_after_approval"),emitted_result_types=("publish_to_inactive_review_plan","publish_active_after_approval_plan","urgent_manual_review"),maximum_automatic_attempts=1)
     def plan(self,request):
-        dry=request.input_payload.get("dry_run",True);active=request.requested_capability=="commerce.workflow.publish_active_after_approval"
+        dry=request.input_payload.get("dry_run",True);active=request.requested_capability=="commerce.workflow.publish_active_after_approval";profile_id=request.input_payload.get("profile_id") or selected_profile_id()
         scope="final-proposal" if active else "publish-and-deactivate";proposal_sha=request.input_payload.get("proposal_sha256") if active else None
         if active and not proposal_sha:raise ValueError("single-final publication requires a complete proposal hash")
-        tasks=[AgentTaskRequest("commerce.product.publish",request.target_resources,{"job_id":request.input_payload["job_id"],"dry_run":dry},RiskLevel.READ if dry else RiskLevel.PUBLICATION,ApprovalRequirement(not dry,"publish-and-deactivate"),request.idempotency_key+":publish"),
+        tasks=[AgentTaskRequest("commerce.product.publish",request.target_resources,{"job_id":request.input_payload["job_id"],"dry_run":dry,"profile_id":profile_id},RiskLevel.READ if dry else RiskLevel.PUBLICATION,ApprovalRequirement(not dry,"publish-and-deactivate"),request.idempotency_key+":publish"),
             AgentTaskRequest("marketplace.listing.verify_state" if active else "marketplace.listing.deactivate",{**request.target_resources,"listing_id":"$previous.etsy_listing_id"},{"dry_run":dry,"expected_title":request.input_payload.get("expected_title"),"expected_state":"active",
                 "printify_publication_timestamp":"$previous.printify_publication_timestamp","external_id_discovery_timestamp":"$previous.external_id_discovery_timestamp"},RiskLevel.READ if dry else RiskLevel.REMOTE_WRITE,ApprovalRequirement(not dry,"publish-and-deactivate"),request.idempotency_key+":inactive")]
         if not active:tasks.insert(0,AgentTaskRequest("marketplace.listing.read",request.target_resources,{"dry_run":dry,"expected_title":request.input_payload.get("expected_title")},RiskLevel.READ,idempotency_key=request.idempotency_key+":etsy-ready"))

@@ -300,14 +300,21 @@ def validate_listing_claims(description: str, blueprint: dict[str, Any], provide
 
 def replacement_ownership_matches(state: dict[str, Any], remote: dict[str, Any], product_id: str) -> bool:
     evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload_id=(evidence.get("upload") or {}).get("printify_image_id")
-    lineage=any(item.get("status")=="verified" and item.get("deleted_product_id")==RECOVERY_DELETED_PRODUCT_ID
-        and item.get("replacement_product_id")==product_id for item in evidence.get("draft_recovery_history") or [])
+    lineage=any(item.get("status")=="verified" and item.get("replacement_product_id")==product_id
+        for item in evidence.get("draft_recovery_history") or [])
+    configured_variants=draft.get("variant_ids") or (evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
+    expected_variants={item for item in configured_variants if isinstance(item,int)}
     enabled={item.get("id") for item in remote.get("variants") or [] if item.get("is_enabled") is True}
-    artwork=any(image.get("id")==upload_id for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-        if placeholder.get("position")=="front" for image in placeholder.get("images") or [])
-    return bool(product_id and product_id not in {RECOVERY_DELETED_PRODUCT_ID,PROTECTED_PRODUCT_ID} and draft.get("printify_product_id")==product_id
+    front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+        if placeholder.get("position")=="front" for image in placeholder.get("images") or []]
+    other=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+        if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+    publication=assess_draft_publication_state(state,remote)
+    return bool(product_id and product_id!=PROTECTED_PRODUCT_ID and draft.get("printify_product_id")==product_id
         and remote.get("id")==product_id and remote.get("shop_id")==state.get("shop_id") and remote.get("blueprint_id")==12
-        and remote.get("print_provider_id")==29 and lineage and upload_id==RECOVERY_UPLOAD_ID and enabled==set(RECOVERY_VARIANT_IDS) and artwork)
+        and remote.get("print_provider_id")==29 and lineage and upload_id and len(expected_variants)==18 and enabled==expected_variants
+        and any(image.get("id")==upload_id for image in front) and not other and publication["safe_to_reconcile"]
+        and state.get("order_status")=="not_created" and remote.get("order_status") in (None,"not_created") and not remote.get("orders"))
 
 
 def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -670,8 +677,9 @@ class ProductOrchestrator:
                 or marker in {str(tag) for tag in remote.get("tags") or []} or len(enabled)!=18 \
                 or {item.get("id") for item in enabled}!=set(RECOVERY_VARIANT_IDS) or any(item.get("price")!=2499 for item in enabled):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The prepared listing changed before the Etsy channel test.",operation="product_orchestrator.send_to_etsy_review",stage="preflight")
+        current_upload_id=(state.get("evidence",{}).get("upload") or {}).get("printify_image_id")
         front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front"
-            for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+            for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
         back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position") in ("back","neck")
             for image in placeholder.get("images") or []]
         placement={"x":.5,"y":.46,"scale":.85,"angle":0}
@@ -713,7 +721,7 @@ class ProductOrchestrator:
             ready_variants=ready.get("variants") or [];ready_defaults=[item.get("id") for item in ready_variants if item.get("is_default") is True]
             ready_enabled={item.get("id") for item in ready_variants if item.get("is_enabled") is True};before_prices={item.get("id"):item.get("price") for item in remote_variants};after_prices={item.get("id"):item.get("price") for item in ready_variants}
             ready_front=[image for area in ready.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front"
-                for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+                for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
             before_mockups={(item.get("id"),item.get("mockup_id"),item.get("src")) for item in remote.get("images") or []};after_mockups={(item.get("id"),item.get("mockup_id"),item.get("src")) for item in ready.get("images") or []}
             if ready_defaults!=[18102] or len(ready_variants)!=len(remote_variants) or {item.get("id") for item in ready_variants}!={item.get("id") for item in remote_variants} \
                     or ready_enabled!=set(RECOVERY_VARIANT_IDS) or before_prices!=after_prices or ready.get("title")!=ETSY_TITLE or ready.get("description")!=ETSY_DESCRIPTION \
@@ -780,8 +788,9 @@ class ProductOrchestrator:
         remote_variants=remote.get("variants") or [];enabled=[item for item in remote_variants if item.get("is_enabled") is True]
         if len(enabled)!=18 or {item.get("id") for item in enabled}!=set(RECOVERY_VARIANT_IDS) or any(item.get("price")!=2499 for item in enabled):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Enabled variants or pricing changed before listing preparation.",operation="product_orchestrator.prepare_listing",stage="variants")
+        current_upload_id=(state.get("evidence",{}).get("upload") or {}).get("printify_image_id")
         front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
         back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
         placement={"x":.5,"y":.46,"scale":.85,"angle":0}
@@ -837,7 +846,7 @@ class ProductOrchestrator:
         verified=client.get_product(RECOVERY_SHOP_ID,product_id);verified_publication=assess_draft_publication_state(state,verified)
         verified_variants=verified.get("variants") or [];verified_enabled=[item for item in verified_variants if item.get("is_enabled") is True]
         verified_front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==RECOVERY_UPLOAD_ID]
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
         verified_back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
         prices_before={item.get("id"):item.get("price") for item in remote_variants};prices_after={item.get("id"):item.get("price") for item in verified_variants}
@@ -1015,8 +1024,7 @@ class ProductOrchestrator:
         client=self.adapters.client_factory();remote=client.get_product(state["shop_id"],product_id)
         marker=state.get("evidence",{}).get("draft_marker") or draft.get("draft_marker")
         publication=assess_draft_publication_state(state,remote)
-        ownership_ok=replacement_ownership_matches(state,remote,product_id) or (remote.get("id")==product_id and remote.get("shop_id")==state["shop_id"] and marker
-            and marker in {str(tag) for tag in remote.get("tags") or []})
+        ownership_ok=replacement_ownership_matches(state,remote,product_id)
         if not ownership_ok:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote draft ownership evidence did not match the job.",operation="product_orchestrator.review_draft",stage="ownership")
         if remote.get("blueprint_id")!=12 or remote.get("print_provider_id")!=29:
@@ -1113,13 +1121,13 @@ class ProductOrchestrator:
         if remote.get("shop_id") != state["shop_id"]:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote shop ID does not match the orchestrator job.", operation="product_orchestrator.reconcile_draft", stage="ownership",
                 context={"blocker":{"field":"remote.shop_id","value":remote.get("shop_id"),"expected":state["shop_id"]}})
-        marker = state.get("evidence", {}).get("draft_marker") or draft.get("draft_marker")
-        if not replacement_ownership_matches(state,remote,product_id) and (not marker or marker not in {str(tag) for tag in remote.get("tags") or []}):
-            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft marker does not match orchestrator ownership evidence.", operation="product_orchestrator.reconcile_draft", stage="ownership")
         publication = assess_draft_publication_state(state, remote)
         if not publication["safe_to_reconcile"]:
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="Publication evidence blocks draft reconciliation.", operation="product_orchestrator.reconcile_draft", stage="publication",
                 context={"publication_assessment":publication,"blockers":publication["explicit_blockers"]})
+        marker = state.get("evidence", {}).get("draft_marker") or draft.get("draft_marker")
+        if not replacement_ownership_matches(state,remote,product_id):
+            raise StateConflictError("STATE_CONFLICT", diagnostic_message="Remote draft ownership evidence did not match the job.", operation="product_orchestrator.reconcile_draft", stage="ownership")
         if state.get("order_status") != "not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
             raise StateConflictError("STATE_CONFLICT", diagnostic_message="A product with order evidence cannot be reconciled.", operation="product_orchestrator.reconcile_draft", stage="order")
         if remote.get("blueprint_id") != 12 or remote.get("print_provider_id") != 29:

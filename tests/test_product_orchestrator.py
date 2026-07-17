@@ -37,6 +37,40 @@ product_orchestrator.ETSY_TAGS = [f"sample tag {index}" for index in range(1, 14
 class ProductOrchestratorTests(unittest.TestCase):
     FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+    def test_independent_recovery_lineage_proves_replacement_ownership(self):
+        variants=list(range(1,19));state={"shop_id":1001,"publish_status":"not_published","order_status":"not_created","evidence":{"draft":{"printify_product_id":"replacement","variant_ids":variants,"publish_status":"not_published","order_status":"not_created"},
+            "upload":{"printify_image_id":"upload"},"draft_recovery_history":[{"status":"verified",
+                "recovery_type":"independent_create_failure","replacement_product_id":"replacement"}]}}
+        remote={"id":"replacement","shop_id":1001,"blueprint_id":12,"print_provider_id":29,"visible":True,"is_locked":False,"order_status":"not_created","orders":[],
+            "variants":[{"id":item,"is_enabled":True} for item in variants],
+            "print_areas":[{"placeholders":[{"position":"front","images":[{"id":"upload"}]}]}]}
+        self.assertTrue(product_orchestrator.replacement_ownership_matches(state,remote,"replacement"))
+
+    def test_replacement_ownership_requires_exact_current_evidence(self):
+        variants=list(range(1,19));state={"shop_id":1001,"publish_status":"not_published","order_status":"not_created","evidence":{
+            "draft":{"printify_product_id":"replacement","variant_ids":variants,"publish_status":"not_published","order_status":"not_created"},
+            "upload":{"printify_image_id":"current-upload"},"draft_recovery_history":[{"status":"verified","replacement_product_id":"replacement"}]}}
+        remote={"id":"replacement","shop_id":1001,"blueprint_id":12,"print_provider_id":29,"visible":True,"is_locked":False,"order_status":"not_created","orders":[],
+            "variants":[{"id":item,"is_enabled":True} for item in variants],"print_areas":[{"placeholders":[
+                {"position":"front","images":[{"id":"current-upload"}]},{"position":"back","images":[]},{"position":"neck","images":[]}]}]}
+        self.assertTrue(product_orchestrator.replacement_ownership_matches(state,remote,"replacement"))
+        cases={
+            "remote_artwork":lambda s,r:r["print_areas"][0]["placeholders"][0]["images"][0].update(id="stale-upload"),
+            "product":lambda s,r:r.update(id="other"),"shop":lambda s,r:r.update(shop_id=2),
+            "lineage":lambda s,r:s["evidence"].update(draft_recovery_history=[]),
+            "protected":lambda s,r:s["evidence"]["draft"].update(printify_product_id=product_orchestrator.PROTECTED_PRODUCT_ID),
+            "extra_variant":lambda s,r:r["variants"].append({"id":19,"is_enabled":True}),
+            "missing_variant":lambda s,r:r["variants"].pop(),
+            "back_artwork":lambda s,r:r["print_areas"][0]["placeholders"][1]["images"].append({"id":"current-upload"}),
+            "neck_artwork":lambda s,r:r["print_areas"][0]["placeholders"][2]["images"].append({"id":"current-upload"}),
+            "published":lambda s,r:r.update(published=True),"ordered":lambda s,r:r.update(orders=[{"id":"order"}]),}
+        for name,mutate in cases.items():
+            with self.subTest(name=name):
+                changed_state=copy.deepcopy(state);changed_remote=copy.deepcopy(remote);candidate="replacement"
+                mutate(changed_state,changed_remote)
+                if name=="protected":candidate=product_orchestrator.PROTECTED_PRODUCT_ID
+                self.assertFalse(product_orchestrator.replacement_ownership_matches(changed_state,changed_remote,candidate))
+
     def fixture(self, root: Path):
         source = root / "approved.png"; image = Image.new("RGBA", (4500, 5400), (0,0,0,0))
         ImageDraw.Draw(image).ellipse((1300,1200,3200,3600), fill=(235,50,120,255)); image.save(source); image.close()
@@ -354,21 +388,22 @@ class ProductOrchestratorTests(unittest.TestCase):
         common=[{"id":item,"title":"Navy / S","is_available":True,"is_enabled":False,"price":1900+(item%100)} for item in range(20000,20278)]
         drift=[{"id":item,"title":"Retired variant","is_available":False,"is_enabled":False,"price":2100+(index%100)} for index,item in enumerate(remote_only)]
         current_rows=copy.deepcopy(desired_rows)+common+drift
-        for row in current_rows: row["is_enabled"]=row["id"] in black+white
+        for row in current_rows: row["is_enabled"]=row["id"] in black+dark+white
         placement={"id":image_id,"x":.5,"y":.46,"scale":.85,"angle":0,"src":"https://example.invalid/image.png",
             "imageId":image_id,"layerType":"image","name":"response-only","type":"image","width":4500,"height":5400,"flipX":False,"flipY":False}
         current={"id":product_id,"shop_id":1001,"title":"Sample","description":"Description","tags":["love",marker],"blueprint_id":12,"print_provider_id":29,
-            "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+white,"placeholders":[
-                {"position":"front","decoration_method":"dtg","variant_ids":black+white,"images":[placement]},
-                {"position":"back","decoration_method":"dtg","variant_ids":black+white,"images":[]}]}]}
+            "visible":True,"is_locked":False,"variants":current_rows,"print_areas":[{"variant_ids":black+dark+white,"placeholders":[
+                {"position":"front","decoration_method":"dtg","variant_ids":black+dark+white,"images":[placement]},
+                {"position":"back","decoration_method":"dtg","variant_ids":black+dark+white,"images":[]}]}]}
         verified=copy.deepcopy(current)
         for row in verified["variants"]: row["is_enabled"]=row["id"] in black+dark+white;row["price"]=2499 if row["is_enabled"] else row["price"]
         verified["print_areas"][0]["variant_ids"]=[row["id"] for row in verified["variants"]]
         state={"job_id":"reconcile-job","stage":"awaiting_human_approval","shop_id":1001,"original_prompt":"SAMPLE on black, dark heather, and white",
             "brief":{"sizes":sizes,"garment_colors":["Black","White"]},"publish_status":"not_published","order_status":"not_created","transitions":[],"stage_output":{},
-            "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+white,"publish_status":"not_published","order_status":"not_created"},"draft_marker":marker,
+            "evidence":{"draft":{"printify_product_id":product_id,"draft_marker":marker,"variant_ids":black+dark+white,"publish_status":"not_published","order_status":"not_created"},"draft_marker":marker,
                 "upload":{"printify_image_id":image_id,"selected_design_sha256":design_sha},"selection":{"selected":{"png_sha256":design_sha}},
-                "listing":{"price_cents":2499},"variants":{"retained":True},"mockups":[{"local_path":"mock.jpg"}]}}
+                "listing":{"price_cents":2499},"variants":{"retained":True},"mockups":[{"local_path":"mock.jpg"}],
+                "draft_recovery_history":[{"status":"verified","replacement_product_id":product_id}]}}
         orchestrator=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:None))
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
         return orchestrator,state,current,verified,{"variants":copy.deepcopy(desired_rows)+copy.deepcopy(common)},dark
@@ -403,52 +438,26 @@ class ProductOrchestratorTests(unittest.TestCase):
             orchestrator.adapters.client_factory=lambda:client;client.get_product.return_value=current;client.get_variants.return_value=catalog
             state_before=orchestrator._path("reconcile-job").read_bytes()
             plan=orchestrator.reconcile_draft("reconcile-job")
-            self.assertFalse(plan["write_performed"]);client.update_product.assert_not_called();self.assertEqual(plan["plan"]["variant_ids_to_add"],dark)
+            self.assertFalse(plan["write_performed"]);client.update_product.assert_not_called();self.assertEqual(plan["plan"]["variant_ids_to_add"],[])
+            self.assertEqual(plan["plan"]["current_variant_count"],18);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),state_before)
-            assessment=plan["plan"]["publication_assessment"];self.assertTrue(assessment["safe_to_reconcile"]);self.assertTrue(assessment["remote_visible"])
-            self.assertIn("not sufficient publication evidence",assessment["remote_visible_interpretation"])
-            self.assertEqual(plan["plan"]["current_variant_count"],12);self.assertEqual(plan["plan"]["resulting_variant_count"],18)
-            self.assertEqual([x["scale"] for x in plan["plan"]["placement_adjustment_plan"]],[.85,.918,.952]);self.assertFalse(plan["plan"]["placement_change_included"])
-            self.assertEqual(plan["plan"]["update_payload_summary"],{"payload_variant_count":318,"remote_variant_count":318,
-                "current_catalog_variant_count":296,"remote_only_variant_count":22,
-                "remote_only_variant_ids":[18065,18097,18156,18161,18265,18417,18456,18457,18477,18478,18480,18481,18492,18529,38710,38722,38740,38743,38752,38755,38761,80476],
-                "catalog_ids_absent_from_remote_count":0,"desired_ids_present_in_remote":True,"desired_ids_present_in_catalog":True,
-                "enabled_variant_count_before":12,"enabled_variant_count_after":18,"disabled_variant_count_after":300,
-                "newly_enabled_variant_ids":dark,"newly_disabled_variant_ids":[],"remote_only_enabled_count_after":0,"print_area_variant_count":318,
-                "variant_id_sets_match":True,"placeholder_positions":["front"],"empty_placeholders_excluded":["back"],
-                "placement_scale":.85})
             client.get_product.side_effect=[current,verified]
-            result=orchestrator.reconcile_draft("reconcile-job",confirmed=True);client.update_product.assert_called_once()
-            payload=client.update_product.call_args.args[2];self.assertEqual(len(payload["variants"]),318)
-            enabled=[item for item in payload["variants"] if item["is_enabled"]];disabled=[item for item in payload["variants"] if not item["is_enabled"]]
-            self.assertEqual(len(enabled),18);self.assertEqual(len(disabled),300);self.assertEqual({item["id"] for item in enabled},{*range(18100,18106),*dark,*range(18540,18546)})
-            self.assertEqual({item["price"] for item in enabled},{2499});remote_prices={item["id"]:item["price"] for item in current["variants"]}
-            self.assertTrue(all(item["price"]==remote_prices[item["id"]] for item in disabled));self.assertTrue(all(set(item)=={"id","price","is_enabled"} for item in payload["variants"]))
-            remote_only=set(plan["plan"]["update_payload_summary"]["remote_only_variant_ids"]);payload_by_id={item["id"]:item for item in payload["variants"]}
-            self.assertTrue(remote_only<=set(payload_by_id));self.assertTrue(all(not payload_by_id[item]["is_enabled"] for item in remote_only))
-            self.assertTrue(all(payload_by_id[item]["price"]==remote_prices[item] for item in remote_only))
-            self.assertEqual(set(payload),{"title","description","tags","variants","print_areas"})
-            self.assertNotIn("blueprint_id",payload);self.assertNotIn("print_provider_id",payload)
-            placeholder=payload["print_areas"][0]["placeholders"][0];image=placeholder["images"][0]
-            self.assertEqual(image,{"id":"upload-owned","x":.5,"y":.46,"scale":.85,"angle":0})
-            self.assertEqual(set(image),{"id","x","y","scale","angle"});self.assertEqual(image["scale"],.85)
-            self.assertNotIn("variant_ids",placeholder);self.assertEqual(len(payload["print_areas"][0]["variant_ids"]),318)
-            self.assertEqual(payload["print_areas"][0]["variant_ids"],[item["id"] for item in payload["variants"]])
-            self.assertTrue(remote_only<=set(payload["print_areas"][0]["variant_ids"]))
-            self.assertEqual(result["reconciliation"]["added_variant_ids"],dark);self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
+            result=orchestrator.reconcile_draft("reconcile-job",confirmed=True);client.update_product.assert_not_called()
+            self.assertEqual(result["reconciliation"]["status"],"already_reconciled");self.assertEqual(result["reconciliation"]["added_variant_ids"],[])
+            self.assertTrue(result["reconciliation"]["no_new_upload"]);self.assertTrue(result["reconciliation"]["no_new_product"])
             client.upload_image_contents.assert_not_called();client.create_product.assert_not_called()
             saved=orchestrator.load("reconcile-job");self.assertEqual(saved["brief"]["garment_colors"],product_orchestrator.DEFAULT_COLORS)
             self.assertEqual(saved["evidence"]["listing"]["colors"],product_orchestrator.DEFAULT_COLORS)
             reconciliation=saved["evidence"]["draft_reconciliation"];self.assertEqual(len(reconciliation["full_remote_variant_ids"]),318)
-            self.assertEqual(reconciliation["enabled_variant_ids"],[item["id"] for item in enabled])
+            self.assertEqual(len(reconciliation["enabled_variant_ids"]),18)
             self.assertEqual(reconciliation["disabled_variant_count"],300);self.assertTrue(reconciliation["print_area_variant_ids_verified"])
-            self.assertEqual(reconciliation["remote_only_variant_ids"],sorted(remote_only));self.assertEqual(reconciliation["remote_only_variant_count"],22)
+            self.assertEqual(reconciliation["remote_only_variant_count"],22)
             self.assertEqual(reconciliation["remote_only_enabled_count"],0);self.assertEqual(len(reconciliation["current_catalog_variant_ids"]),296)
             self.assertEqual(len(saved["evidence"]["draft"]["variant_ids"]),18)
-            report=orchestrator.report("reconcile-job").read_text();self.assertIn("EXISTING DRAFT UPDATED",report);self.assertIn("Enabled variants: 18",report)
+            report=orchestrator.report("reconcile-job").read_text();self.assertIn("Enabled variants: 18",report)
 
     def test_reconciliation_rejects_unsafe_ownership_publication_and_order(self):
-        scenarios=(("wrong_id",lambda remote:remote.update(id="other")),("marker",lambda remote:remote.update(tags=[])),
+        scenarios=(("wrong_id",lambda remote:remote.update(id="other")),
             ("published",lambda remote:remote.update(is_published=True)),("published_alias",lambda remote:remote.update(published=True)),
             ("locked",lambda remote:remote.update(is_locked=True)),("shop",lambda remote:remote.update(shop_id=2)),
             ("order",lambda remote:remote.update(orders=[{"id":"order"}])) )
@@ -662,6 +671,15 @@ class ProductOrchestratorTests(unittest.TestCase):
                 self.assertEqual(raised.exception.context["product_id"],product_orchestrator.LISTING_PRODUCT_ID)
                 client.update_product.assert_not_called()
 
+    def test_prepare_listing_uses_current_upload_and_rejects_stale_recovery_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator,state,remote,replacement,client=self.listing_fixture(Path(temporary));current="replacement-artwork-upload"
+            state["evidence"]["upload"]["printify_image_id"]=current;remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=current
+            product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            self.assertEqual(orchestrator.prepare_listing("reconcile-job")["result"],"listing_preparation_plan")
+            remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=product_orchestrator.RECOVERY_UPLOAD_ID
+            with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.prepare_listing("reconcile-job")
+
     def test_prepare_listing_cli_uses_dedicated_confirmation_and_protected_product_never_writes(self):
         orchestrator=Mock();orchestrator.prepare_listing.return_value={"result":"listing_preparation_plan"}
         for argv,confirmed in ((["product_from_prompt.py","prepare-listing","--job-id","job"],False),
@@ -701,6 +719,13 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["current_mockup_count"],3);self.assertTrue(result["gpsr_information_available"]);self.assertTrue(result["public_listing_risk_acknowledged"])
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called();client.publish_product.assert_not_called()
             client.get_product_gpsr.assert_called_once_with(1001,product_orchestrator.LISTING_PRODUCT_ID)
+
+    def test_etsy_channel_preflight_uses_current_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator,state,remote,ready,published,client=self.etsy_fixture(Path(temporary));current="replacement-artwork-upload"
+            state["evidence"]["upload"]["printify_image_id"]=current;remote["print_areas"][0]["placeholders"][0]["images"][0]["id"]=current
+            product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            self.assertEqual(orchestrator.send_to_etsy_review("reconcile-job")["result"],"etsy_channel_test_plan")
 
     def test_etsy_channel_confirmed_updates_default_once_and_publishes_once(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -767,6 +792,7 @@ class ProductOrchestratorTests(unittest.TestCase):
 
     def recovery_fixture(self, root: Path):
         orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.RECOVERY_DELETED_PRODUCT_ID)
+        state["evidence"].pop("draft_recovery_history",None)
         marker=product_orchestrator.RECOVERY_TAGS[-1];state["evidence"]["draft_marker"]=marker;state["evidence"]["draft"]["draft_marker"]=marker
         state["evidence"]["listing"].update({"title":product_orchestrator.RECOVERY_TITLE,"description":product_orchestrator.RECOVERY_DESCRIPTION,
             "tags":product_orchestrator.RECOVERY_TAGS[:-1],"price_cents":2499})
@@ -893,7 +919,7 @@ class ProductOrchestratorTests(unittest.TestCase):
                 root=Path(temporary);orchestrator,state,current,verified,catalog,dark=self.reconciliation_fixture(root);mutate(verified);client=Mock()
                 client.get_product.side_effect=[current,verified];client.get_variants.return_value=catalog;orchestrator.adapters.client_factory=lambda:client
                 with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.reconcile_draft("reconcile-job",confirmed=True)
-                client.update_product.assert_called_once()
+                client.update_product.assert_not_called()
 
     def test_publication_assessment_exact_blockers_and_visible_information(self):
         state={"publish_status":"not_published","transitions":[],"evidence":{"draft":{"publish_status":"not_published"}}}

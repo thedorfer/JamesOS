@@ -14,6 +14,9 @@ from jamesos.core.agents.models import *
 from jamesos.core.agents.protocol import AgentDefaults
 from jamesos.core.agents.registry import AgentRegistry
 from jamesos.core.agents.runner import AgentRunner
+from jamesos.core.profiles.bindings import ProfileBindingResolver
+from jamesos.core.profiles.models import AgentBinding,Profile
+from jamesos.core.profiles.store import ProfileStore
 from jamesos.integrations.etsy_client import EtsyClient
 from jamesos.integrations import etsy_oauth
 
@@ -155,5 +158,17 @@ class CombinedWorkflowTests(unittest.TestCase):
             self.assertFalse(output["automatic_delete"]);self.assertFalse(output["automatic_unpublish"]);self.assertFalse(output["order_created"]);self.assertEqual(etsy.update_listing_state.call_count,1)
     def test_public_agent_manifest_embeds_no_deployment_product_ids(self):
         self.assertEqual(PrintifyAgent.manifest.protected_resources,())
+
+    def test_private_profile_protection_is_runtime_only_and_blocks_product(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            store=ProfileStore(Path(temporary)/"profiles");store.save(Profile("private-shop","commerce_shop","Private","owner",
+                agent_bindings={"fulfillment":AgentBinding("printify","printify.private")},
+                protected_resources=["printify:product:protected-product"]))
+            registry=AgentRegistry(ProfileBindingResolver(store));registry.register(PrintifyAgent())
+            self.assertEqual(PrintifyAgent.manifest.protected_resources,())
+            runner=AgentRunner(registry,RunLedger(Path(temporary)/"ledger.jsonl"))
+            request=AgentRequest("protected","run","flow","commerce.product.publish","test",target_resources={"product_id":"protected-product"},
+                input_payload={"profile_id":"private-shop","job_id":"job","dry_run":True},idempotency_key="protected")
+            with self.assertRaisesRegex(PermissionError,"protected resource"):runner.run(request)
 
 if __name__=="__main__":unittest.main()
