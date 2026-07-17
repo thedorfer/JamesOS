@@ -43,8 +43,16 @@ class ProductOrchestratorTests(unittest.TestCase):
                 "recovery_type":"independent_create_failure","replacement_product_id":"replacement"}]}}
         remote={"id":"replacement","shop_id":1001,"blueprint_id":12,"print_provider_id":29,"visible":True,"is_locked":False,"order_status":"not_created","orders":[],
             "variants":[{"id":item,"is_enabled":True} for item in variants],
-            "print_areas":[{"placeholders":[{"position":"front","images":[{"id":"upload"}]}]}]}
+            "print_areas":[{"placeholders":[{"position":"front","images":[{"id":"upload","x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
         self.assertTrue(product_orchestrator.replacement_ownership_matches(state,remote,"replacement"))
+
+    def test_verified_creation_transition_proves_current_product_lineage(self):
+        variants=list(range(1,19));draft={"printify_product_id":"created","variant_ids":variants,"publish_status":"not_published","order_status":"not_created"}
+        state={"shop_id":1001,"publish_status":"not_published","order_status":"not_created","transitions":[{"stage":"printify_draft_created","result":"completed","output_sha":product_orchestrator._json_sha(draft)}],
+            "evidence":{"draft":draft,"upload":{"printify_image_id":"upload"}}}
+        remote={"id":"created","shop_id":1001,"blueprint_id":12,"print_provider_id":29,"visible":True,"is_locked":False,"order_status":"not_created","orders":[],
+            "variants":[{"id":item,"is_enabled":True} for item in variants],"print_areas":[{"placeholders":[{"position":"front","images":[{"id":"upload","x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
+        self.assertTrue(product_orchestrator.replacement_ownership_matches(state,remote,"created"))
 
     def test_replacement_ownership_requires_exact_current_evidence(self):
         variants=list(range(1,19));state={"shop_id":1001,"publish_status":"not_published","order_status":"not_created","evidence":{
@@ -52,17 +60,20 @@ class ProductOrchestratorTests(unittest.TestCase):
             "upload":{"printify_image_id":"current-upload"},"draft_recovery_history":[{"status":"verified","replacement_product_id":"replacement"}]}}
         remote={"id":"replacement","shop_id":1001,"blueprint_id":12,"print_provider_id":29,"visible":True,"is_locked":False,"order_status":"not_created","orders":[],
             "variants":[{"id":item,"is_enabled":True} for item in variants],"print_areas":[{"placeholders":[
-                {"position":"front","images":[{"id":"current-upload"}]},{"position":"back","images":[]},{"position":"neck","images":[]}]}]}
+                {"position":"front","images":[{"id":"current-upload","x":.5,"y":.46,"scale":.85,"angle":0}]},{"position":"back","images":[]},{"position":"neck","images":[]}]}]}
         self.assertTrue(product_orchestrator.replacement_ownership_matches(state,remote,"replacement"))
         cases={
             "remote_artwork":lambda s,r:r["print_areas"][0]["placeholders"][0]["images"][0].update(id="stale-upload"),
             "product":lambda s,r:r.update(id="other"),"shop":lambda s,r:r.update(shop_id=2),
+            "blueprint":lambda s,r:r.update(blueprint_id=99),"provider":lambda s,r:r.update(print_provider_id=99),
             "lineage":lambda s,r:s["evidence"].update(draft_recovery_history=[]),
             "protected":lambda s,r:s["evidence"]["draft"].update(printify_product_id=product_orchestrator.PROTECTED_PRODUCT_ID),
             "extra_variant":lambda s,r:r["variants"].append({"id":19,"is_enabled":True}),
             "missing_variant":lambda s,r:r["variants"].pop(),
             "back_artwork":lambda s,r:r["print_areas"][0]["placeholders"][1]["images"].append({"id":"current-upload"}),
             "neck_artwork":lambda s,r:r["print_areas"][0]["placeholders"][2]["images"].append({"id":"current-upload"}),
+            "sleeve_artwork":lambda s,r:r["print_areas"][0]["placeholders"].append({"position":"sleeve","images":[{"id":"current-upload"}]}),
+            "placement":lambda s,r:r["print_areas"][0]["placeholders"][0]["images"][0].update(scale=.9),
             "published":lambda s,r:r.update(published=True),"ordered":lambda s,r:r.update(orders=[{"id":"order"}]),}
         for name,mutate in cases.items():
             with self.subTest(name=name):
@@ -578,8 +589,9 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertTrue(all(item["mockup_available"] and not item["color_match_verified"] for item in records))
             self.assertTrue(all("mockup_color_mismatch" in item["issues"] for item in records));self.assertIn("downloaded, not color-verified",Path(result["html_report_path"]).read_text())
 
-    def listing_fixture(self, root: Path):
-        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_orchestrator.LISTING_PRODUCT_ID)
+    def listing_fixture(self, root: Path, *, product_id: str | None = None):
+        product_id=product_id or product_orchestrator.LISTING_PRODUCT_ID
+        orchestrator,state,remote,verified,catalog,dark=self.reconciliation_fixture(root,product_id=product_id)
         desired=set(product_orchestrator.RECOVERY_VARIANT_IDS);marker=product_orchestrator.RECOVERY_TAGS[-1]
         for item in remote["variants"]:item["is_enabled"]=item["id"] in desired;item["price"]=2499 if item["is_enabled"] else item["price"]
         remote["tags"]=[*product_orchestrator.RECOVERY_TAGS];remote["title"]=product_orchestrator.RECOVERY_TITLE;remote["description"]=product_orchestrator.RECOVERY_DESCRIPTION
@@ -587,11 +599,11 @@ class ProductOrchestratorTests(unittest.TestCase):
         state["evidence"]["draft_marker"]=marker;state["evidence"]["draft"]["draft_marker"]=marker
         state["evidence"]["upload"]["printify_image_id"]=product_orchestrator.RECOVERY_UPLOAD_ID
         state["evidence"]["draft_recovery_history"]=[{"status":"verified","deleted_product_id":product_orchestrator.RECOVERY_DELETED_PRODUCT_ID,
-            "replacement_product_id":product_orchestrator.LISTING_PRODUCT_ID,"historical":"preserved"}]
+            "replacement_product_id":product_id,"historical":"preserved"}]
         state["recovered_errors"]=[{"error_id":"old-error"}];state["evidence"]["draft_reconciliation"]={"status":"preserved"}
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
         review_root=orchestrator._path("reconcile-job").parent/"visual-review";review_root.mkdir()
-        product_orchestrator._atomic_json(review_root/"visual-review.json",{"product_id":product_orchestrator.LISTING_PRODUCT_ID,
+        product_orchestrator._atomic_json(review_root/"visual-review.json",{"product_id":product_id,
             "recommended_scale_action":"keep_0.85","checks":{"mockups":[{"color":color,"verified_mockup_available":True,
                 "downloaded_sha256":str(index)*64} for index,color in enumerate(product_orchestrator.DEFAULT_COLORS,1)]}})
         client=Mock();client.get_product.return_value=remote;client.get_blueprint.return_value={"id":12,"brand":"Bella + Canvas","model":"3001",
@@ -602,13 +614,53 @@ class ProductOrchestratorTests(unittest.TestCase):
         replacement["print_areas"]=product_orchestrator.sanitize_update_print_areas(remote["print_areas"],[item["id"] for item in remote["variants"]])[0]
         return orchestrator,state,remote,replacement,client
 
+    def test_prepare_listing_uses_job_product_when_profile_target_is_older(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            current="job-owned-current-product";orchestrator,state,remote,replacement,client=self.listing_fixture(Path(temporary),product_id=current)
+            self.assertNotEqual(current,product_orchestrator.LISTING_PRODUCT_ID)
+            result=orchestrator.prepare_listing("reconcile-job")
+            self.assertEqual(result["product_id"],current);client.get_product.assert_called_once_with(state["shop_id"],current)
+            client.update_product.assert_not_called()
+
+    def test_prepare_listing_current_ownership_failures_close_without_writes(self):
+        scenarios={
+            "product":lambda state,remote:remote.update(id="other"),
+            "shop":lambda state,remote:remote.update(shop_id=2),
+            "blueprint":lambda state,remote:remote.update(blueprint_id=99),
+            "provider":lambda state,remote:remote.update(print_provider_id=99),
+            "lineage":lambda state,remote:state["evidence"].update(draft_recovery_history=[]),
+            "artwork":lambda state,remote:remote["print_areas"][0]["placeholders"][0]["images"][0].update(id="stale"),
+            "extra_variant":lambda state,remote:remote["variants"].append({"id":999999,"is_enabled":True,"price":2499}),
+            "missing_variant":lambda state,remote:next(item for item in remote["variants"] if item.get("is_enabled")).update(is_enabled=False),
+            "back":lambda state,remote:remote["print_areas"][0]["placeholders"].append({"position":"back","images":[{"id":"other"}]}),
+            "neck":lambda state,remote:remote["print_areas"][0]["placeholders"].append({"position":"neck","images":[{"id":"other"}]}),
+            "unknown":lambda state,remote:remote["print_areas"][0]["placeholders"].append({"position":"sleeve","images":[{"id":"other"}]}),
+            "placement":lambda state,remote:remote["print_areas"][0]["placeholders"][0]["images"][0].update(x=.6),
+            "published":lambda state,remote:remote.update(is_published=True),
+            "ordered":lambda state,remote:remote.update(orders=[{"id":"order"}]),
+        }
+        for name,mutate in scenarios.items():
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as temporary:
+                orchestrator,state,remote,replacement,client=self.listing_fixture(Path(temporary))
+                mutate(state,remote)
+                product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+                with self.assertRaises(product_orchestrator.StateConflictError):orchestrator.prepare_listing("reconcile-job")
+                client.update_product.assert_not_called();client.publish_product.assert_not_called();client.create_order.assert_not_called()
+
+    def test_prepare_listing_missing_active_evidence_requires_migration(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator,state,remote,replacement,client=self.listing_fixture(Path(temporary));state["evidence"]["draft"].pop("printify_product_id")
+            product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+            with self.assertRaises(product_orchestrator.StateConflictError) as raised:orchestrator.prepare_listing("reconcile-job")
+            self.assertTrue(raised.exception.context["migration_required"]);client.get_product.assert_not_called();client.update_product.assert_not_called()
+
     def test_prepare_listing_dry_run_is_read_only_exact_and_marker_independent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);orchestrator,state,remote,replacement,client=self.listing_fixture(root);remote["tags"]=["buyer tag"]
             before=orchestrator._path("reconcile-job").read_bytes();result=orchestrator.prepare_listing("reconcile-job")
             self.assertEqual(result,{"result":"listing_preparation_plan","write_performed":False,"printify_write_performed":False,
                 "product_id":product_orchestrator.LISTING_PRODUCT_ID,"proposed_title":product_orchestrator.ETSY_TITLE,"seo_tag_count":13,
-                "price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,"primary_mockup_color":"Black",
+                "proposed_description_present":True,"price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,"primary_mockup_color":"Black",
                 "primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,"publish_status":"not_published",
                 "order_status":"not_created","safe_to_update":True,"catalog_claims_verified":True})
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called()
@@ -616,6 +668,47 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.get_variants.assert_called_once_with(12,29,show_out_of_stock=True)
             self.assertEqual(len(product_orchestrator.ETSY_TAGS),13);self.assertTrue(all(len(tag)<=20 and len(tag.split())>=2 for tag in product_orchestrator.ETSY_TAGS))
             self.assertNotIn("jamesos",json.dumps([product_orchestrator.ETSY_TITLE,product_orchestrator.ETSY_DESCRIPTION,product_orchestrator.ETSY_TAGS]).lower())
+
+    def test_listing_metadata_validator_fails_closed_for_invalid_public_content(self):
+        state={"shop_id":1001,"profile_id":"private-profile","evidence":{"draft":{"printify_product_id":"product-private"},
+            "upload":{"printify_image_id":"upload-private"},"listing":{"price_cents":2499}}}
+        valid={"title":"Complete Public Title","description":"Complete public listing description.",
+            "tags":[f"public tag {index}" for index in range(1,14)],"price_cents":2499}
+        scenarios={
+            "blank_title":{"title":""},"whitespace_title":{"title":"   "},"missing_title":{"title":None},
+            "blank_description":{"description":""},"whitespace_description":{"description":" \t "},"missing_description":{"description":None},
+            "zero_price":{"price_cents":0},"negative_price":{"price_cents":-1},"non_integer_price":{"price_cents":"2499"},
+            "few_tags":{"tags":valid["tags"][:-1]},"many_tags":{"tags":[*valid["tags"],"public tag 14"]},
+            "duplicate_tags":{"tags":[*valid["tags"][:-1],valid["tags"][0].upper()]},
+            "blank_tag":{"tags":[*valid["tags"][:-1],"  "]},"long_tag":{"tags":[*valid["tags"][:-1],"this public tag is much too long"]},
+            "one_word_tag":{"tags":[*valid["tags"][:-1],"single"]},"jamesos_title":{"title":"JamesOS public title"},
+            "jamesos_description":{"description":"Created by JamesOS"},"jamesos_tag":{"tags":[*valid["tags"][:-1],"JamesOS product"]},
+            "product_id":{"description":"Product product-private"},"shop_id":{"description":"Shop 1001"},
+            "upload_id":{"description":"Artwork upload-private"},"profile_name":{"description":"For private-profile"},
+            "local_path":{"description":"Artwork at /home/example/private.png"},"secret_handle":{"description":"Uses secret:provider:handle"},
+        }
+        for name,changes in scenarios.items():
+            with self.subTest(name=name):
+                candidate={**valid,**changes}
+                with self.assertRaises(product_orchestrator.ValidationError) as raised:
+                    product_orchestrator.validate_listing_metadata(state,"product_orchestrator.prepare_listing",candidate)
+                self.assertEqual(raised.exception.stage,"listing_metadata");self.assertFalse(raised.exception.retryable)
+                self.assertTrue(raised.exception.context["invalid_fields"]);self.assertFalse(raised.exception.context["external_write_performed"])
+        result=product_orchestrator.validate_listing_metadata(state,"product_orchestrator.prepare_listing",valid)
+        self.assertEqual(result["title"],valid["title"]);self.assertEqual(result["price_cents"],2499)
+
+    def test_invalid_profile_metadata_blocks_prepare_and_publication_before_external_calls(self):
+        for operation,confirmed in (("prepare",False),("prepare",True),("publish",False),("publish",True)):
+            with self.subTest(operation=operation,confirmed=confirmed),tempfile.TemporaryDirectory() as temporary:
+                orchestrator,state,remote,replacement,client=self.listing_fixture(Path(temporary))
+                if operation=="publish":
+                    state.update(stage="awaiting_printify_human_review");product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
+                with patch.object(product_orchestrator,"ETSY_TITLE","   "),self.assertRaises(product_orchestrator.ValidationError) as raised:
+                    if operation=="prepare":orchestrator.prepare_listing("reconcile-job",confirmed=confirmed)
+                    else:orchestrator.send_to_etsy_review("reconcile-job",confirmed=confirmed)
+                self.assertEqual(raised.exception.stage,"listing_metadata");self.assertIn("title",raised.exception.context["invalid_fields"])
+                client.list_shops.assert_not_called();client.get_product.assert_not_called();client.update_product.assert_not_called()
+                client.publish_product.assert_not_called();client.create_order.assert_not_called()
 
     def test_prepare_listing_confirmed_updates_once_and_preserves_product_document_and_history(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -695,7 +788,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             client.get_product.assert_not_called();client.update_product.assert_not_called()
 
     def etsy_fixture(self, root: Path, *, gpsr: bool = True):
-        orchestrator,state,remote,replacement,client=self.listing_fixture(root);remote=replacement
+        orchestrator,state,remote,replacement,client=self.listing_fixture(root,product_id="job-owned-etsy-product");remote=replacement
         state.update(stage="awaiting_printify_human_review",publish_status="not_published",order_status="not_created")
         state["evidence"]["listing"].update(title=product_orchestrator.ETSY_TITLE,description=product_orchestrator.ETSY_DESCRIPTION,tags=product_orchestrator.ETSY_TAGS)
         product_orchestrator._atomic_json(orchestrator._path("reconcile-job"),state)
@@ -718,7 +811,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertEqual(result["current_default_variant_id"],18542);self.assertEqual(result["proposed_default_variant_id"],18102)
             self.assertEqual(result["current_mockup_count"],3);self.assertTrue(result["gpsr_information_available"]);self.assertTrue(result["public_listing_risk_acknowledged"])
             self.assertEqual(orchestrator._path("reconcile-job").read_bytes(),before);client.update_product.assert_not_called();client.publish_product.assert_not_called()
-            client.get_product_gpsr.assert_called_once_with(1001,product_orchestrator.LISTING_PRODUCT_ID)
+            client.get_product_gpsr.assert_called_once_with(state["shop_id"],state["evidence"]["draft"]["printify_product_id"])
 
     def test_etsy_channel_preflight_uses_current_upload(self):
         with tempfile.TemporaryDirectory() as temporary:

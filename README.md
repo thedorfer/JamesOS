@@ -40,6 +40,11 @@ At the July 16, 2026 Agency checkpoint:
 - **CareerAgent** — coordinates local job discovery, ranking, and application preparation
 - **ExampleAgent** — demonstrates the safe Agency lifecycle for developers
 
+Private commerce deployments use `commerce_shop` profiles. Shop-specific policies,
+account IDs, protected resources, credentials, and deployment data remain outside
+public agent code. The public CommerceAgent, PrintifyAgent, and EtsyAgent
+implementations remain generic.
+
 ### Planned directions
 
 - HomeOps and household-management agents

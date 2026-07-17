@@ -255,6 +255,37 @@ def validate_etsy_tags(tags: list[str]) -> None:
         raise ValidationError("VALIDATION_FAILED",diagnostic_message="Etsy tags did not satisfy the guarded SEO constraints.",operation="product_orchestrator.prepare_listing",stage="listing")
 
 
+def validate_listing_metadata(state: dict[str, Any], operation: str, candidate: dict[str, Any] | None = None) -> dict[str, Any]:
+    listing=(state.get("evidence") or {}).get("listing") or {};source=candidate or {
+        "title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS,"price_cents":listing.get("price_cents")}
+    title=source.get("title");description=source.get("description");tags=source.get("tags");price=source.get("price_cents")
+    invalid=[]
+    if not isinstance(title,str) or not title.strip():invalid.append("title")
+    if not isinstance(description,str) or not description.strip():invalid.append("description")
+    if type(price) is not int or price<=0:invalid.append("price_cents")
+    clean_tags=[tag.strip() for tag in tags] if isinstance(tags,list) and all(isinstance(tag,str) for tag in tags) else []
+    if not isinstance(tags,list) or len(clean_tags)!=13:invalid.append("tags.count")
+    if clean_tags and len({tag.casefold() for tag in clean_tags})!=len(clean_tags):invalid.append("tags.unique")
+    if clean_tags and any(not tag or len(tag)>20 or len(tag.split())<2 for tag in clean_tags):invalid.append("tags.rules")
+    public_values=[title if isinstance(title,str) else "",description if isinstance(description,str) else "",*clean_tags]
+    public_text="\n".join(public_values);public_folded=public_text.casefold()
+    if "jamesos" in public_folded:invalid.append("public_content.jamesos")
+    if re.search(r"(?:^|\s)(?:~?/|/home/|file://|[a-z]:\\)",public_text,re.I):invalid.append("public_content.local_path")
+    if re.search(r"(?:secret:|bearer\s+|\b(?:api[_ -]?key|access[_ -]?token|password|credential)s?\b|\bsk-[a-z0-9_-]{8,})",public_text,re.I):
+        invalid.append("public_content.secret_or_credential")
+    evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload=evidence.get("upload") or {}
+    identifiers=[state.get("shop_id"),draft.get("printify_product_id"),upload.get("printify_image_id"),state.get("profile_id"),
+        state.get("selected_profile_id"),state.get("profile_name"),_COMMERCE.get("profile_id"),_COMMERCE.get("profile_name")]
+    leaked=[str(value) for value in identifiers if value not in (None,"") and str(value).casefold() in public_folded]
+    if leaked:invalid.append("public_content.private_identifier")
+    if invalid:
+        fields=list(dict.fromkeys(invalid))
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message=f"Listing metadata is missing or invalid: {', '.join(fields)}.",operation=operation,
+            stage="listing_metadata",retryable=False,context={"invalid_fields":fields,"migration_required":True,"external_write_performed":False},
+            suggested_action="Add complete public listing metadata to the selected commerce profile or validated job evidence.")
+    return {"title":title.strip(),"description":description.strip(),"tags":clean_tags,"price_cents":price,"source":"validated_profile_or_job_evidence"}
+
+
 def validate_listing_claims(description: str, blueprint: dict[str, Any], providers: Any, catalog: dict[str, Any],
                             remote: dict[str, Any], product_id: str) -> dict[str, Any]:
     def text(value: Any) -> str:
@@ -300,21 +331,35 @@ def validate_listing_claims(description: str, blueprint: dict[str, Any], provide
 
 def replacement_ownership_matches(state: dict[str, Any], remote: dict[str, Any], product_id: str) -> bool:
     evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};upload_id=(evidence.get("upload") or {}).get("printify_image_id")
-    lineage=any(item.get("status")=="verified" and item.get("replacement_product_id")==product_id
+    recovery_lineage=any(item.get("status")=="verified" and item.get("replacement_product_id")==product_id
         for item in evidence.get("draft_recovery_history") or [])
+    creation_lineage=any(item.get("result")=="completed" and item.get("stage")=="printify_draft_created"
+        and item.get("output_sha")==_json_sha(draft) for item in state.get("transitions") or [])
+    lineage=recovery_lineage or creation_lineage
     configured_variants=draft.get("variant_ids") or (evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
     expected_variants={item for item in configured_variants if isinstance(item,int)}
     enabled={item.get("id") for item in remote.get("variants") or [] if item.get("is_enabled") is True}
-    front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-        if placeholder.get("position")=="front" for image in placeholder.get("images") or []]
-    other=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-        if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+    placeholders=[placeholder for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []]
+    front=[image for placeholder in placeholders if placeholder.get("position")=="front" for image in placeholder.get("images") or []]
+    other=[image for placeholder in placeholders if placeholder.get("position")!="front" for image in placeholder.get("images") or []]
+    placement={"x":.5,"y":.46,"scale":.85,"angle":0}
     publication=assess_draft_publication_state(state,remote)
     return bool(product_id and product_id!=PROTECTED_PRODUCT_ID and draft.get("printify_product_id")==product_id
         and remote.get("id")==product_id and remote.get("shop_id")==state.get("shop_id") and remote.get("blueprint_id")==12
         and remote.get("print_provider_id")==29 and lineage and upload_id and len(expected_variants)==18 and enabled==expected_variants
-        and any(image.get("id")==upload_id for image in front) and not other and publication["safe_to_reconcile"]
+        and len(front)==1 and front[0].get("id")==upload_id and all(front[0].get(key)==value for key,value in placement.items())
+        and not other and publication["safe_to_reconcile"]
         and state.get("order_status")=="not_created" and remote.get("order_status") in (None,"not_created") and not remote.get("orders"))
+
+
+def _current_product_evidence(state: dict[str, Any], operation: str) -> tuple[str,int,list[int]]:
+    evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};product_id=draft.get("printify_product_id")
+    shop_id=state.get("shop_id");variant_ids=draft.get("variant_ids") or (evidence.get("variant_selection") or {}).get("selected_variant_ids") or []
+    valid_variants=all(type(item) is int for item in variant_ids) and len(variant_ids)==18 and len(set(variant_ids))==18
+    if not product_id or type(shop_id) is not int or not shop_id or not valid_variants or not (evidence.get("upload") or {}).get("printify_image_id"):
+        raise StateConflictError("STATE_CONFLICT",diagnostic_message="Current job-owned product evidence is incomplete; migrate the job before continuing.",operation=operation,stage="ownership",
+            context={"migration_required":True,"legacy_listing_product_id_available":bool(LISTING_PRODUCT_ID)})
+    return str(product_id),shop_id,list(variant_ids)
 
 
 def normalize_printify_variants(response: dict[str, Any]) -> list[dict[str, Any]]:
@@ -655,14 +700,16 @@ class ProductOrchestrator:
     def send_to_etsy_review(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="Etsy channel testing requires a single existing job ID.",operation="product_orchestrator.send_to_etsy_review",stage="input")
-        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};product_id=draft.get("printify_product_id")
-        if product_id!=LISTING_PRODUCT_ID or product_id==PROTECTED_PRODUCT_ID or state.get("shop_id")!=RECOVERY_SHOP_ID:
-            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The active product does not match the guarded Etsy channel test.",operation="product_orchestrator.send_to_etsy_review",stage="ownership")
+        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {}
+        metadata=validate_listing_metadata(state,"product_orchestrator.send_to_etsy_review")
+        product_id,shop_id,expected_variant_ids=_current_product_evidence(state,"product_orchestrator.send_to_etsy_review")
+        if product_id==PROTECTED_PRODUCT_ID:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The active product is protected.",operation="product_orchestrator.send_to_etsy_review",stage="ownership")
         client=self.adapters.client_factory();shops=client.list_shops();shop_rows=shops if isinstance(shops,list) else shops.get("data") or shops.get("shops") or []
-        shop=next((item for item in shop_rows if item.get("id")==RECOVERY_SHOP_ID),{})
+        shop=next((item for item in shop_rows if item.get("id")==shop_id),{})
         if "etsy" not in str(shop.get("sales_channel") or shop.get("title") or "").casefold():
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The Printify shop is not identified as an Etsy sales channel.",operation="product_orchestrator.send_to_etsy_review",stage="sales_channel")
-        remote=client.get_product(RECOVERY_SHOP_ID,product_id);external=remote.get("external") or {}
+        remote=client.get_product(shop_id,product_id);external=remote.get("external") or {}
         if external.get("id") or external.get("handle"):
             classification=self.adapters.etsy_visibility(str(external.get("handle") or "")) if external.get("handle") else "indeterminate"
             return {"result":"existing_etsy_listing","write_performed":False,"printify_write_performed":False,"publish_performed":False,
@@ -673,14 +720,14 @@ class ProductOrchestrator:
         publication=assess_draft_publication_state(state,remote);enabled=[item for item in remote.get("variants") or [] if item.get("is_enabled") is True]
         marker=evidence.get("draft_marker") or draft.get("draft_marker");listing=evidence.get("listing") or {}
         if not publication["safe_to_reconcile"] or remote.get("orders") or remote.get("order_status") not in (None,"not_created") \
-                or remote.get("title")!=ETSY_TITLE or remote.get("description")!=ETSY_DESCRIPTION or remote.get("tags")!=ETSY_TAGS \
+                or remote.get("title")!=metadata["title"] or remote.get("description")!=metadata["description"] or remote.get("tags")!=metadata["tags"] \
                 or marker in {str(tag) for tag in remote.get("tags") or []} or len(enabled)!=18 \
-                or {item.get("id") for item in enabled}!=set(RECOVERY_VARIANT_IDS) or any(item.get("price")!=2499 for item in enabled):
+                or {item.get("id") for item in enabled}!=set(expected_variant_ids) or any(item.get("price")!=metadata["price_cents"] for item in enabled):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The prepared listing changed before the Etsy channel test.",operation="product_orchestrator.send_to_etsy_review",stage="preflight")
         current_upload_id=(state.get("evidence",{}).get("upload") or {}).get("printify_image_id")
         front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front"
             for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
-        back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position") in ("back","neck")
+        back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")!="front"
             for image in placeholder.get("images") or []]
         placement={"x":.5,"y":.46,"scale":.85,"angle":0}
         if not front or any(front[0].get(key)!=value for key,value in placement.items()) or back:
@@ -690,7 +737,7 @@ class ProductOrchestrator:
         except (OSError,ValueError) as exc:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Fresh visual review evidence is unavailable.",operation="product_orchestrator.send_to_etsy_review",stage="visual_review") from exc
         if review.get("product_id")!=product_id or review.get("recommended_scale_action")!="keep_0.85" or len(mockup_reviews)!=3 or not all(item.get("verified_mockup_available") for item in mockup_reviews):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Fresh visual review evidence is incomplete.",operation="product_orchestrator.send_to_etsy_review",stage="visual_review")
-        try:gpsr=client.get_product_gpsr(RECOVERY_SHOP_ID,product_id)
+        try:gpsr=client.get_product_gpsr(shop_id,product_id)
         except PrintifyAPIError as exc:
             if exc.http_status!=404:raise
             gpsr={}
@@ -700,7 +747,7 @@ class ProductOrchestrator:
         gpsr_available=bool(safety_information);remote_variants=remote.get("variants") or [];current_default=next((item.get("id") for item in remote_variants if item.get("is_default") is True),None)
         mockup_count=len(remote.get("images") or []);publish_payload={"title":True,"description":True,"images":True,"variants":True,"tags":True,"keyFeatures":True,"shipping_template":True}
         plan={"result":"etsy_channel_test_plan","write_performed":False,"printify_write_performed":False,"publish_performed":False,"product_id":product_id,
-            "shop_id":RECOVERY_SHOP_ID,"sales_channel":"etsy","current_default_variant_id":current_default,"proposed_default_variant_id":18102,
+            "shop_id":shop_id,"sales_channel":"etsy","current_default_variant_id":current_default,"proposed_default_variant_id":18102,
             "proposed_default_color":"Black","current_mockup_count":mockup_count,"mockup_publish_strategy":"all_current_printify_mockups",
             "publish_images":True,"gpsr_information_available":gpsr_available,"etsy_attributes_require_manual_selection":True,
             "etsy_draft_behavior_unverified":True,"public_listing_risk_acknowledged":True,"order_status":"not_created","safe_to_test":True}
@@ -714,38 +761,47 @@ class ProductOrchestrator:
         readiness_needed=current_default!=18102 or (gpsr_available and remote.get("safety_information")!=safety_information)
         readiness_at=None
         if readiness_needed:
-            update_payload={"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS,"variants":variants_payload,"print_areas":print_areas}
+            update_payload={"title":metadata["title"],"description":metadata["description"],"tags":metadata["tags"],"variants":variants_payload,"print_areas":print_areas}
             if gpsr_available:update_payload["safety_information"]=safety_information
-            client.update_product(RECOVERY_SHOP_ID,product_id,update_payload);readiness_at=datetime.now().astimezone().isoformat()
-            ready=client.get_product(RECOVERY_SHOP_ID,product_id)
+            client.update_product(shop_id,product_id,update_payload);readiness_at=datetime.now().astimezone().isoformat()
+            ready=client.get_product(shop_id,product_id)
             ready_variants=ready.get("variants") or [];ready_defaults=[item.get("id") for item in ready_variants if item.get("is_default") is True]
             ready_enabled={item.get("id") for item in ready_variants if item.get("is_enabled") is True};before_prices={item.get("id"):item.get("price") for item in remote_variants};after_prices={item.get("id"):item.get("price") for item in ready_variants}
             ready_front=[image for area in ready.get("print_areas") or [] for placeholder in area.get("placeholders") or [] if placeholder.get("position")=="front"
                 for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
             before_mockups={(item.get("id"),item.get("mockup_id"),item.get("src")) for item in remote.get("images") or []};after_mockups={(item.get("id"),item.get("mockup_id"),item.get("src")) for item in ready.get("images") or []}
+            validate_listing_metadata(state,"product_orchestrator.send_to_etsy_review",{"title":ready.get("title"),"description":ready.get("description"),"tags":ready.get("tags"),"price_cents":metadata["price_cents"]})
             if ready_defaults!=[18102] or len(ready_variants)!=len(remote_variants) or {item.get("id") for item in ready_variants}!={item.get("id") for item in remote_variants} \
-                    or ready_enabled!=set(RECOVERY_VARIANT_IDS) or before_prices!=after_prices or ready.get("title")!=ETSY_TITLE or ready.get("description")!=ETSY_DESCRIPTION \
-                    or ready.get("tags")!=ETSY_TAGS or not ready_front or any(ready_front[0].get(key)!=value for key,value in placement.items()) \
+                    or ready.get("id")!=product_id or ready.get("shop_id")!=shop_id or ready_enabled!=set(expected_variant_ids) or before_prices!=after_prices or ready.get("title")!=metadata["title"] or ready.get("description")!=metadata["description"] \
+                    or ready.get("tags")!=metadata["tags"] or not ready_front or any(ready_front[0].get(key)!=value for key,value in placement.items()) \
                     or before_mockups!=after_mockups or (gpsr_available and ready.get("safety_information")!=safety_information):
                 raise StateConflictError("STATE_CONFLICT",diagnostic_message="The Etsy readiness update failed verification.",operation="product_orchestrator.send_to_etsy_review",stage="readiness_verification")
             remote=ready
         readiness={"category":{"recommended_value":"T-shirts","selected_remotely":False},"recipient":{"recommended_value":"Unisex adults","selected_remotely":False,"evidence":"Blueprint title"},
             "sleeve_length":{"recommended_value":"Short sleeve","selected_remotely":False,"evidence":"Blueprint title"},"style":{"recommended_value":"Graphic tee","selected_remotely":False,"evidence":"Front graphic artwork"},
-            "primary_color":{"recommended_value":"Black","selected_remotely":False,"evidence":"Default variant"},"available_colors":DEFAULT_COLORS,"available_sizes":DEFAULT_SIZES,"price_cents":2499,
+            "primary_color":{"recommended_value":"Black","selected_remotely":False,"evidence":"Default variant"},"available_colors":DEFAULT_COLORS,"available_sizes":DEFAULT_SIZES,"price_cents":metadata["price_cents"],
             "gpsr_information_verified":gpsr_available,"gpsr_manual_review_required":not gpsr_available,"mockup_count":mockup_count,
             "additional_marketing_images_supported":True,"additional_marketing_images_destination":"Etsy","additional_marketing_images_require_etsy_integration":True,
             "additional_marketing_images_generated":False,"future_marketing_images":["lifestyle-black.png","lifestyle-dark-grey-heather.png","closeup-design.png","size-chart.png","pride-gift-image.png"]}
         _atomic_json(self._path(job_id).parent/"etsy-listing-readiness.json",readiness)
         publish_error=None
-        try:client.publish_product(RECOVERY_SHOP_ID,product_id,publish_payload)
+        validate_listing_metadata(state,"product_orchestrator.send_to_etsy_review",metadata)
+        try:client.publish_product(shop_id,product_id,publish_payload)
         except PrintifyAPIError as exc:publish_error=exc
         external={};checked=remote
         for attempt in range(max(1,self.adapters.publish_poll_attempts)):
-            checked=client.get_product(RECOVERY_SHOP_ID,product_id);external=checked.get("external") or {}
+            checked=client.get_product(shop_id,product_id);external=checked.get("external") or {}
             if external.get("id") or external.get("handle"):break
             if attempt+1<self.adapters.publish_poll_attempts:self.adapters.sleep(5)
         post_variants=checked.get("variants") or [];post_enabled={item.get("id") for item in post_variants if item.get("is_enabled") is True}
-        post_valid=(checked.get("title")==ETSY_TITLE and len(post_variants)==318 and post_enabled==set(RECOVERY_VARIANT_IDS)
+        post_front=[image for area in checked.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")=="front" for image in placeholder.get("images") or []]
+        post_other=[image for area in checked.get("print_areas") or [] for placeholder in area.get("placeholders") or []
+            if placeholder.get("position")!="front" for image in placeholder.get("images") or []]
+        validate_listing_metadata(state,"product_orchestrator.send_to_etsy_review",{"title":checked.get("title"),"description":checked.get("description"),"tags":checked.get("tags"),"price_cents":metadata["price_cents"]})
+        post_valid=(checked.get("id")==product_id and checked.get("shop_id")==shop_id and checked.get("title")==metadata["title"]
+            and len(post_variants)==318 and post_enabled==set(expected_variant_ids) and len(post_front)==1
+            and post_front[0].get("id")==current_upload_id and all(post_front[0].get(key)==value for key,value in placement.items()) and not post_other
             and len(checked.get("images") or [])==mockup_count and checked.get("order_status") in (None,"not_created") and not checked.get("orders"))
         if external.get("handle") and post_valid:classification=self.adapters.etsy_visibility(str(external["handle"]))
         elif external:classification="indeterminate"
@@ -775,24 +831,25 @@ class ProductOrchestrator:
     def prepare_listing(self, job_id: str, *, confirmed: bool = False) -> dict[str, Any]:
         if not job_id or Path(job_id).name!=job_id:
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="Listing preparation requires a single existing job ID.",operation="product_orchestrator.prepare_listing",stage="input")
-        validate_etsy_tags(ETSY_TAGS);state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {}
-        product_id=draft.get("printify_product_id")
-        if product_id!=LISTING_PRODUCT_ID or state.get("shop_id")!=RECOVERY_SHOP_ID or product_id in {RECOVERY_DELETED_PRODUCT_ID,PROTECTED_PRODUCT_ID}:
-            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The active draft does not match the guarded Etsy listing target.",operation="product_orchestrator.prepare_listing",stage="ownership")
-        client=self.adapters.client_factory();remote=client.get_product(RECOVERY_SHOP_ID,product_id)
+        state=self.load(job_id);evidence=state.get("evidence") or {};draft=evidence.get("draft") or {}
+        metadata=validate_listing_metadata(state,"product_orchestrator.prepare_listing")
+        product_id,shop_id,expected_variant_ids=_current_product_evidence(state,"product_orchestrator.prepare_listing")
+        if product_id in {RECOVERY_DELETED_PRODUCT_ID,PROTECTED_PRODUCT_ID}:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="The active draft is deleted or protected.",operation="product_orchestrator.prepare_listing",stage="ownership")
+        client=self.adapters.client_factory();remote=client.get_product(shop_id,product_id)
         if not replacement_ownership_matches(state,remote,product_id):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Replacement-product ownership evidence did not match.",operation="product_orchestrator.prepare_listing",stage="ownership")
         publication=assess_draft_publication_state(state,remote)
         if not publication["safe_to_reconcile"] or state.get("order_status")!="not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Published, locked, or ordered products cannot be prepared.",operation="product_orchestrator.prepare_listing",stage="publication")
         remote_variants=remote.get("variants") or [];enabled=[item for item in remote_variants if item.get("is_enabled") is True]
-        if len(enabled)!=18 or {item.get("id") for item in enabled}!=set(RECOVERY_VARIANT_IDS) or any(item.get("price")!=2499 for item in enabled):
+        if len(enabled)!=18 or {item.get("id") for item in enabled}!=set(expected_variant_ids) or any(item.get("price")!=metadata["price_cents"] for item in enabled):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Enabled variants or pricing changed before listing preparation.",operation="product_orchestrator.prepare_listing",stage="variants")
         current_upload_id=(state.get("evidence",{}).get("upload") or {}).get("printify_image_id")
         front=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
         back=[image for area in remote.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-            if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+            if placeholder.get("position")!="front" for image in placeholder.get("images") or []]
         placement={"x":.5,"y":.46,"scale":.85,"angle":0}
         if not front or any(front[0].get(key)!=value for key,value in placement.items()) or back:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Artwork placement changed before listing preparation.",operation="product_orchestrator.prepare_listing",stage="artwork")
@@ -816,18 +873,18 @@ class ProductOrchestrator:
         blueprint=catalog_read("blueprint",lambda:client.get_blueprint(12))
         providers=catalog_read("print_providers",lambda:client.list_print_providers_for_blueprint(12))
         catalog=catalog_read("provider_variants",lambda:client.get_variants(12,29,show_out_of_stock=True))
-        claim_validation=validate_listing_claims(ETSY_DESCRIPTION,blueprint,providers,catalog,remote,product_id)
+        claim_validation=validate_listing_claims(metadata["description"],blueprint,providers,catalog,remote,product_id)
         selection=select_printify_variants(catalog,colors=DEFAULT_COLORS,sizes=DEFAULT_SIZES)
-        if selection["selected_variant_ids"]!=RECOVERY_VARIANT_IDS:
+        if len(selection["selected_variant_ids"])!=18 or set(selection["selected_variant_ids"])!=set(expected_variant_ids):
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="The current catalog no longer matches the enabled Etsy variants.",operation="product_orchestrator.prepare_listing",stage="variants")
         catalog_ids={item.get("id") for item in catalog.get("variants") or [] if type(item.get("id")) is int}
-        variants_payload,full_ids=build_full_variant_payload(remote_variants,RECOVERY_VARIANT_IDS,catalog_ids,2499)
+        variants_payload,full_ids=build_full_variant_payload(remote_variants,expected_variant_ids,catalog_ids,metadata["price_cents"])
         print_areas,empty_positions=sanitize_update_print_areas(remote.get("print_areas") or [],full_ids)
         if len(remote_variants)!=318 or len(variants_payload)!=318 or not print_areas or any(set(area["variant_ids"])!=set(full_ids) for area in print_areas):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The full remote variant or print-area document changed.",operation="product_orchestrator.prepare_listing",stage="payload")
-        payload={"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS,"variants":variants_payload,"print_areas":print_areas}
+        payload={"title":metadata["title"],"description":metadata["description"],"tags":metadata["tags"],"variants":variants_payload,"print_areas":print_areas}
         marker=evidence.get("draft_marker") or draft.get("draft_marker")
-        if marker and marker in json.dumps({"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS}):
+        if marker and marker in json.dumps({"title":metadata["title"],"description":metadata["description"],"tags":metadata["tags"]}):
             raise ValidationError("VALIDATION_FAILED",diagnostic_message="Internal marker leaked into buyer-facing listing fields.",operation="product_orchestrator.prepare_listing",stage="listing")
         manual_checks=["Set Black as the primary listing image.","Keep Dark Grey Heather second and White third.",
             "Add an available lifestyle/on-person mockup.","Add a close-up design mockup.","Add a current Bella+Canvas 3001 size chart.",
@@ -838,22 +895,23 @@ class ProductOrchestrator:
             "Preview the complete Etsy listing on desktop and mobile.","Confirm GPSR/product-safety information, manufacturer, responsible person, product identification, warnings, and safety details in Printify.",
             "Publish only through a separate future human-confirmed action."]
         plan={"result":"listing_preparation_plan","write_performed":False,"printify_write_performed":False,"product_id":product_id,
-            "proposed_title":ETSY_TITLE,"seo_tag_count":13,"price_cents":2499,"enabled_variant_count":18,"placement_scale":.85,
+            "proposed_title":metadata["title"],"proposed_description_present":True,"seo_tag_count":13,"price_cents":metadata["price_cents"],"enabled_variant_count":18,"placement_scale":.85,
             "primary_mockup_color":"Black","primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
             "publish_status":"not_published","order_status":"not_created","safe_to_update":True,"catalog_claims_verified":True}
         if not confirmed:return plan
-        client.update_product(RECOVERY_SHOP_ID,product_id,payload)
-        verified=client.get_product(RECOVERY_SHOP_ID,product_id);verified_publication=assess_draft_publication_state(state,verified)
+        client.update_product(shop_id,product_id,payload)
+        verified=client.get_product(shop_id,product_id);verified_publication=assess_draft_publication_state(state,verified)
         verified_variants=verified.get("variants") or [];verified_enabled=[item for item in verified_variants if item.get("is_enabled") is True]
         verified_front=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
             if placeholder.get("position")=="front" for image in placeholder.get("images") or [] if image.get("id")==current_upload_id]
         verified_back=[image for area in verified.get("print_areas") or [] for placeholder in area.get("placeholders") or []
-            if placeholder.get("position") in ("back","neck") for image in placeholder.get("images") or []]
+            if placeholder.get("position")!="front" for image in placeholder.get("images") or []]
         prices_before={item.get("id"):item.get("price") for item in remote_variants};prices_after={item.get("id"):item.get("price") for item in verified_variants}
-        verified_ok=(verified.get("id")==product_id and verified.get("title")==ETSY_TITLE and verified.get("description")==ETSY_DESCRIPTION
-            and verified.get("tags")==ETSY_TAGS and (not marker or marker not in set(verified.get("tags") or [])) and len(verified_variants)==318
+        validate_listing_metadata(state,"product_orchestrator.prepare_listing",{"title":verified.get("title"),"description":verified.get("description"),"tags":verified.get("tags"),"price_cents":metadata["price_cents"]})
+        verified_ok=(verified.get("id")==product_id and verified.get("title")==metadata["title"] and verified.get("description")==metadata["description"]
+            and verified.get("tags")==metadata["tags"] and (not marker or marker not in set(verified.get("tags") or [])) and len(verified_variants)==318
             and {item.get("id") for item in verified_variants}==set(full_ids) and prices_after==prices_before
-            and {item.get("id") for item in verified_enabled}==set(RECOVERY_VARIANT_IDS) and len(verified_enabled)==18
+            and verified.get("shop_id")==shop_id and {item.get("id") for item in verified_enabled}==set(expected_variant_ids) and len(verified_enabled)==18
             and verified_front and all(verified_front[0].get(key)==value for key,value in placement.items()) and not verified_back
             and verified_publication["safe_to_reconcile"] and verified.get("order_status") in (None,"not_created") and not verified.get("orders"))
         if not verified_ok:
@@ -863,7 +921,7 @@ class ProductOrchestrator:
             "visual_review_recommendation":"keep_0.85","human_artistic_approval":False,"listing_text_prepared":True,"seo_tag_count":13,
             "primary_mockup_color_requested":"Black","primary_mockup_manual_action_required":True,"gpsr_manual_confirmation_required":True,
             "final_review_location":"Printify","publish_status":"not_published","order_status":"not_created"})
-        evidence["listing"].update({"title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS})
+        evidence["listing"].update({"title":metadata["title"],"description":metadata["description"],"tags":metadata["tags"],"price_cents":metadata["price_cents"]})
         evidence["listing_preparation"]={"active_product_id":product_id,"prepared_at":datetime.now().astimezone().isoformat(),
             "visual_review_completed":True,"visual_review_recommendation":"keep_0.85","human_artistic_approval":False,"listing_text_prepared":True,
             "seo_tag_count":13,"primary_mockup_color_requested":"Black","primary_mockup_manual_action_required":True,
