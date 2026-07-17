@@ -1,0 +1,14 @@
+{
+  "agent": {
+    "schema_version": "1", "protocol_version": "1.0.0", "agent_id": "jamesos.commerce", "name": "Commerce Agent", "version": "0.1.0", "publisher": "JamesOS", "owner": "JamesOS", "description": "Plans and manages approval-first commerce workflows.",
+    "capabilities": ["commerce.product_pipeline"], "accepted_task_types": ["commerce.product"], "emitted_result_types": ["commerce.proposal"],
+    "required_tool_permissions": [], "required_secret_handles": ["COMMERCE_PROVIDER_TOKEN"], "supported_side_effects": ["local_state"], "protected_resources": [], "maximum_automatic_attempts": 1,
+    "minimum_jamesos_version": "0.1.0", "package_name": "jamesos", "entry_point": "jamesos.agents.commerce_agent:CommerceAgent"
+  },
+  "category": "Commerce", "tags": ["commerce", "products", "approval-first"],
+  "permissions": {"required": {"side_effects": ["local_state"]}, "optional": {"network_domains": ["provider-selected-at-runtime"]}},
+  "configuration": [{"name": "profile_id", "label": "Commerce profile", "type": "string", "required": true}],
+  "secrets": [{"name": "COMMERCE_PROVIDER_TOKEN", "label": "Provider token", "required": true}],
+  "platforms": [{"os": "linux", "distributions": ["linuxmint", "ubuntu", "debian"], "architectures": ["x86_64", "aarch64"]}],
+  "install": {"provider": "builtin", "apt_package": null}, "media": {"icon": null, "screenshots": []}
+}

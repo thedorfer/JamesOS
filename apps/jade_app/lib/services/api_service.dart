@@ -5,6 +5,55 @@ import '../models/dashboard_card.dart';
 import '../models/jade_settings.dart';
 
 class ApiService {
+  Future<List<Map<String, dynamic>>> agencyCatalog(
+    JadeSettings settings,
+  ) async {
+    final res = await http.get(
+      Uri.parse('${settings.apiBase}/agency/catalog'),
+      headers: {'X-JamesOS-Key': settings.apiKey},
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Agency unavailable: ${res.statusCode}');
+    }
+    final decoded = jsonDecode(res.body);
+    return (decoded as List)
+        .map((item) => Map<String, dynamic>.from(item as Map))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> agencyAgent(
+    JadeSettings settings,
+    String agentId,
+  ) async {
+    final res = await http.get(
+      Uri.parse('${settings.apiBase}/agency/agents/$agentId'),
+      headers: {'X-JamesOS-Key': settings.apiKey},
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Agent details unavailable: ${res.statusCode}');
+    }
+    return Map<String, dynamic>.from(jsonDecode(res.body) as Map);
+  }
+
+  Future<Map<String, dynamic>> agencyAction(
+    JadeSettings settings,
+    String agentId,
+    String action,
+  ) async {
+    final res = await http.post(
+      Uri.parse('${settings.apiBase}/agency/agents/$agentId/$action'),
+      headers: {
+        'Content-Type': 'application/json',
+        'X-JamesOS-Key': settings.apiKey,
+      },
+      body: jsonEncode({'confirmed': true}),
+    );
+    if (res.statusCode < 200 || res.statusCode >= 300) {
+      throw Exception('Agency action failed: ${res.statusCode}');
+    }
+    return Map<String, dynamic>.from(jsonDecode(res.body) as Map);
+  }
+
   Future<Map<String, dynamic>> health(JadeSettings settings) async {
     final res = await http.get(Uri.parse('${settings.apiBase}/health'));
     return {'statusCode': res.statusCode, 'body': res.body};

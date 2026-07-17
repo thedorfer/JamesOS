@@ -1,0 +1,22 @@
+{
+  "profile_id": "career_example",
+  "target_job_titles": ["Backend Developer"],
+  "preferred_locations": ["Example City"],
+  "work_settings": ["remote", "hybrid"],
+  "minimum_compensation": 80000,
+  "employment_types": ["full-time"],
+  "preferred_industries": ["software"],
+  "required_technologies": ["SQL", "REST APIs"],
+  "preferred_technologies": ["Java", "JSON"],
+  "excluded_employers": ["Example Excluded Employer"],
+  "excluded_staffing_arrangements": ["unpaid contract"],
+  "sponsorship_requirements": null,
+  "work_authorization_facts": [],
+  "clearance_restrictions": [],
+  "relocation_preference": "case-by-case",
+  "travel_tolerance": "limited",
+  "resume_file_references": [],
+  "reusable_answers": {},
+  "maximum_applications_per_day": 3,
+  "approval_mode": "single_final"
+}

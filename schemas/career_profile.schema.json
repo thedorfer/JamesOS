@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://jamesos.local/schemas/career-profile.json",
+  "title": "JamesOS private career profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["profile_id", "target_job_titles", "approval_mode", "maximum_applications_per_day"],
+  "properties": {
+    "profile_id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"},
+    "target_job_titles": {"$ref": "#/$defs/stringList"},
+    "preferred_locations": {"$ref": "#/$defs/stringList"},
+    "work_settings": {"type": "array", "items": {"enum": ["remote", "hybrid", "onsite"]}, "uniqueItems": true},
+    "minimum_compensation": {"type": ["integer", "null"], "minimum": 0},
+    "employment_types": {"$ref": "#/$defs/stringList"},
+    "preferred_industries": {"$ref": "#/$defs/stringList"},
+    "required_technologies": {"$ref": "#/$defs/stringList"},
+    "preferred_technologies": {"$ref": "#/$defs/stringList"},
+    "excluded_employers": {"$ref": "#/$defs/stringList"},
+    "excluded_staffing_arrangements": {"$ref": "#/$defs/stringList"},
+    "sponsorship_requirements": {"type": ["string", "null"]},
+    "work_authorization_facts": {"$ref": "#/$defs/stringList"},
+    "clearance_restrictions": {"$ref": "#/$defs/stringList"},
+    "relocation_preference": {"type": ["string", "null"]},
+    "travel_tolerance": {"type": ["string", "null"]},
+    "resume_file_references": {"$ref": "#/$defs/stringList"},
+    "reusable_answers": {"type": "object", "additionalProperties": {"type": "string"}},
+    "maximum_applications_per_day": {"type": "integer", "minimum": 1, "maximum": 100},
+    "approval_mode": {"enum": ["single_final", "staged"]}
+  },
+  "$defs": {"stringList": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}}
+}

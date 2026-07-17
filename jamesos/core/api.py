@@ -124,11 +124,16 @@ from jamesos.services.commerce_product_pipeline import (
 )
 from jamesos.services.worker_registry import get_worker, list_workers
 from jamesos.services.workflow_manager import get_workflow, list_workflows, scan_and_report as scan_workflows_and_report
+from jamesos.core.agency.routes import router as agency_router
 
 API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
 
 app = FastAPI(title="JamesOS API")
+# This project's FastAPI compatibility layer represents include_router() as a
+# sentinel in app.routes. Register the already-prefixed APIRoutes directly so
+# existing route audits continue to see ordinary path-bearing route objects.
+app.router.routes.extend(agency_router.routes)
 
 
 @app.exception_handler(JamesOSError)
