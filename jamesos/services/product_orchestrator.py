@@ -106,19 +106,37 @@ def resolve_garment_colors(value: str | list[str], *, configured_aliases: dict[s
 
 def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: list[str] | None = None,
                      sizes: list[str] | None = None) -> dict[str, Any]:
+    heading=re.search(r"(?im)^\s*exact\s+phrase\s*:\s*\n?\s*([A-Z0-9][A-Z0-9 '&+!-]{2,})\s*$",prompt)
     cleaned = " ".join(prompt.split())
     if not cleaned: raise ValidationError("VALIDATION_FAILED", diagnostic_message="Product prompt is empty.", operation="product_orchestrator", stage="prompt_received")
     quoted = re.search(r"[\"“](.+?)[\"”]", cleaned)
     labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:…|[.,;!?]|$))", cleaned)
-    exact = quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else "SAMPLE" if "sample" in cleaned.lower() else ""
+    bare_phrase = re.fullmatch(r"[A-Z0-9][A-Z0-9 '&+!-]{2,}", cleaned)
+    exact = heading.group(1).strip() if heading else quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else bare_phrase.group(0).strip() if bare_phrase else "SAMPLE" if "sample" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
     lower = cleaned.lower(); color_resolution = resolve_garment_colors(garment_colors if garment_colors is not None else cleaned)
     colors = color_resolution["canonical_colors"] or (DEFAULT_COLORS if not color_resolution["requested_color_phrases"] else [])
+    negatives=[]
+    negative_terms={"heart":("no heart","without a heart"),"badge":("no badge","without a badge"),"rounded_rectangle":("no rounded rectangle","without a rounded rectangle"),
+        "dark_background_panel":("no dark background panel","without a dark background panel"),"gradient":("no gradient","no gradients","without gradients"),
+        "prior_layout":("no prior layout","different layout","new composition","new design")}
+    for constraint,phrases in negative_terms.items():
+        if any(term in lower for term in phrases):negatives.append(constraint)
+    no_clauses=" ".join(re.findall(r"\bno\s+([^.;]+)",lower))
+    for constraint,terms in {"heart":("heart",),"badge":("badge",),"rounded_rectangle":("rounded rectangle",),"dark_background_panel":("dark background panel",),"prior_layout":("reused layout","recycled design template","prior layout")}.items():
+        if any(term in no_clauses for term in terms) and constraint not in negatives:negatives.append(constraint)
+    force_new=any(term in lower for term in ("new composition","different layout","new design","fresh design"))
+    requested_motifs=[motif for motif in ("flower","star","raised fist") if motif in lower and f"no {motif}" not in lower]
+    if "rainbow heart" in lower and "no heart" not in lower:requested_motifs.insert(0,"rainbow_heart")
+    else:
+        requested_motifs.extend(motif for motif in ("heart","rainbow") if motif in lower and f"no {motif}" not in lower)
     return {"exact_text": exact, "product_type": "unisex_t_shirt", "visual_style": "playful bold retro" if "retro" in lower else "bold graphic",
         "garment_colors": colors, "color_resolution": color_resolution, "sizes": sizes or DEFAULT_SIZES, "price_cents": price if price is not None else parsed_price,
         "currency": "USD", "preferred_layout": "integrated_shadow", "audience": "inclusive adults",
-        "listing_tone": "playful positive", "blank": "Bella+Canvas 3001", "print_provider": "Monster Digital"}
+        "listing_tone": "playful positive", "blank": "Bella+Canvas 3001", "print_provider": "Monster Digital",
+        "artwork_palette":"trans_pride" if "trans-pride" in lower or "trans pride" in lower or "trans rights" in lower else "high_contrast",
+        "negative_visual_constraints":negatives,"requested_motifs":requested_motifs,"force_new_composition":force_new}
 
 
 def score_candidate(candidate: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
@@ -126,7 +144,8 @@ def score_candidate(candidate: dict[str, Any], brief: dict[str, Any]) -> dict[st
     components = {"hard_quality": 35 if not blockers else 0, "phrase_correctness": 15 if checks.get("hard_phrase_correct") else 0,
         "safe_bounds": 10 if checks.get("hard_safe_bounds") else 0, "artwork_integrity": 15 if checks.get("hard_artwork_integrity") else 0,
         "thumbnail_readability": int(candidate.get("thumbnail_readability_score", 0)), "garment_contrast": int(candidate.get("garment_contrast_score", 0)),
-        "balanced_bounds": int(candidate.get("balanced_bounds_score", 0)), "prompt_style_match": 5 if brief["preferred_layout"] in candidate.get("direction", "") else 3}
+        "balanced_bounds": int(candidate.get("balanced_bounds_score", 0)), "prompt_adherence":int(candidate.get("prompt_adherence_score",0)),
+        "novelty":int(candidate.get("novelty_score",0)),"prompt_style_match": 5 if brief["preferred_layout"] in candidate.get("direction", "") else 3}
     return {"score": sum(components.values()), "components": components, "hard_blockers": blockers,
             "automated_score_scope": "deterministic technical ranking; not proof of artistic quality"}
 
@@ -146,9 +165,18 @@ def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[st
     phrase=str(brief.get("exact_text") or "").strip()
     if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Product exact phrase is required before listing metadata can be generated.",operation="product_orchestrator",stage="listing_ready")
     exact = phrase.title()
-    pride=brief["exact_text"]=="SAMPLE"
-    tags=sanitize_printify_tags([phrase.lower(),"rainbow heart" if pride else "supportive message","inclusive shirt","retro tee","unisex shirt"],phrase=phrase,blank=brief.get("blank"))
-    return {"title": f"{exact} {'Rainbow Heart ' if pride else ''}Unisex Tee".strip(), "description": f"A {brief['visual_style']} {exact} design on a {brief['blank']} unisex tee.".strip(),
+    subject_words=[word.casefold() for word in re.findall(r"[A-Za-z0-9]+",phrase) if len(word)>2]
+    subject=" ".join(subject_words[:2]) or "graphic message"
+    motifs=[str(item).replace("_"," ") for item in brief.get("requested_motifs") or []]
+    trans_rights="trans" in subject_words and "rights" in subject_words
+    candidates=(["trans rights shirt","transgender rights","trans pride shirt","equality activist","human rights tee","trans equality tee","activism graphic","transgender pride",
+        "pride protest tee","lgbtq rights shirt","equality apparel","human rights shirt","trans activist gift"] if trans_rights else [phrase.lower(),f"{subject} shirt",f"{subject} tee",f"{subject} apparel",f"{subject} gift","statement tee","typography shirt",
+        "human rights shirt" if "rights" in subject_words else "message shirt","activist apparel" if "rights" in subject_words else "meaningful apparel",
+        "unisex graphic tee","front print shirt","statement apparel","rights equality tee" if "rights" in subject_words else "uplifting graphic tee",
+        "cause awareness tee" if "rights" in subject_words else "positive message tee",*motifs])
+    tags=sanitize_printify_tags([item for item in candidates if len(item)<=20],phrase=phrase,blank=brief.get("blank"))[:13]
+    if len(tags)!=13:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Fresh listing generation did not produce exactly 13 relevant tags.",operation="product_orchestrator",stage="listing_ready")
+    return {"title": f"{exact} Unisex Tee", "description": f"A product-specific {brief['visual_style']} typography design featuring the exact phrase “{phrase}” on a {brief['blank']} unisex tee.".strip(),
         "tags":tags,
         "price_cents": brief["price_cents"], "currency": brief["currency"], "colors": brief["garment_colors"], "sizes": brief["sizes"],
         "blank": brief["blank"], "print_provider": brief["print_provider"], "selected_design_sha256": selected["png_sha256"],
@@ -257,7 +285,8 @@ def validate_etsy_tags(tags: list[str]) -> None:
 
 def validate_listing_metadata(state: dict[str, Any], operation: str, candidate: dict[str, Any] | None = None) -> dict[str, Any]:
     listing=(state.get("evidence") or {}).get("listing") or {};source=candidate or {
-        "title":ETSY_TITLE,"description":ETSY_DESCRIPTION,"tags":ETSY_TAGS,"price_cents":listing.get("price_cents")}
+        "title":listing.get("title") or ETSY_TITLE,"description":listing.get("description") or ETSY_DESCRIPTION,
+        "tags":listing.get("tags") if len(listing.get("tags") or [])==13 else ETSY_TAGS,"price_cents":listing.get("price_cents")}
     title=source.get("title");description=source.get("description");tags=source.get("tags");price=source.get("price_cents")
     invalid=[]
     if not isinstance(title,str) or not title.strip():invalid.append("title")
@@ -410,7 +439,16 @@ def _find_marked_draft(response: Any, marker: str) -> dict[str, Any] | None:
     return None
 
 
-def assess_draft_publication_state(state: dict[str, Any], remote: dict[str, Any]) -> dict[str, Any]:
+def _external_publication_shape(value: Any) -> dict[str, Any]:
+    if value in (None, {}, []):return {"type":type(value).__name__,"entry_count":0,"has_id":False,"has_handle":False,"malformed":False}
+    entries=[value] if isinstance(value,dict) else value if isinstance(value,list) else []
+    malformed=not isinstance(value,(dict,list)) or any(not isinstance(item,dict) for item in entries)
+    rows=[item for item in entries if isinstance(item,dict)]
+    return {"type":type(value).__name__,"entry_count":len(rows),"has_id":any(item.get("id") not in (None,"") or item.get("listing_id") not in (None,"") for item in rows),
+        "has_handle":any(str(item.get("handle") or "").strip() for item in rows),"malformed":malformed}
+
+
+def assess_draft_publication_state(state: dict[str, Any], remote: dict[str, Any], publication_journal: dict[str, Any] | None=None) -> dict[str, Any]:
     draft = state.get("evidence", {}).get("draft") or {}; transitions = state.get("transitions") or []
     publish_operations = {"publish", "publish_product", "printify_publish", "publish_succeeded"}
     publish_stages = {"published", "printify_published", "publish_succeeded"}
@@ -430,6 +468,18 @@ def assess_draft_publication_state(state: dict[str, Any], remote: dict[str, Any]
     if publish_transition: block("state.transitions",publish_transition,"a successful local publish transition exists")
     if publish_evidence: block("state.evidence.publish_success",publish_evidence,"local publish-success evidence exists")
     visible = remote.get("visible")
+    external_shape=_external_publication_shape(remote.get("external"));durable=external_shape["has_id"] or external_shape["has_handle"]
+    journal=publication_journal or {};publish_step=(journal.get("steps") or {}).get("marketplace_publish") or {}
+    journal_started=publish_step.get("outcome") in {"started","uncertain"} or journal.get("status") in {"publication_started","publication_uncertain","marketplace_publish_submitted","marketplace_listing_pending"}
+    local_unpublished=state.get("publish_status")=="not_published" and draft.get("publish_status")=="not_published"
+    if external_shape["malformed"]:classification="UNKNOWN"
+    elif durable and local_unpublished and not journal_started:classification="REMOTE_STATE_CONFLICT"
+    elif durable:classification="PUBLISHED_BOUND"
+    elif remote.get("is_locked") is True or journal_started:classification="PUBLISHING_IN_PROGRESS"
+    elif remote.get("is_locked") is False and local_unpublished:classification="UNPUBLISHED_DRAFT"
+    else:classification="UNKNOWN"
+    if classification=="REMOTE_STATE_CONFLICT":block("remote.external",{"durable_binding":True},"durable marketplace evidence conflicts with local unpublished state")
+    elif classification=="UNKNOWN" and external_shape["malformed"]:block("remote.external",{"malformed":True},"remote marketplace evidence shape is invalid")
     warnings = ([{"field":"remote.visible","value":visible,
         "message":"Printify defaults this field to true; it is not sufficient publication evidence."}] if visible is True else [])
     return {"safe_to_reconcile":not blockers,"local_publish_status":state.get("publish_status"),
@@ -437,7 +487,9 @@ def assess_draft_publication_state(state: dict[str, Any], remote: dict[str, Any]
         "remote_visible_interpretation":"Printify defaults this field to true; it is not sufficient publication evidence.",
         "remote_is_published":remote.get("is_published") if "is_published" in remote else None,
         "remote_published":remote.get("published") if "published" in remote else None,"remote_is_locked":remote.get("is_locked"),
-        "publish_transition_found":bool(publish_transition),"explicit_blockers":blockers,"informational_warnings":warnings}
+        "publish_transition_found":bool(publish_transition),"publication_classification":classification,
+        "remote_external_shape":external_shape,"local_publish_journal_started":journal_started,
+        "explicit_blockers":blockers,"informational_warnings":warnings}
 
 
 def _default_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
@@ -456,10 +508,11 @@ def normalize_source_job_id(value: str | None) -> str | None:
 def _independent_evidence(state: dict[str, Any], root: Path, brief: dict[str, Any]) -> dict[str, Any]:
     design_root=root/"independent-design";design_root.mkdir(parents=True,exist_ok=True);candidate=design_root/"prompt-source.png"
     canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));canvas.save(candidate);canvas.close();candidate_sha=_file_sha(candidate)
-    motif="rainbow_heart" if "rainbow heart" in state["original_prompt"].casefold() else "heart"
+    motif=(brief.get("requested_motifs") or ["typography"])[0]
     approval={"job_id":state["job_id"],"origin":"independent_prompt","prompt_sha256":sha256(state["original_prompt"].encode()).hexdigest(),"approved_artifact_sha256":candidate_sha,
         "approval_scope":"local generation input only","human_artistic_approval":False,"phrase":brief["exact_text"],"motif":motif,
-        "generation_inputs":{"phrase":brief["exact_text"],"motif":motif,"palette":"high_contrast_rainbow","layout_count":3},"created_at":datetime.now().astimezone().isoformat()}
+        "generation_inputs":{"phrase":brief["exact_text"],"motif":motif,"palette":"prompt_derived_high_contrast","layout_count":3,
+            "negative_visual_constraints":brief.get("negative_visual_constraints") or [],"force_new_composition":brief.get("force_new_composition") is True},"created_at":datetime.now().astimezone().isoformat()}
     approval_path=design_root/"local-generation-evidence.json";_atomic_json(approval_path,approval)
     return {"origin":"independent_prompt","candidate":candidate,"candidate_sha":candidate_sha,"approval_sha":_file_sha(approval_path),"production":{"canvas_dimensions":[4500,5400]},"job_root":root,"generation_inputs":approval["generation_inputs"]}
 
@@ -469,7 +522,7 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
     if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design requires an exact phrase.",operation="product_orchestrator",stage="design_candidates_ready")
     words=phrase.split();lines=[" ".join(words[:2])," ".join(words[2:-2])," ".join(words[-2:])] if len(words)>=5 else [" ".join(part) for part in (words[:max(1,len(words)//3)],words[max(1,len(words)//3):max(2,2*len(words)//3)],words[max(2,2*len(words)//3):]) if part]
     if phrase=="YOU ARE SAFE WITH ME":lines=["YOU ARE","SAFE","WITH ME"]
-    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";palette=((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
+    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";palette=((91,206,250,255),(245,169,184,255),(255,255,255,255),(245,169,184,255),(91,206,250,255)) if brief.get("artwork_palette")=="trans_pride" else ((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
     def rainbow_heart(canvas,bounds):
         x1,y1,x2,y2=bounds;w=x2-x1;h=y2-y1;mask=Image.new("L",(w,h),0);md=ImageDraw.Draw(mask);md.ellipse((0,0,w*.58,h*.58),fill=255);md.ellipse((w*.42,0,w,h*.58),fill=255);md.polygon(((0,h*.32),(w,h*.32),(w*.5,h)),fill=255)
         stripes=Image.new("RGBA",(w,h),(0,0,0,0));sd=ImageDraw.Draw(stripes);stripe=max(1,h//len(palette))
@@ -487,19 +540,29 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
         total=sum(heights)+gap*(len(rendered)-1);y=y1+(y2-y1-total)//2
         for line,height in zip(rendered,heights):
             bounds=draw.textbbox((0,0),line,font=font,stroke_width=18);width=bounds[2]-bounds[0];draw.text((x1+(available-width)//2,y),line,font=font,fill=fill,stroke_width=18,stroke_fill=stroke);y+=height+gap
-    result=[]
-    for name in ("prompt_centered","prompt_balanced","prompt_compact"):
+    result=[];motifs=set(brief.get("requested_motifs") or []);negatives=set(brief.get("negative_visual_constraints") or [])
+    families=(("prompt_centered","stacked_left"),("prompt_balanced","diagonal_ribbon"),("prompt_compact","split_columns"))
+    for name,family in families:
         canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));draw=ImageDraw.Draw(canvas)
-        if name=="prompt_centered":rainbow_heart(canvas,(950,650,3550,3250));draw_lines(canvas,lines,(520,2050,3980,4700))
-        elif name=="prompt_balanced":rainbow_heart(canvas,(420,1180,1950,2850));draw_lines(canvas,lines,(1750,950,4050,4050));draw.arc((650,700,3850,4550),15,345,fill=(255,255,255,255),width=48)
+        if family=="stacked_left":
+            for index,color in enumerate(palette[:len(lines)]):draw.rectangle((480,850+index*1180,700,1750+index*1180),fill=color)
+            draw_lines(canvas,lines,(800,620,4050,4700))
+        elif family=="diagonal_ribbon":
+            draw.polygon(((420,1150),(3780,550),(4070,1300),(710,1900)),fill=(65,174,105,255));draw.polygon(((420,3650),(3780,3050),(4070,3800),(710,4400)),fill=(132,82,179,255));draw_lines(canvas,lines,(650,900,3850,4450),stroke=(15,20,30,255))
         else:
-            draw.rounded_rectangle((520,520,3980,4740),radius=520,fill=(24,28,45,235),outline=(255,255,255,255),width=55);rainbow_heart(canvas,(1450,700,3050,2300));draw_lines(canvas,lines,(780,2250,3720,4470))
+            draw.rectangle((430,650,2050,4650),outline=(232,68,74,255),width=70);draw.rectangle((2450,650,4070,4650),outline=(55,126,195,255),width=70);draw_lines(canvas,lines,(650,850,3850,4500),fill=(255,255,255,255))
+        has_heart=bool({"heart","rainbow_heart"}&motifs)
+        if has_heart and "heart" not in negatives:rainbow_heart(canvas,(1500,500,3000,1750))
         path=root/f"{name}.png";canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);phrase_ok=" ".join(lines)==phrase
+        features={"heart":has_heart,"badge":False,"rounded_rectangle":False,"dark_background_panel":False,"gradient":False}
+        violations=[constraint for constraint in negatives if features.get(constraint) is True]
         checks={"hard_phrase_correct":phrase_ok,"hard_no_duplicate_or_missing_text":phrase_ok,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_dimensions":True,
             "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True}
+        checks["hard_negative_constraints"]=not violations
         result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,"source_artwork_sha256":evidence["candidate_sha"],
-            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"treatment_id":"deterministic_rainbow_heart_v2","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
-            "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","heart"),"rendering":"deterministic_rainbow_mask"},
+            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
+            "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","typography"),"features":features},
+            "prompt_validation":{"negative_constraint_violations":violations,"compliant":not violations},"prompt_adherence_score":40 if not violations else 0,"novelty_score":20,
             "quality_checks":checks,"thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":9,"balanced_bounds_score":9,
             "warnings":["Automated technical checks do not prove artistic quality; human artistic review is required."]})
     validate_candidate_uniqueness(result)
@@ -511,6 +574,59 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
 def validate_candidate_uniqueness(candidates:list[dict[str,Any]])->None:
     hashes=[item.get("png_sha256") for item in candidates]
     if not hashes or None in hashes or len(set(hashes))!=len(candidates):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidates must have distinct image hashes.",operation="product_orchestrator",stage="design_candidates_ready")
+    families=[item.get("composition_family") or item.get("layout_id") for item in candidates]
+    if len(candidates)<3 or None in families or len(set(families))!=len(candidates):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidates must use at least three distinct composition families.",operation="product_orchestrator",stage="design_candidates_ready")
+
+
+def _image_similarity_signature(path:Path)->dict[str,Any] | None:
+    try:
+        with Image.open(path) as source:
+            rgba=source.convert("RGBA");alpha=rgba.getchannel("A").resize((16,16),Image.Resampling.LANCZOS)
+            gray=rgba.convert("L").resize((16,16),Image.Resampling.LANCZOS)
+            alpha_bits="".join("1" if value>24 else "0" for value in alpha.getdata())
+            gray_values=list(gray.getdata());mean=sum(gray_values)/len(gray_values)
+            gray_bits="".join("1" if value>=mean else "0" for value in gray_values)
+            return {"alpha":alpha_bits,"gray":gray_bits,"bounds":list(rgba.getchannel("A").getbbox() or ())}
+    except (OSError,ValueError):return None
+
+
+def _bit_distance(first:str,second:str)->int:
+    return sum(a!=b for a,b in zip(first,second))+abs(len(first)-len(second))
+
+
+def assess_artwork_novelty(candidate:dict[str,Any],prior:list[dict[str,Any]])->dict[str,Any]:
+    signature=_image_similarity_signature(Path(str(candidate.get("png_path") or "")));matches=[]
+    for old in prior:
+        category=None
+        if candidate.get("png_sha256") and candidate.get("png_sha256")==old.get("png_sha256"):category="exact_duplicate"
+        old_signature=_image_similarity_signature(Path(str(old.get("png_path") or "")))
+        if category is None and signature and old_signature:
+            alpha_distance=_bit_distance(signature["alpha"],old_signature["alpha"]);gray_distance=_bit_distance(signature["gray"],old_signature["gray"])
+            if alpha_distance<=8 and gray_distance<=16:category="near_duplicate"
+            elif alpha_distance<=8:category="same_template_changed_text_or_color"
+        same_family=(candidate.get("composition_family") or candidate.get("layout_id"))==(old.get("composition_family") or old.get("layout_id"))
+        same_treatment=candidate.get("treatment_id") and candidate.get("treatment_id")==old.get("treatment_id")
+        if category is None and same_family and same_treatment:category="same_template_changed_text_or_color"
+        if category:matches.append({"category":category,"prior_candidate_id":old.get("candidate_id"),"prior_job_id":old.get("job_id")})
+    status="materially_distinct" if not matches else matches[0]["category"]
+    return {"status":status,"eligible":not matches,"comparisons":matches,"method":"sha256 plus deterministic grayscale/alpha composition signatures and template metadata"}
+
+
+def validate_candidate_set(candidates:list[dict[str,Any]],brief:dict[str,Any],prior:list[dict[str,Any]])->dict[str,Any]:
+    rows=[]
+    for candidate in candidates:
+        novelty=assess_artwork_novelty(candidate,prior);prompt=candidate.get("prompt_validation") or {}
+        eligible=novelty["eligible"] and prompt.get("compliant",True) is True
+        candidate["novelty_evidence"]=novelty;candidate["novelty_score"]=20 if novelty["eligible"] else 0
+        candidate.setdefault("quality_checks",{})["hard_novelty"]=novelty["eligible"]
+        candidate["quality_checks"]["hard_prompt_adherence"]=prompt.get("compliant",True) is True
+        rows.append({"candidate_id":candidate.get("candidate_id"),"composition_family":candidate.get("composition_family"),"eligible":eligible,
+            "novelty_status":novelty["status"],"prompt_mismatch":prompt.get("compliant",True) is not True})
+    report={"candidate_count":len(candidates),"distinct_composition_families":len({item.get('composition_family') for item in candidates}),
+        "rejected_for_prompt_mismatch":sum(item["prompt_mismatch"] for item in rows),"rejected_for_similarity":sum(item["novelty_status"]!="materially_distinct" for item in rows),"candidates":rows}
+    if not any(item["eligible"] for item in rows):
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message="artwork_revision_required: every candidate failed prompt-adherence or novelty checks; no provider work was performed.",operation="product_orchestrator",stage="design_candidates_ready",context={"candidate_diversity":report,"external_write_performed":False})
+    return report
 
 
 def _write_design_review(job_root:Path,candidates:list[dict[str,Any]],phrase:str)->dict[str,str]:
@@ -600,6 +716,20 @@ class ProductOrchestrator:
 
     def _path(self, job_id: str) -> Path: return self.root / job_id / "orchestrator-state.json"
     def load(self, job_id: str) -> dict[str, Any]: return json.loads(self._path(job_id).read_text(encoding="utf-8"))
+
+    def _prior_designs(self,state:dict[str,Any])->list[dict[str,Any]]:
+        prior=[]
+        if not self.root.is_dir():return prior
+        for path in sorted(self.root.glob("*/orchestrator-state.json"),reverse=True)[:100]:
+            if path==self._path(state["job_id"]):continue
+            try:old=json.loads(path.read_text(encoding="utf-8"))
+            except (OSError,ValueError):continue
+            if old.get("shop_id")!=state.get("shop_id"):continue
+            evidence=old.get("evidence") or {};selected=(evidence.get("selection") or {}).get("selected")
+            approved=evidence.get("human_design_approval") or {};status=old.get("publish_status")
+            if selected and (approved.get("approved") is True or status in {"published","not_published"}):prior.append({**selected,"job_id":old.get("job_id")})
+        prior.extend((state.get("evidence") or {}).get("superseded_candidates") or [])
+        return prior
 
     def _transition(self, state: dict[str, Any], stage: str, operation: str, output: Any, *, result: str = "completed", error_id: str | None = None) -> None:
         if stage not in STAGES: raise ValueError(stage)
@@ -1317,7 +1447,11 @@ class ProductOrchestrator:
             design_root = self._path(state["job_id"]).parent / "design-candidates"
             if "design_candidates_ready" not in completed:
                 generator=self.adapters.independent_candidates if evidence.get("origin")=="independent_prompt" else self.adapters.candidates
-                candidates = generator(evidence, design_root, state["brief"]); state["evidence"]["candidates"] = candidates
+                candidates = generator(evidence, design_root, state["brief"])
+                if evidence.get("origin")=="independent_prompt":
+                    diversity=validate_candidate_set(candidates,state["brief"],self._prior_designs(state));state["evidence"]["candidate_diversity"]=diversity
+                    _atomic_json(self._path(state["job_id"]).parent/"candidate-diversity.json",diversity)
+                state["evidence"]["candidates"] = candidates
                 self._transition(state, "design_candidates_ready", "generate_v4_refinements", {"candidates": candidates})
             candidates = state["evidence"]["candidates"]
             if "design_selected" not in completed:

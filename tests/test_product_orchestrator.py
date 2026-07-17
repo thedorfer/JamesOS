@@ -116,12 +116,36 @@ class ProductOrchestratorTests(unittest.TestCase):
         observed=product_orchestrator.normalize_prompt("Create a warm supportive design featuring the exact phrase YOU ARE SAFE WITH ME. Use a centered front design.",garment_colors=product_orchestrator.DEFAULT_COLORS,sizes=product_orchestrator.DEFAULT_SIZES)
         listing=product_orchestrator.generate_listing(observed,{"png_sha256":"a"*64});self.assertEqual(observed["exact_text"],"YOU ARE SAFE WITH ME");self.assertEqual(listing["title"],"You Are Safe With Me Unisex Tee")
         self.assertTrue(listing["description"].strip());self.assertTrue(listing["tags"][0]);self.assertTrue(all(isinstance(tag,str) and tag.strip() for tag in listing["tags"]))
+        revision=product_orchestrator.normalize_prompt("Create a new composition.\n\nExact phrase:\nTRANS RIGHTS ARE HUMAN RIGHTS\n\nRequired:\nNo heart.")
+        self.assertEqual(revision["exact_text"],"TRANS RIGHTS ARE HUMAN RIGHTS")
 
     def test_printify_tag_sanitization_deduplicates_and_falls_back(self):
         tags=product_orchestrator.sanitize_printify_tags(["", "  ", "Retro Tee", "retro tee", None, " Unisex   Tee "])
         self.assertEqual(tags,["Retro Tee","Unisex Tee"])
         fallback=product_orchestrator.sanitize_printify_tags([],phrase="YOU ARE SAFE WITH ME",blank="Bella+Canvas 3001")
         self.assertEqual(fallback[0],"you are safe with me");self.assertTrue(all(tag.strip() for tag in fallback));self.assertIn("unisex tee",fallback)
+
+    def test_prompt_constraints_novelty_and_fresh_listing_are_hard_gates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);first=root/"first.png";same=root/"same.png";recolor=root/"recolor.png";different=root/"different.png"
+            from PIL import Image,ImageDraw
+            for path,color,shape in ((first,"red","badge"),(same,"red","badge"),(recolor,"blue","badge"),(different,"green","columns")):
+                image=Image.new("RGBA",(200,200),(0,0,0,0));draw=ImageDraw.Draw(image)
+                if shape=="badge":draw.rounded_rectangle((30,40,170,160),radius=25,fill=color)
+                else:draw.rectangle((20,20,70,180),fill=color);draw.rectangle((130,20,180,180),fill=color)
+                image.save(path);image.close()
+            old={"candidate_id":"old","png_path":str(first),"png_sha256":product_orchestrator._file_sha(first),"composition_family":"badge","treatment_id":"badge-v1"}
+            exact={**old,"candidate_id":"exact","png_path":str(same)}
+            color={**old,"candidate_id":"color","png_path":str(recolor),"png_sha256":product_orchestrator._file_sha(recolor)}
+            fresh={"candidate_id":"fresh","png_path":str(different),"png_sha256":product_orchestrator._file_sha(different),"composition_family":"columns","treatment_id":"columns-v1"}
+            self.assertEqual(product_orchestrator.assess_artwork_novelty(exact,[old])["status"],"exact_duplicate")
+            self.assertIn(product_orchestrator.assess_artwork_novelty(color,[old])["status"],{"near_duplicate","same_template_changed_text_or_color"})
+            self.assertEqual(product_orchestrator.assess_artwork_novelty(fresh,[old])["status"],"materially_distinct")
+        brief=product_orchestrator.normalize_prompt('Create "TRANS RIGHTS ARE HUMAN RIGHTS" with no heart, no rounded rectangle, and a new composition.')
+        self.assertIn("heart",brief["negative_visual_constraints"]);self.assertIn("rounded_rectangle",brief["negative_visual_constraints"]);self.assertTrue(brief["force_new_composition"])
+        listing=product_orchestrator.generate_listing(brief,{"png_sha256":"a"*64})
+        self.assertIn("Trans Rights Are Human Rights",listing["title"]);self.assertEqual(len(listing["tags"]),13)
+        self.assertFalse(any(term in " ".join(listing["tags"]).casefold() for term in ("mental health","safe space","rainbow heart")))
 
     def test_create_payload_enables_exact_eighteen_disables_other_variants_and_is_front_only(self):
         requested=list(range(1,19));catalog={"variants":[{"id":item,"title":f"Black / S"} for item in range(1,21)]};variants=product_orchestrator.create_variant_payload(catalog,requested,2499)
@@ -1025,6 +1049,19 @@ class ProductOrchestratorTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 result=product_orchestrator.assess_draft_publication_state(local,{"visible":True,**remote})
                 self.assertFalse(result["safe_to_reconcile"]);self.assertEqual(result["explicit_blockers"][0]["field"],expected)
+
+    def test_publication_evidence_classification_ignores_visibility(self):
+        state={"publish_status":"not_published","transitions":[],"evidence":{"draft":{"publish_status":"not_published"}}}
+        draft=product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":False,"external":{}})
+        self.assertEqual(draft["publication_classification"],"UNPUBLISHED_DRAFT");self.assertTrue(draft["safe_to_reconcile"])
+        self.assertEqual(product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":True})["publication_classification"],"PUBLISHING_IN_PROGRESS")
+        conflict=product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":False,"external":{"id":"durable"}})
+        self.assertEqual(conflict["publication_classification"],"REMOTE_STATE_CONFLICT");self.assertTrue(conflict["remote_external_shape"]["has_id"])
+        malformed=product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":False,"external":"bad"})
+        self.assertEqual(malformed["publication_classification"],"UNKNOWN")
+        journal={"status":"publication_started","steps":{"marketplace_publish":{"outcome":"started"}}}
+        started=product_orchestrator.assess_draft_publication_state(state,{"visible":True,"is_locked":False,"external":{}},journal)
+        self.assertEqual(started["publication_classification"],"PUBLISHING_IN_PROGRESS")
 
     def test_reconciliation_publication_error_context_names_exact_field(self):
         with tempfile.TemporaryDirectory() as temporary:

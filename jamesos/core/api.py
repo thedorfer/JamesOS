@@ -1,8 +1,12 @@
 import json
+import hmac
+import ipaddress
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any
-from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse
+from urllib.parse import parse_qs, urlsplit
+from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File,BackgroundTasks
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
 from jamesos.config import VAULT
@@ -122,6 +126,14 @@ from jamesos.services.commerce_product_pipeline import (
     health as commerce_shop_health,
     list_drafts as list_commerce_shop_drafts,
 )
+from jamesos.services.commerce_workflow import CommerceWorkflow
+from jamesos.services import product_orchestrator
+from jamesos.services.commerce_publication import CommercePublicationExecutor,EtsyMarketplaceAdapter,PrintifyProviderDraftAdapter,ConnectedSalesChannelMarketplaceAdapter
+from jamesos.services.commerce_revision import CommerceRevisionService
+from jamesos.services.commerce_creation import CommerceCreationService
+from jamesos.core.agents.secrets import SecretProvider
+from jamesos.core.profiles.selection import load_commerce_profile,list_commerce_profiles,load_commerce_profile_by_id
+from jamesos.integrations.etsy_client import EtsyClient
 from jamesos.services.worker_registry import get_worker, list_workers
 from jamesos.services.workflow_manager import get_workflow, list_workflows, scan_and_report as scan_workflows_and_report
 from jamesos.core.agency.routes import router as agency_router
@@ -130,6 +142,7 @@ API_KEY_FILE = VAULT / "JamesOS" / "Secrets" / "api_key.txt"
 CHAT_HISTORY_FILE = VAULT / "JamesOS" / "Memory" / "chat_history.json"
 
 app = FastAPI(title="JamesOS API")
+_COMMERCE_CREATE_CSRF=__import__("secrets").token_urlsafe(32)
 # This project's FastAPI compatibility layer represents include_router() as a
 # sentinel in app.routes. Register the already-prefixed APIRoutes directly so
 # existing route audits continue to see ordinary path-bearing route objects.
@@ -375,6 +388,249 @@ def _expected_key() -> str:
 def require_key(x_jamesos_key: str | None = Header(default=None)) -> None:
     if x_jamesos_key != _expected_key():
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+
+def _require_local(request: Request) -> None:
+    try:address=ipaddress.ip_address(request.client.host if request.client else "")
+    except ValueError:raise HTTPException(status_code=403,detail="Commerce review is localhost-only")
+    if not address.is_loopback:raise HTTPException(status_code=403,detail="Commerce review is localhost-only")
+
+
+def _browser_authenticate(workflow: CommerceWorkflow,job_id: str,cookie: str) -> None:
+    try:workflow.authenticate_browser_session(job_id,cookie)
+    except JamesOSError as exc:raise HTTPException(status_code=401,detail="Invalid or expired browser review session") from exc
+
+
+def _validate_commerce_origin(request: Request) -> None:
+    def header_values(name: str) -> list[str]:
+        getlist=getattr(request.headers,"getlist",None)
+        if callable(getlist):return list(getlist(name))
+        value=request.headers.get(name)
+        return [] if value is None else [value]
+
+    origins=header_values("origin");hosts=header_values("host")
+    if len(origins)!=1 or len(hosts)!=1:raise HTTPException(status_code=403,detail="Invalid origin")
+    origin=origins[0].strip();host=hosts[0].strip()
+    if not origin or origin=="null" or not host or "," in origin or "," in host:
+        raise HTTPException(status_code=403,detail="Invalid origin")
+    try:
+        parsed=urlsplit(origin)
+        parsed_host=urlsplit(f"//{host}")
+        hostname=parsed.hostname;host_hostname=parsed_host.hostname
+        origin_port=parsed.port;host_port=parsed_host.port
+    except (TypeError,ValueError):
+        raise HTTPException(status_code=403,detail="Invalid origin")
+    loopback={"127.0.0.1","localhost","::1"}
+    if (parsed.scheme!="http" or hostname not in loopback or host_hostname not in loopback
+            or origin_port is None or host_port is None or hostname!=host_hostname or origin_port!=host_port
+            or parsed.username is not None or parsed.password is not None or parsed.path or parsed.query or parsed.fragment
+            or parsed_host.username is not None or parsed_host.password is not None or parsed_host.path
+            or parsed_host.query or parsed_host.fragment):
+        raise HTTPException(status_code=403,detail="Invalid origin")
+
+
+async def _commerce_form(request: Request, workflow: CommerceWorkflow, job_id: str) -> dict[str,str]:
+    _require_local(request)
+    _browser_authenticate(workflow,job_id,request.cookies.get("jamesos_commerce_review",""))
+    if request.headers.get("content-type","").split(";",1)[0]!="application/x-www-form-urlencoded":
+        raise HTTPException(status_code=415,detail="Form encoding required")
+    values={key:items[-1] for key,items in parse_qs((await request.body()).decode("utf-8"),keep_blank_values=True).items()}
+    try:private=json.loads((workflow.orchestrator._path(job_id).parent/"commerce-proposal"/"current-private.json").read_text())
+    except (OSError,ValueError):raise HTTPException(status_code=404,detail="Proposal not found")
+    token=values.get("csrf_token","")
+    if not token or not hmac.compare_digest(token,str(private.get("csrf_token") or "")):raise HTTPException(status_code=403,detail="Invalid same-origin token")
+    _validate_commerce_origin(request)
+    return values
+
+
+def _commerce_review_page(workflow: CommerceWorkflow,job_id: str,*,active_forms: bool) -> str:
+    root=workflow.orchestrator._path(job_id).parent/"commerce-proposal"
+    proposal=json.loads((root/"current.json").read_text());private=json.loads((root/"current-private.json").read_text())
+    page=(root/"review.html").read_text(encoding="utf-8");job_state=workflow._state(job_id);stage=job_state.get("stage");destination=job_state.get("destination") or {}
+    if destination:
+        panel=(f"<section id='destination-panel'><strong>ACTIVE BRAND</strong><br>{html_escape(str(job_state.get('brand_display_name') or ''))}<br><strong>PROFILE</strong><br>{html_escape(str(job_state.get('commerce_profile_id') or job_state.get('profile_id') or ''))}<br>"
+            f"<strong>PRINTIFY STORE</strong><br>{html_escape(str(destination.get('printify_shop_title') or ''))} — {html_escape(str(destination.get('printify_shop_id') or ''))}<br><strong>ETSY DESTINATION</strong><br>{html_escape(str(destination.get('etsy_shop_slug') or ''))}<br>"
+            f"<strong>REVISION</strong><br>{int(job_state.get('revision_number') or 0)}<br><strong>STATUS</strong><br>UNPUBLISHED<br>NO ORDER CREATED</section>")
+        page=page.replace("<header>",panel+"<header>",1)
+    revision_completed=(workflow._state(job_id).get("evidence") or {}).get("revision_completed")
+    if stage=="awaiting_final_approval" and revision_completed:
+        receipt=("<section id='revision-result' style='background:#e5f6e9;border:3px solid #18743b;padding:1.2rem;border-radius:10px;margin:1rem 0'>"
+            "<h2>CHANGES APPLIED SUCCESSFULLY</h2><p><strong>NEW PROPOSAL READY FOR REVIEW</strong><br><strong>NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p></section>")
+        page=page.replace("<header>",receipt+"<header>",1)
+    if stage=="proposal_approved":
+        page=page.replace("NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong><br><strong>AWAITING FINAL APPROVAL","PROPOSAL APPROVED</strong><br><strong>NOT YET PUBLISHED</strong><br><strong>NO ORDER CREATED")
+        approval=json.loads((root/"approval.json").read_text())
+        digest=html_escape(str(approval["proposal_sha256"]));short=digest[:12]
+        receipt=("<section id='approval-result' style='background:#e5f6e9;border:3px solid #18743b;padding:1.2rem;border-radius:10px;margin:1rem 0'>"
+            f"<h2>Approval submitted successfully</h2><p><strong>Approved at:</strong> {html_escape(str(approval['approved_at']))}</p>"
+            f"<p><strong>Proposal:</strong> {short}…</p><details><summary>Full proposal SHA</summary><code>{digest}</code></details>"
+            "<p><strong>NOT YET PUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p></section>")
+        page=page.replace("<header>",receipt+"<header>",1)
+    elif stage=="revision_requested":
+        page=page.replace("NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong><br><strong>AWAITING FINAL APPROVAL","CHANGES REQUESTED</strong><br><strong>NOT PUBLISHED</strong><br><strong>NO ORDER CREATED")
+        revision=json.loads((root/"revision-request.json").read_text());note=str(revision.get("note") or "")
+        note_html=f"<p><strong>Submitted note:</strong> {html_escape(note)}</p>" if note else ""
+        receipt=("<section id='revision-result' style='background:#e7f1ff;border:3px solid #366ca8;padding:1.2rem;border-radius:10px;margin:1rem 0'>"
+            f"<h2>Changes requested successfully</h2><p><strong>Requested at:</strong> {html_escape(str(revision['requested_at']))}</p>{note_html}"
+            "<p><strong>NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p></section>")
+        page=page.replace("<header>",receipt+"<header>",1)
+    elif stage in {"completed","final_state_verified"}:
+        page=page.replace("NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong><br><strong>AWAITING FINAL APPROVAL","PUBLISHED SUCCESSFULLY</strong><br><strong>FINAL STATE VERIFIED</strong><br><strong>NO ORDER CREATED")
+        execution=json.loads((root/"publication-execution.json").read_text());url=execution.get("public_listing_url")
+        link=f"<p><a href='{html_escape(str(url),quote=True)}'>View marketplace listing</a></p>" if url else ""
+        receipt=("<section id='publication-result' style='background:#e5f6e9;border:3px solid #18743b;padding:1.2rem;border-radius:10px;margin:1rem 0'>"
+            f"<h2>PUBLISHED SUCCESSFULLY</h2><p><strong>Proposal:</strong> {html_escape(str(execution['proposal_sha256']))}</p>"
+            f"<p><strong>Approved at:</strong> {html_escape(str(execution.get('approved_at') or ''))}<br><strong>Publication started:</strong> {html_escape(str(execution.get('publication_started_at') or ''))}<br><strong>Completed at:</strong> {html_escape(str(execution.get('completed_at') or ''))}</p>"
+            f"<p><strong>Marketplace:</strong> {html_escape(str(execution.get('marketplace') or ''))}<br><strong>Verified final state:</strong> {html_escape(str(execution.get('verified_final_state') or ''))}<br><strong>Provider update verified:</strong> yes</p>{link}<p><strong>NO ORDER CREATED</strong></p></section>")
+        page=page.replace("<header>",receipt+"<header>",1)
+    elif stage=="publication_uncertain":
+        page=page.replace("NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong><br><strong>AWAITING FINAL APPROVAL","APPROVAL SUBMITTED</strong><br><strong>PUBLICATION RESULT UNCERTAIN</strong><br><strong>NO ORDER WILL BE CREATED")
+        receipt="<section id='publication-result' style='background:#fff1cf;border:3px solid #b97800;padding:1.2rem'><h2>PUBLICATION RESULT UNCERTAIN</h2><p><strong>DO NOT CLICK PUBLISH AGAIN</strong><br>RUN READ-ONLY RECONCILIATION<br>NO ORDER CREATED</p></section>"
+        page=page.replace("<header>",receipt+"<header>",1)
+    elif stage=="provider_update_uncertain":
+        page=page.replace("<header>","<section id='publication-result' style='background:#fff1cf;border:3px solid #b97800;padding:1.2rem'><h2>PROVIDER UPDATE RESULT UNCERTAIN</h2><p><strong>DO NOT RETRY</strong><br>RUN READ-ONLY RECONCILIATION<br>NO ORDER CREATED</p></section><header>",1)
+    elif stage=="marketplace_listing_pending":
+        page=page.replace("<header>","<section id='publication-result' style='background:#fff1cf;border:3px solid #b97800;padding:1.2rem'><h2>PUBLICATION SUBMITTED</h2><p><strong>MARKETPLACE LISTING PENDING</strong><br>DO NOT PUBLISH AGAIN<br>RUN READ-ONLY RECONCILIATION<br>NO ORDER CREATED</p></section><header>",1)
+    elif stage=="publication_failed":
+        page=page.replace("<header>","<section id='publication-result'><h2>PUBLICATION NOT SUBMITTED</h2><p>Approval is retained. NO ORDER CREATED.</p></section><header>",1)
+    if not active_forms or stage not in {"awaiting_final_approval","proposal_approved"}:return page
+    job=html_escape(job_id,quote=True);digest=html_escape(str(proposal["proposal_sha256"]),quote=True);csrf=html_escape(str(private["csrf_token"]),quote=True)
+    etsy_slug=html_escape(str(destination.get("etsy_shop_slug") or ""));label=f"Approve and Publish to {etsy_slug}" if etsy_slug else "Approve &amp; Publish"
+    destination_input=f"<input type='hidden' name='destination_confirmed' value='{etsy_slug}'>" if etsy_slug else ""
+    actions=(f"<section class='actions' id='browser-actions'><form method='post' action='/commerce/proposals/{job}/approve#publication-result'>"
+        f"<input type='hidden' name='proposal_sha256' value='{digest}'><input type='hidden' name='csrf_token' value='{csrf}'>"
+        f"{destination_input}"
+        f"<button class='approve' type='submit'>{label}</button></form>"
+        f"<details><summary>Request changes</summary><form method='post' action='/commerce/proposals/{job}/request-changes#revision-result'>"
+        f"<input type='hidden' name='proposal_sha256' value='{digest}'><input type='hidden' name='csrf_token' value='{csrf}'>"
+        "<label for='note'>Optional revision note</label><textarea id='note' name='note' maxlength='1000'></textarea>"
+        "<button type='submit'>Request changes</button></form></details>"
+        + (f"<form method='post' action='/commerce/proposals/{job}/cancel'><input type='hidden' name='proposal_sha256' value='{digest}'><input type='hidden' name='csrf_token' value='{csrf}'><button type='submit'>Cancel Product</button></form>" if destination else "") + "</section>")
+    return page.replace("<section class='actions' id='browser-actions'><p>Open through the JamesOS localhost review URL to approve or request changes.</p></section>",actions)
+
+
+def _review_response(page: str,status_code: int=200) -> HTMLResponse:
+    return HTMLResponse(page,status_code=status_code,headers={"Cache-Control":"no-store","Referrer-Policy":"origin",
+        "Content-Security-Policy":"default-src 'none'; img-src data:; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"})
+
+def _commerce_ui_response(page:str,status_code:int=200)->HTMLResponse:
+    return HTMLResponse(page,status_code=status_code,headers={"Cache-Control":"no-store","Referrer-Policy":"origin",
+        "Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"})
+
+
+@app.get("/commerce/new",response_class=HTMLResponse)
+def commerce_new_route(request:Request):
+    _require_local(request);cards=[]
+    for index,profile in enumerate(list_commerce_profiles()):
+        config=profile.get("configuration") or {};pid=html_escape(str(profile.get("profile_id") or ""),quote=True);display=html_escape(str(profile.get("display_name") or pid));shop=html_escape(str(config.get("printify_shop_title") or display));slug=html_escape(str(config.get("etsy_shop_slug") or ""));shop_id=int(config["printify_shop_id"])
+        cards.append(f"<label class='card'><input type='radio' name='commerce_profile_id' value='{pid}' data-destination='{slug}' {'checked' if index==0 else ''} required><strong>{display}</strong><br>Profile: {pid}<br>Printify: {shop} — {shop_id}<br>Etsy: {slug}</label>")
+    page=("<!doctype html><meta charset='utf-8'><meta name='viewport' content='width=device-width'><title>New commerce product</title><style>body{font:16px system-ui;max-width:900px;margin:auto;padding:2rem}.cards{display:grid;gap:1rem}.card{border:2px solid #ccd;padding:1rem;border-radius:10px}textarea,input[type=text]{width:100%;box-sizing:border-box;margin:.4rem 0 1rem;padding:.6rem}</style>"
+        f"<h1>New Commerce Product</h1><form method='post' action='/commerce/new'><input type='hidden' name='csrf_token' value='{html_escape(_COMMERCE_CREATE_CSRF,quote=True)}'><div class='cards'>{''.join(cards)}</div>"
+        "<label>Exact phrase<textarea name='exact_phrase' maxlength='500'></textarea></label><label>Product brief<textarea name='product_brief' maxlength='5000' required></textarea></label><label>Listing title<input type='text' name='listing_title' maxlength='140'></label><label>Special instructions<textarea name='special_instructions' maxlength='3000'></textarea></label>"
+        "<input type='hidden' name='destination_confirmed' value='true'><button id='generate'>Generate unpublished draft</button><p id='destination'></p></form><script>const r=[...document.querySelectorAll('input[name=commerce_profile_id]')],b=document.getElementById('generate'),d=document.getElementById('destination');function u(){const x=r.find(x=>x.checked);if(x){b.textContent='Generate unpublished draft in '+x.dataset.destination;d.textContent='Destination: '+x.dataset.destination}}r.forEach(x=>x.addEventListener('change',u));u()</script>")
+    return _commerce_ui_response(page)
+
+
+@app.post("/commerce/new")
+async def commerce_new_submit(request:Request,background_tasks:BackgroundTasks):
+    _require_local(request);_validate_commerce_origin(request)
+    if request.headers.get("content-type","").split(";",1)[0]!="application/x-www-form-urlencoded":raise HTTPException(status_code=415,detail="Form encoding required")
+    values={key:items[-1] for key,items in parse_qs((await request.body()).decode(),keep_blank_values=True).items()}
+    if not hmac.compare_digest(values.get("csrf_token",""),_COMMERCE_CREATE_CSRF):raise HTTPException(status_code=403,detail="Invalid same-origin token")
+    service=CommerceCreationService();result=service.create_job(commerce_profile_id=values.get("commerce_profile_id",""),exact_phrase=values.get("exact_phrase",""),product_brief=values.get("product_brief",""),listing_title=values.get("listing_title",""),special_instructions=values.get("special_instructions",""),destination_confirmed=values.get("destination_confirmed")=="true",request_id=request.headers.get("x-request-id"))
+    background_tasks.add_task(service.run_generation,result["job_id"])
+    return RedirectResponse(f"/commerce/jobs/{result['job_id']}/loading",status_code=303,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+
+
+@app.get("/commerce/jobs/{job_id}/loading",response_class=HTMLResponse)
+def commerce_loading_route(job_id:str,request:Request):
+    _require_local(request);status=CommerceCreationService().safe_status(job_id)
+    page=(f"<!doctype html><meta charset='utf-8'><h1>Creating product</h1><p><strong>Brand:</strong> {html_escape(str(status['brand_display_name']))}</p><p><strong>Printify destination:</strong> {html_escape(str(status['printify_shop_title']))} — {int(status['printify_shop_id'])}</p><p><strong>Etsy destination:</strong> {html_escape(str(status['etsy_shop_slug']))}</p><p id='step'><strong>Current step:</strong> {html_escape(str(status['progress_label']))}</p><p><strong>UNPUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p><script>async function p(){{let r=await fetch('/commerce/jobs/{html_escape(job_id,quote=True)}/status.json',{{cache:'no-store'}}),s=await r.json();document.getElementById('step').textContent='Current step: '+s.progress_label;if(s.ready_for_review&&s.review_url)location.href=s.review_url;else if(!s.failed)setTimeout(p,1500)}}setTimeout(p,500)</script>")
+    return _commerce_ui_response(page)
+
+
+@app.get("/commerce/jobs/{job_id}/status.json")
+def commerce_loading_status_route(job_id:str,request:Request):
+    _require_local(request);return JSONResponse(CommerceCreationService().safe_status(job_id),headers={"Cache-Control":"no-store"})
+
+
+def _commerce_publication_executor(workflow:CommerceWorkflow,job_id:str,*,printify_client:Any=None,etsy_client:Any=None,profile_loader=load_commerce_profile)->CommercePublicationExecutor:
+    state=workflow._state(job_id);destination=state.get("destination") or {}
+    if destination.get("marketplace_write_route")=="printify_connected_sales_channel":
+        bound_loader=lambda required=True:load_commerce_profile_by_id(str(state.get("commerce_profile_id") or ""),required=required)
+        client=printify_client or workflow.orchestrator.adapters.client_factory()
+        return CommercePublicationExecutor(workflow,provider=PrintifyProviderDraftAdapter(client),marketplace=ConnectedSalesChannelMarketplaceAdapter(),profile_loader=bound_loader)
+    profile=profile_loader(required=True);config=profile.get("configuration") or {}
+    printify_client=printify_client or workflow.orchestrator.adapters.client_factory()
+    if etsy_client is None:
+        secrets=SecretProvider({"etsy.app":VAULT/"JamesOS"/"Secrets"/"etsy-app.json","etsy.oauth":VAULT/"JamesOS"/"Secrets"/"etsy-oauth.json"})
+        etsy_client=EtsyClient({**secrets.resolve("etsy.app"),**secrets.resolve("etsy.oauth")})
+    return CommercePublicationExecutor(workflow,provider=PrintifyProviderDraftAdapter(printify_client),
+        marketplace=EtsyMarketplaceAdapter(etsy_client,config.get("etsy_shop_id")),profile_loader=profile_loader)
+
+
+@app.get("/commerce/proposals/{job_id}/review",response_class=HTMLResponse)
+def commerce_proposal_review_route(job_id: str,request: Request,session: str | None=None):
+    _require_local(request);workflow=CommerceWorkflow()
+    if session is not None:
+        try:cookie,max_age=workflow.establish_browser_session(job_id,session)
+        except JamesOSError as exc:raise HTTPException(status_code=401,detail="Invalid or expired browser review token") from exc
+        response=RedirectResponse(f"/commerce/proposals/{job_id}/review",status_code=303)
+        response.set_cookie("jamesos_commerce_review",cookie,max_age=max_age,httponly=True,samesite="strict",path=f"/commerce/proposals/{job_id}")
+        response.headers.update({"Cache-Control":"no-store","Referrer-Policy":"no-referrer"});return response
+    _browser_authenticate(workflow,job_id,request.cookies.get("jamesos_commerce_review",""))
+    return _review_response(_commerce_review_page(workflow,job_id,active_forms=True))
+
+
+@app.post("/commerce/proposals/{job_id}/approve",response_class=HTMLResponse)
+async def commerce_proposal_approve_route(job_id: str,request: Request):
+    workflow=CommerceWorkflow();values=await _commerce_form(request,workflow,job_id)
+    proposal_sha=values.get("proposal_sha256","");state=workflow._state(job_id);destination=state.get("destination") or {}
+    if destination and not hmac.compare_digest(values.get("destination_confirmed",""),str(destination.get("etsy_shop_slug") or "")):raise HTTPException(status_code=403,detail="Destination confirmation required")
+    if state.get("stage")=="awaiting_final_approval":workflow.approve(job_id,proposal_sha,confirmed=True)
+    try:
+        executor=_commerce_publication_executor(workflow,job_id)
+        try:executor.execute(job_id=job_id,proposal_sha256=proposal_sha,confirmed=True)
+        except JamesOSError:pass
+        page=_commerce_review_page(workflow,job_id,active_forms=False)
+    finally:workflow.revoke_browser_session(job_id)
+    response=_review_response(page);response.delete_cookie("jamesos_commerce_review",path=f"/commerce/proposals/{job_id}");return response
+
+
+@app.post("/commerce/proposals/{job_id}/request-changes",response_class=HTMLResponse)
+async def commerce_proposal_request_changes_route(job_id: str,request: Request,background_tasks:BackgroundTasks):
+    workflow=CommerceWorkflow();values=await _commerce_form(request,workflow,job_id)
+    try:
+        workflow.request_changes(job_id,values.get("proposal_sha256",""),note=values.get("note",""),confirmed=True)
+        if (workflow._state(job_id).get("destination") or {}).get("etsy_shop_slug"):
+            workflow.revoke_browser_session(job_id);background_tasks.add_task(CommerceRevisionService(workflow).resume,job_id)
+            return RedirectResponse(f"/commerce/jobs/{job_id}/loading",status_code=303,headers={"Cache-Control":"no-store","Referrer-Policy":"no-referrer"})
+        result=CommerceRevisionService(workflow).resume(job_id)
+    except JamesOSError as exc:
+        page=_commerce_review_page(workflow,job_id,active_forms=True)
+        pending=workflow._state(job_id).get("stage")=="revision_requested"
+        failing=html_escape(str(exc.context.get("failing_validation") or exc.stage))
+        action=html_escape(str(exc.suggested_action or "Correct the revision request and submit again."))
+        receipt=("<section id='revision-result' style='background:#fff1cf;border:3px solid #b97800;padding:1.2rem;border-radius:10px;margin:1rem 0'>"
+            f"<h2>{'REVISION REQUESTED' if pending else 'Revision request failed'}</h2>"
+            f"{'<p><strong>REGENERATION PENDING</strong><br><strong>OLD PROPOSAL CANNOT BE APPROVED</strong></p>' if pending else ''}"
+            f"<p><strong>Safe error code:</strong> {html_escape(exc.code)}<br><strong>Failing validation:</strong> {failing}<br>"
+            f"<strong>Anything changed:</strong> {'revision request recorded; provider completion pending' if pending else 'no'}</p><p><strong>Safe next action:</strong> {action}</p>"
+            "<p><strong>NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p></section>")
+        page=page.replace("<header>",receipt+"<header>",1)
+        if pending:workflow.revoke_browser_session(job_id)
+        return _review_response(page,status_code=202 if pending else 422)
+    response=RedirectResponse(result["review_url"],status_code=303);response.delete_cookie("jamesos_commerce_review",path=f"/commerce/proposals/{job_id}")
+    response.headers.update({"Cache-Control":"no-store","Referrer-Policy":"no-referrer"});return response
+
+
+@app.post("/commerce/proposals/{job_id}/cancel",response_class=HTMLResponse)
+async def commerce_proposal_cancel_route(job_id:str,request:Request):
+    workflow=CommerceWorkflow();values=await _commerce_form(request,workflow,job_id);state,proposal,private,root=workflow._current(job_id,values.get("proposal_sha256",""))
+    if state.get("stage")!="awaiting_final_approval" or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":raise HTTPException(status_code=409,detail="Product cannot be cancelled in its current state")
+    state["stage"]="cancelled";state["cancelled_at"]=__import__("datetime").datetime.now().astimezone().isoformat();proposal["approval_eligible"]=False;private["approval_eligible"]=False
+    product_orchestrator._atomic_json(workflow.orchestrator._path(job_id),state);product_orchestrator._atomic_json(root/"current.json",proposal);product_orchestrator._atomic_json(root/"current-private.json",private);workflow.revoke_browser_session(job_id)
+    return _review_response("<h1>Product cancelled</h1><p><strong>NOT PUBLISHED</strong><br><strong>NO ORDER CREATED</strong></p>")
 
 
 @app.get("/health")
