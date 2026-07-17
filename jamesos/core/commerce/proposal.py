@@ -15,7 +15,7 @@ HASH_FIELDS = (
     "schema_version", "proposal_type", "job_id", "profile_binding_reference", "artwork_sha256", "artwork_phrase",
     "colors", "sizes", "enabled_variant_count", "enabled_variants", "placement", "title", "description", "tags",
     "price_cents", "currency", "product_model", "print_provider", "expected_marketplace", "expected_final_state",
-    "mockups", "warnings", "required_manual_confirmations", "publication_status", "order_status", "provider_draft_status",
+    "mockups", "warnings", "required_manual_confirmations", "design_generation_summary", "publication_status", "order_status", "provider_draft_status",
 )
 
 
@@ -30,7 +30,7 @@ def _stable(value: Any) -> Any:
 
 
 def canonical_hash_payload(proposal: dict[str, Any]) -> dict[str, Any]:
-    payload={key:deepcopy(proposal.get(key)) for key in HASH_FIELDS}
+    payload={key:deepcopy(proposal.get(key)) for key in HASH_FIELDS if key!="design_generation_summary" or key in proposal}
     payload["colors"]=sorted(payload.get("colors") or [],key=str.casefold)
     payload["sizes"]=sorted(payload.get("sizes") or [],key=str.casefold)
     payload["enabled_variants"]=sorted(payload.get("enabled_variants") or [])
@@ -47,7 +47,10 @@ def canonical_proposal_sha256(proposal: dict[str, Any]) -> str:
 
 
 def compile_public_proposal(fields: dict[str, Any], *, generated_at: str) -> dict[str, Any]:
-    proposal={"schema_version":SCHEMA_VERSION,"proposal_type":PROPOSAL_TYPE,**deepcopy(fields),"generated_at":generated_at,
+    fields=deepcopy(fields)
+    fields.setdefault("warnings",[])
+    fields.setdefault("required_manual_confirmations",[])
+    proposal={"schema_version":SCHEMA_VERSION,"proposal_type":PROPOSAL_TYPE,**fields,"generated_at":generated_at,
         "approval_eligible":True,"superseded":False}
     invalid=[]
     required=("job_id","profile_binding_reference","artwork_sha256","artwork_phrase","title","description","currency",

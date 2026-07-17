@@ -86,12 +86,12 @@ class EtsyTests(unittest.TestCase):
             root=Path(temporary);app=root/"app.json";pending=root/"pending.json";token=root/"token.json"
             app.write_text(json.dumps({"keystring":"key","shared_secret":"shared","redirect_uri":"https://example.test/oauth"}));app.chmod(0o600)
             started=etsy_oauth.start(app,pending,now=100);query=parse_qs(urlsplit(started["authorization_url"]).query)
-            self.assertEqual(query["code_challenge_method"],["S256"]);self.assertEqual(query["scope"],["listings_r listings_w"]);self.assertNotIn("verifier",json.dumps(started).lower())
-            stored=json.loads(pending.read_text());self.assertGreaterEqual(len(stored["verifier"]),43);self.assertEqual(stored["scopes"],["listings_r","listings_w"]);self.assertEqual(pending.stat().st_mode&0o777,0o600)
+            self.assertEqual(query["code_challenge_method"],["S256"]);self.assertEqual(query["scope"],["listings_r listings_w shops_r"]);self.assertNotIn("verifier",json.dumps(started).lower())
+            stored=json.loads(pending.read_text());self.assertGreaterEqual(len(stored["verifier"]),43);self.assertEqual(stored["scopes"],["listings_r","listings_w","shops_r"]);self.assertEqual(pending.stat().st_mode&0o777,0o600)
             session=Mock();response=Mock();response.json.return_value={"access_token":"private","token_type":"Bearer","refresh_token":"refresh","expires_in":3600};response.raise_for_status.return_value=None;session.post.return_value=response
             callback=f'https://example.test/oauth?code=abc&state={stored["state"]}';result=etsy_oauth.complete(callback,app,pending,token,session,now=101)
             self.assertTrue(result["ready_for_etsy_write"]);self.assertNotIn("private",json.dumps(result));self.assertFalse(pending.exists());self.assertEqual(token.stat().st_mode&0o777,0o600)
-            saved=json.loads(token.read_text());self.assertEqual(saved["scopes"],["listings_r","listings_w"]);self.assertEqual(saved["expires_at"],3701);self.assertEqual(saved["refresh_expires_at"],101+90*86400)
+            saved=json.loads(token.read_text());self.assertEqual(saved["scopes"],["listings_r","listings_w","shops_r"]);self.assertEqual(saved["expires_at"],3701);self.assertEqual(saved["refresh_expires_at"],101+90*86400)
             status=etsy_oauth.status(app,token,now=102);self.assertTrue(status["ready_for_etsy_read"]);self.assertTrue(status["ready_for_etsy_write"]);self.assertTrue(status["required_scopes_present"])
             with self.assertRaises(PermissionError):etsy_oauth.complete(callback,app,pending,token,session,now=103)
             pending.write_text(json.dumps({**stored,"created_at":0,"used":False}));pending.chmod(0o600)
@@ -102,7 +102,7 @@ class EtsyTests(unittest.TestCase):
             app.write_text(json.dumps({"keystring":"key","shared_secret":"shared","redirect_uri":"https://example.test/oauth"}));app.chmod(0o600);etsy_oauth.start(app,pending,now=100);stored=json.loads(pending.read_text())
             callback="https://example.test/oauth?code=hidden-code&state=wrong"
             with self.assertRaisesRegex(ValueError,"state mismatch"):etsy_oauth.complete(callback,app,pending,token,Mock(),now=101)
-            self.assertFalse(json.loads(pending.read_text())["used"]);stored["scopes"]=["listings_r"];pending.write_text(json.dumps(stored));pending.chmod(0o600)
+            self.assertFalse(pending.exists());stored["scopes"]=["listings_r"];pending.write_text(json.dumps(stored));pending.chmod(0o600)
             callback=f'https://example.test/oauth?code=hidden-code&state={stored["state"]}'
             with self.assertRaisesRegex(ValueError,"did not request required"):etsy_oauth.complete(callback,app,pending,token,Mock(),now=101)
             self.assertFalse(token.exists())
@@ -117,10 +117,10 @@ class EtsyTests(unittest.TestCase):
     def test_oauth_refresh_preserves_effective_scopes_and_updates_expirations(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);app=root/"app.json";token=root/"token.json";app.write_text(json.dumps({"keystring":"key","shared_secret":"shared","redirect_uri":"https://example.test/oauth"}));app.chmod(0o600)
-            token.write_text(json.dumps({"access_token":"old","refresh_token":"old-refresh","expires_at":100,"refresh_expires_at":10000,"scopes":["listings_r","listings_w"]}));token.chmod(0o600)
+            token.write_text(json.dumps({"access_token":"old","refresh_token":"old-refresh","expires_at":100,"refresh_expires_at":10000,"scopes":["listings_r","listings_w","shops_r"]}));token.chmod(0o600)
             session=Mock();response=Mock();response.json.return_value={"access_token":"new-private","refresh_token":"new-refresh","expires_in":3600};response.raise_for_status.return_value=None;session.post.return_value=response
             result=etsy_oauth.refresh(app,token,session,now=200);self.assertTrue(result["ready_for_etsy_write"]);self.assertNotIn("new-private",json.dumps(result));saved=json.loads(token.read_text())
-            self.assertEqual(saved["scopes"],["listings_r","listings_w"]);self.assertEqual(saved["expires_at"],3800);self.assertEqual(saved["refresh_expires_at"],200+90*86400);self.assertEqual(token.stat().st_mode&0o777,0o600);self.assertEqual(session.post.call_count,1)
+            self.assertEqual(saved["scopes"],["listings_r","listings_w","shops_r"]);self.assertEqual(saved["expires_at"],3800);self.assertEqual(saved["refresh_expires_at"],200+90*86400);self.assertEqual(token.stat().st_mode&0o777,0o600);self.assertEqual(session.post.call_count,1)
 
 class CombinedWorkflowTests(unittest.TestCase):
     def runtime(self,temporary,etsy_factory,printify_factory):

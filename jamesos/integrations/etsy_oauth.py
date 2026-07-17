@@ -5,7 +5,8 @@ from urllib.parse import parse_qs,urlsplit,urlencode
 import requests
 from jamesos.config import VAULT
 APP_PATH=VAULT/"JamesOS"/"Secrets"/"etsy-app.json";TOKEN_PATH=VAULT/"JamesOS"/"Secrets"/"etsy-oauth.json";PENDING_PATH=VAULT/"JamesOS"/"Secrets"/"etsy-oauth-pending.json"
-AUTHORIZE_URL="https://www.etsy.com/oauth/connect";TOKEN_URL="https://api.etsy.com/v3/public/oauth/token";SCOPES=("listings_r","listings_w");PENDING_TTL=600
+AUTHORIZE_URL="https://www.etsy.com/oauth/connect";TOKEN_URL="https://api.etsy.com/v3/public/oauth/token";SCOPES=("listings_r","listings_w","shops_r");PENDING_TTL=600
+AUTHORIZATION_PARAMETER_NAMES=frozenset({"response_type","client_id","redirect_uri","scope","state","code_challenge","code_challenge_method"})
 def _read(path):
     if not path.is_file() or path.stat().st_mode&0o777!=0o600:raise PermissionError(path)
     return json.loads(path.read_text())
@@ -26,18 +27,32 @@ def _post_token(session,data):
     except Exception as exc:raise RuntimeError("Etsy OAuth token exchange failed; run start again") from exc
     if not isinstance(token,dict) or not token.get("access_token") or not token.get("refresh_token"):raise RuntimeError("Etsy OAuth token response was incomplete; run start again")
     return token
-def start(app_path=APP_PATH,pending_path=PENDING_PATH,now=None):
-    app=_read(Path(app_path));state=secrets.token_urlsafe(32);verifier=secrets.token_urlsafe(64)[:96];challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
-    pending={"state":state,"verifier":verifier,"created_at":now or int(time.time()),"redirect_uri":app["redirect_uri"],"scopes":list(SCOPES),"used":False};_write(Path(pending_path),pending)
-    query=urlencode({"response_type":"code","redirect_uri":app["redirect_uri"],"scope":" ".join(SCOPES),"client_id":app["keystring"],"state":state,"code_challenge":challenge,"code_challenge_method":"S256"})
-    return {"result":"etsy_oauth_authorization_required","authorization_url":f"{AUTHORIZE_URL}?{query}","scopes":list(SCOPES),"pkce_method":"S256"}
+def _authorization_scopes(token_path):
+    configured=set(SCOPES)
+    try:
+        token=_read(Path(token_path));configured.update(token.get("scopes") or str(token.get("scope") or "").split())
+    except (OSError,PermissionError,ValueError):pass
+    return tuple(sorted(configured))
+def _authorization_parameters(app,state,challenge,scopes):
+    parameters={"response_type":"code","client_id":app["keystring"],"redirect_uri":app["redirect_uri"],"scope":" ".join(scopes),
+        "state":state,"code_challenge":challenge,"code_challenge_method":"S256"}
+    if frozenset(parameters)!=AUTHORIZATION_PARAMETER_NAMES:raise RuntimeError("Unexpected Etsy authorization parameter")
+    return parameters
+def start(app_path=APP_PATH,pending_path=PENDING_PATH,token_path=TOKEN_PATH,now=None):
+    app=_read(Path(app_path));scopes=_authorization_scopes(token_path);state=secrets.token_urlsafe(32);verifier=secrets.token_urlsafe(64)[:96];challenge=base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+    pending={"state":state,"verifier":verifier,"created_at":now or int(time.time()),"redirect_uri":app["redirect_uri"],"scopes":list(scopes),"used":False};_write(Path(pending_path),pending)
+    query=urlencode(_authorization_parameters(app,state,challenge,scopes))
+    return {"result":"etsy_oauth_authorization_required","authorization_url":f"{AUTHORIZE_URL}?{query}","scopes":list(scopes),"pkce_method":"S256"}
 def complete(callback_url,app_path=APP_PATH,pending_path=PENDING_PATH,token_path=TOKEN_PATH,session=None,now=None):
     app=_read(Path(app_path));pending=_read(Path(pending_path));current=now or int(time.time());callback=urlsplit(callback_url);registered=urlsplit(app["redirect_uri"])
     if pending.get("used"):raise ValueError("OAuth authorization code was already consumed; run start again")
     if current-pending["created_at"]>PENDING_TTL:raise ValueError("OAuth state expired; run start again")
     if (callback.scheme,callback.netloc,callback.path)!=(registered.scheme,registered.netloc,registered.path) or callback.scheme!="https":raise ValueError("OAuth redirect URI mismatch")
     values=parse_qs(callback.query)
-    if values.get("state",[None])[0]!=pending["state"]:raise ValueError("OAuth state mismatch")
+    if values.get("state",[None])[0]!=pending["state"]:
+        Path(pending_path).unlink(missing_ok=True);raise ValueError("OAuth state mismatch")
+    if values.get("error"):
+        Path(pending_path).unlink(missing_ok=True);raise ValueError(f"Etsy OAuth authorization failed: {str(values['error'][0])[:80]}")
     code=values.get("code",[None])[0]
     if not code:raise ValueError("OAuth code missing")
     scopes=_requested_scopes(pending)
