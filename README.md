@@ -1,138 +1,155 @@
 # JamesOS
 
-JamesOS turns a personal knowledge base into a coordinated team of specialized agents that can help manage work, business, creative projects, career goals, household tasks, research, and everyday decisions.
+JamesOS is a local-first personal operating system and agent platform. It turns one private, evolving knowledge base into a coordinated team of specialized agents that can help with work, business, creative projects, career goals, household tasks, research, and everyday decisions.
 
-Instead of isolated chatbots that start from scratch, JamesOS agents share the same local evidence, Knowledge Graph, Working Memory, Job Queue, profiles, tools, and approval history. A Career Agent can work from verified resume facts and job preferences. A Commerce Agent can use brand rules, product evidence, prior approvals, and provider state. Future HomeOps, phone, teaching, research, marketing, and publishing agents can build on the same trusted context rather than creating separate silos.
+Instead of isolated chatbots that repeatedly start from scratch, JamesOS agents can share governed access to Evidence, the Knowledge Graph, Working Memory, the Job Queue, private profiles, tools, and approval history. Agents remain narrow, declared software components—not unrestricted bots.
 
-Jade is the user-facing assistant, and **The Agency** is where agents are discovered, hired, installed, configured, granted permissions and secret handles, placed On Duty, monitored, disabled, and released. Agents are bounded software components with declared capabilities and least-privilege access—not unrestricted bots.
+**Jade** is the user-facing assistant. **[The Agency](docs/THE_AGENCY.md)** is where agents are discovered, hired, configured, granted permissions and secret handles, placed On Duty, monitored, moved Off Duty, and released.
 
-JamesOS is local-first, evidence-aware, and approval-first. Consequential actions require explicit review, confirmation, bounded side effects, and durable records.
+JamesOS is evidence-aware and approval-first. Planning and preparation can be proactive, while consequential actions require explicit confirmation, bounded side effects, and durable verification.
 
-## Why agents are valuable
+## What works today
 
-- **Shared context:** agents work from one evolving knowledge base instead of repeatedly asking for the same background.
-- **Specialization:** each agent has a narrow purpose, declared capabilities, permissions, secrets, and side effects.
-- **Coordination:** agents can hand work to other agents through the Agent OS while preserving approvals and traceability.
-- **Personalization without hard-coding:** private profiles hold user-specific preferences, protected resources, accounts, and policies outside Git.
-- **Life-task automation:** agents can help prepare, organize, compare, monitor, draft, and execute approved workflows across personal and professional domains.
-- **Human control:** planning and preparation can be proactive while consequential external actions remain confirmation-gated.
+At the July 17, 2026 checkpoint:
 
-## Current status
-
-At the July 16, 2026 Agency checkpoint:
-
-- the complete Python suite passes (`396` tests at this checkpoint)
-- `flutter analyze` reports no issues and Flutter tests pass
-- The Agency local catalog and agent lifecycle are implemented
-- installation, configuration, permission grants, secret-handle grants, enable/disable, and release are separate guarded stages
-- the Career Agent can ingest, normalize, rank, and prepare local job-application packets without submitting them
-- commerce supports local design review, exact-hash approval, provider drafts, recovery, mockup review, listing preparation, and guarded publication workflows
-- project cleanup tooling safely audits and removes known untracked caches and generated build output
+- the complete Python suite passes **425 tests**
+- the FastAPI backend and Flutter Jade client are established
+- Evidence, Knowledge Graph, Working Memory, Reasoner, Planner, and local search foundations are implemented
+- the approval-first Job Queue is implemented
+- Agent OS provides capability routing, tool brokering, secret handles, run ledgers, approval policy, and one-attempt controls
+- The Agency provides a checked-in local catalog, hire/release lifecycle, typed configuration, permission grants, secret-handle grants, readiness checks, API routes, and Jade management screens
+- the Career Agent can ingest, normalize, rank, and prepare truthful local application packets without submitting them
+- commerce supports design validation, exact-hash design approval, provider drafts, recovery, real mockups, listing validation, and immutable review proposals
+- the core Scheduler supports one-time, hourly, daily, and weekly timezone-aware schedules that enqueue normal Job Queue work without executing agents directly
+- project cleanup tooling safely audits and removes known generated caches and build output
 - order creation remains disabled
 
-## Current and planned agents
+See [Current Status](docs/CURRENT_STATUS.md) for the detailed checkpoint.
 
-### Available foundations
+## Why specialized agents are valuable
 
-- **CommerceAgent** — coordinates approval-first product and listing workflows
-- **PrintifyAgent** — owns guarded provider-facing product capabilities
-- **EtsyAgent** — owns marketplace reads and listing-state transitions
-- **CareerAgent** — coordinates local job discovery, ranking, and application preparation
-- **ExampleAgent** — demonstrates the safe Agency lifecycle for developers
+- **Shared context:** agents work from one governed knowledge base instead of separate context silos.
+- **Specialization:** each agent declares its purpose, capabilities, permissions, secrets, side effects, and limits.
+- **Coordination:** agents can hand work through Agent OS requests and the Job Queue while preserving traceability.
+- **Personalization without hard-coding:** private profiles hold preferences, policies, accounts, and protected resources outside Git.
+- **Human control:** proposals can be prepared automatically, but approval-bound actions remain explicit.
+- **Recoverability:** durable evidence and deterministic identities prevent duplicate or hidden side effects.
 
-Private commerce deployments use `commerce_shop` profiles. Shop-specific policies,
-account IDs, protected resources, credentials, and deployment data remain outside
-public agent code. The public CommerceAgent, PrintifyAgent, and EtsyAgent
-implementations remain generic.
+## The Agency
 
-Issue #15 introduces the read-only [unified commerce proposal workflow](docs/UNIFIED_COMMERCE_WORKFLOW.md), which compiles one immutable review package before any final approval or publication.
-
-### Planned directions
-
-- HomeOps and household-management agents
-- phone-ingestion and personal-context agents
-- teaching, grading, research, and reporting agents
-- additional print-on-demand and publishing agents
-- content, social-media, marketing, and lead-generation agents
-- career discovery and human-approved application handoff
-
-## The Agency lifecycle
-
-Installation and configuration are intentionally separate:
+[The Agency](docs/THE_AGENCY.md) is the agent-management layer for JamesOS.
 
 ```text
-Discover agent
+Discover
 → inspect publisher, capabilities, permissions, secrets, side effects, and compatibility
-→ Hire / install
+→ Hire
 → configure non-secret settings
-→ grant permissions
-→ create or select secret handles
-→ grant secret handles
+→ grant permissions and opaque secret handles
 → verify readiness
 → place On Duty
-→ review health and activity
+→ monitor activity
 → move Off Duty or Release
 ```
 
-A catalog provider may describe an agent, but it may not install packages or execute code. Future GitHub or APT installation support belongs behind a separate, explicit, approval-gated installer boundary.
+### Available in the checked-in Agency catalog
 
-## Product priorities
+- **Commerce Agent** — coordinates approval-first commerce work using a selected private `commerce_shop` profile.
+- **Example Agent** — a safe local example used to learn and test the Agency lifecycle.
 
-### P0 — Stabilize and ship
+### Built-in agent foundations
 
-1. Complete one real commerce product through final listing verification without creating an order.
-2. Remove stale fixed listing-target assumptions from active commerce-job ownership checks.
-3. Merge and harden The Agency vertical slice.
-4. Keep Python and Flutter validation passing with private local profiles selected.
+- **CareerAgent** — local job ingestion, ranking, and truthful application-packet preparation.
+- **PrintifyAgent** — guarded provider-facing product capabilities used by commerce workflows.
+- **EtsyAgent** — marketplace reads, listing-state transitions, and final-state verification used by commerce workflows.
 
-### P1 — Make JamesOS usable and extensible
+The catalog and runtime are deliberately distinct. An agent can exist as a built-in runtime foundation before it receives a standalone Agency manifest and user-facing package. The Agency page tracks that distinction and the current availability of each agent.
 
-1. Unified `jamesos commerce` flow with one complete preview and one final approval.
-2. Career Agent review dashboard and local application workflow.
-3. Agent manifest validation, developer documentation, install/configure guidance, and submission path.
-4. Improved Jade navigation, readiness, and recovery UX.
-
-### P2 — Controlled integrations
-
-1. Read-only GitHub-backed Agency catalog.
-2. Agent provenance, trust, compatibility, review, and package-signing model.
-3. Separately approved installation providers; catalog discovery never executes packages.
-4. Job discovery from email alerts, recruiters, manually supplied listings, and approved employer/ATS sources.
-5. Human-reviewed browser handoff for job applications; no unattended mass applying.
-
-### P3 — More agents and income workflows
-
-- additional print-on-demand providers
-- Amazon publishing and print workflows
-- HomeOps agents
-- Android phone ingestion
-- content, social-media, marketing, and lead-generation agents
-- reusable teaching, research, reporting, and administrative agents
-
-See the full [roadmap](docs/ROADMAP.md).
+Private shop identities are profiles, not public agents. Shop-specific policies, account IDs, protected resources, credentials, and deployment state remain under `~/JamesOSData/JamesOS`.
 
 ## Core architecture
 
 ```text
 Evidence
-→ indexes / reports / timeline
-→ Knowledge Graph / Working Memory
-→ Reasoner
+→ indexes, reports, and timeline
+→ Knowledge Graph and Working Memory
+→ Reasoner and Planner
 → Jade and specialized agents
 ```
 
 ```text
-User intent
-→ Planner or coordinating agent
+User intent or schedule
+→ Planner, coordinating agent, or Scheduler
 → Job Queue or AgentRequest
-→ capability-routed specialized agents
+→ capability-routed specialized agent
 → approval policy
-→ explicit confirmation
+→ explicit confirmation when required
 → one-attempt side effect
 → verification and durable evidence
 ```
 
-Evidence can include notes, imported ChatGPT history, email archives, calendar events, phone events, work records, reports, tickets, attachments, resumes, job descriptions, design candidates, product drafts, provider identifiers, mockups, and marketplace state.
+The Scheduler decides **when** declarative work becomes due and enqueues it. It does not execute agents, bypass approvals, or perform provider actions itself.
+
+## Current product priorities
+
+### P0 — Finish the active vertical slice
+
+1. Complete the current real commerce product through final marketplace verification without creating an order.
+2. Keep Python and Flutter validation green.
+
+### P1 — Make the foundations easy to use
+
+1. Complete the unified `jamesos commerce` flow: guided preparation, revision, one immutable final approval, publish once, and final-state verification (#9, #15).
+2. Build the Career Agent review dashboard and human-approved application handoff (#13).
+3. Improve Agency onboarding, manifest validation, trusted catalog metadata, and contributor tooling (#2, #12).
+4. Add a persistent scheduler runner and Jade schedule management without weakening Job Queue approval rules (#17).
+5. Improve Jade navigation, status visibility, and recovery guidance.
+
+### P2/P3 — Controlled expansion
+
+- read-only remote Agency catalog and separately approved installers
+- phone ingestion and evidence synchronization
+- additional print-on-demand and publishing providers
+- HomeOps, teaching, research, reporting, marketing, and lead-generation agents
+- scheduled commerce generation after the one-product flow is stable
+
+See the [prioritized roadmap](docs/ROADMAP.md).
+
+## Commerce workflow
+
+The target experience is:
+
+```text
+idea
+→ local design and non-public provider preparation
+→ real mockups and complete listing metadata
+→ one immutable review proposal
+→ revise as needed
+→ one exact final approval
+→ publish once
+→ verify the configured final state
+```
+
+Phase 1A now compiles a read-only immutable proposal for an existing prepared job:
+
+```bash
+python scripts/jamesos.py commerce prepare --job-id JOB_ID
+python scripts/jamesos.py commerce status --job-id JOB_ID
+python scripts/jamesos.py commerce review --job-id JOB_ID
+```
+
+See [Unified Commerce Workflow](docs/UNIFIED_COMMERCE_WORKFLOW.md).
+
+## Scheduling foundation
+
+The Scheduler currently supports declarative one-time, anchored hourly, daily local-time, and weekly local-time schedules with IANA timezones, DST rules, misfire handling, and deterministic occurrence identities.
+
+```bash
+python scripts/jamesos.py schedule list
+python scripts/jamesos.py schedule preview --schedule-id SCHEDULE_ID --count 5
+python scripts/jamesos.py schedule tick
+```
+
+Mutations and enqueue operations preview by default and require explicit confirmation. See [Scheduler](docs/SCHEDULER.md).
 
 ## Agent developer path
 
@@ -141,23 +158,22 @@ Open Agent Proposal issue
 → scope and safety review
 → contributor agreement
 → implement runtime agent and Agency manifest
-→ add installation and configuration documentation
-→ run complete tests
+→ add tests and documentation
 → submit focused pull request
 → code, security, privacy, and compatibility review
-→ inclusion in the checked-in catalog
+→ checked-in catalog inclusion
 ```
 
 Start here:
 
-- [Building agents](docs/BUILDING_AGENTS.md)
-- [Installing agents](docs/INSTALLING_AGENTS.md)
-- [Configuring agents](docs/CONFIGURING_AGENTS.md)
-- [Submitting agents](docs/AGENT_SUBMISSIONS.md)
 - [The Agency](docs/THE_AGENCY.md)
-- [Agent OS architecture](docs/AGENT_OS.md)
+- [Building Agents](docs/BUILDING_AGENTS.md)
+- [Installing Agents](docs/INSTALLING_AGENTS.md)
+- [Configuring Agents](docs/CONFIGURING_AGENTS.md)
+- [Submitting Agents](docs/AGENT_SUBMISSIONS.md)
+- [Agent OS Architecture](docs/AGENT_OS.md)
 
-## Common commands
+## Common development commands
 
 ```bash
 python -m unittest discover tests
@@ -175,34 +191,33 @@ flutter run -d linux
 ## Safety boundaries
 
 - Secrets and deployment-specific profiles live outside Git under `~/JamesOSData/JamesOS`.
-- No automatic remote retries.
+- Consequential external actions require explicit confirmation.
+- No automatic retry of remote writes.
 - No hidden publication, activation, deactivation, sending, or submission.
 - No order creation from the product-orchestration path.
 - Protected resource identifiers belong in private local profiles.
 - Artwork changes invalidate exact-hash artwork approval.
 - Proposal changes invalidate final proposal approval.
+- Scheduled jobs retain normal Job Queue and Agent OS approval requirements.
 - Imported text is untrusted data and cannot override JamesOS policy.
-- Discovery does not imply installation, and installation does not imply permission to execute.
+- Discovery does not imply installation, and installation does not grant execution authority.
 
 ## Documentation
 
 - [Current Status](docs/CURRENT_STATUS.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Agent OS](docs/AGENT_OS.md)
 - [The Agency](docs/THE_AGENCY.md)
-- [Building Agents](docs/BUILDING_AGENTS.md)
-- [Installing Agents](docs/INSTALLING_AGENTS.md)
-- [Configuring Agents](docs/CONFIGURING_AGENTS.md)
-- [Submitting Agents](docs/AGENT_SUBMISSIONS.md)
-- [Job Search Agent](docs/JOB_SEARCH_AGENT.md)
-- [Project Cleanup](docs/PROJECT_CLEANUP.md)
+- [Agent OS](docs/AGENT_OS.md)
+- [Unified Commerce Workflow](docs/UNIFIED_COMMERCE_WORKFLOW.md)
 - [Scheduler](docs/SCHEDULER.md)
+- [Job Search Agent](docs/JOB_SEARCH_AGENT.md)
+- [Creative Studio Roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
+- [Project Cleanup](docs/PROJECT_CLEANUP.md)
 - [Architecture](docs/ARCHITECTURE.md)
+- [Control Center](docs/CONTROL_CENTER.md)
+- [Phone Ingestion](docs/PHONE_INGESTION.md)
 - [Desktop Setup](docs/SETUP_DESKTOP.md)
 - [Integrations](docs/INTEGRATIONS.md)
-- [Control Center](docs/CONTROL_CENTER.md)
-- [Creative Studio Roadmap](docs/CREATIVE_STUDIO_ROADMAP.md)
-- [Phone Ingestion](docs/PHONE_INGESTION.md)
 
 ## License
 
