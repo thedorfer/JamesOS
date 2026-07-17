@@ -1,0 +1,19 @@
+{
+  "agent": {
+    "schema_version": "1", "protocol_version": "1.0.0", "agent_id": "jamesos.example", "name": "Example Agent", "version": "0.1.0", "publisher": "JamesOS", "owner": "JamesOS", "description": "A safe local example for learning The Agency lifecycle.",
+    "capabilities": ["example.local_summary"], "accepted_task_types": ["example.summary"], "emitted_result_types": ["example.result"],
+    "required_tool_permissions": [], "required_secret_handles": [], "supported_side_effects": [], "protected_resources": [], "maximum_automatic_attempts": 1,
+    "minimum_jamesos_version": "0.1.0", "package_name": "jamesos", "entry_point": "jamesos.agents.example_agent:ExampleAgent"
+  },
+  "category": "HomeOps", "tags": ["example", "local"],
+  "permissions": {"required": {}, "optional": {"local_writes": ["agency-example-output"]}},
+  "configuration": [
+    {"name": "greeting", "label": "Greeting", "type": "string", "required": true, "default": "Hello"},
+    {"name": "summary_limit", "label": "Summary limit", "type": "integer", "required": false, "default": 5},
+    {"name": "style", "label": "Style", "type": "enum", "required": false, "choices": ["brief", "detailed"], "default": "brief"},
+    {"name": "enabled_for_home", "label": "Use for HomeOps", "type": "boolean", "required": false, "default": false},
+    {"name": "help_url", "label": "Help URL", "type": "url", "required": false, "default": "https://example.invalid/agency"}
+  ],
+  "secrets": [], "platforms": [{"os": "linux", "architectures": ["x86_64", "aarch64"]}],
+  "install": {"provider": "builtin", "apt_package": null}, "media": {"icon": null, "screenshots": []}
+}

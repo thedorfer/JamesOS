@@ -277,6 +277,7 @@ This is a source-available license and is not an open-source license. See [NOTIC
 
 - [Current Status](docs/CURRENT_STATUS.md)
 - [Agent OS](docs/AGENT_OS.md)
+- [The Agency](docs/THE_AGENCY.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Desktop setup](docs/SETUP_DESKTOP.md)
 - [ComfyUI setup](docs/COMFYUI_SETUP.md)

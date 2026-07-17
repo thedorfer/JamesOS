@@ -13,6 +13,7 @@ import '../widgets/chat_bubble.dart';
 import '../widgets/message_input.dart';
 import '../widgets/status_chip.dart';
 import 'control_center_screen.dart';
+import 'agency_screen.dart';
 import 'settings_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -708,6 +709,14 @@ class _ChatScreenState extends State<ChatScreen> {
       titleSpacing: 12,
       title: buildTopBarTitle(),
       actions: [
+        IconButton(
+          tooltip: 'The Agency',
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => AgencyScreen(settings: settings)),
+          ),
+          icon: const Icon(Icons.storefront_outlined, size: 20),
+        ),
         IconButton(
           tooltip: 'Control Center',
           onPressed: openControlCenter,
