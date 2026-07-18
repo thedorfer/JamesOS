@@ -27,6 +27,21 @@ class ApplicationShellTests(unittest.TestCase):
         self.assertIn("Local model: desktop",response.text);self.assertIn("GPU: desktop execution host",response.text);self.assertIn("UNPUBLISHED DRAFT ONLY",response.text);self.assertIn("commerce.diagnostics",response.text)
         self.assertNotIn("11434",response.text);self.assertNotIn("Product Studio",response.text);self.assertNotIn("Copilot",response.text)
 
+    def test_app_response_delivers_initialized_application_script(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")]
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app")
+        self.assertEqual(response.status_code,200)
+        for required in ("<script","DOMContentLoaded","/app/chat","/commerce/new","prepare-generation","addEventListener","q('send').onclick","q('undo').onclick","q('stop').onclick","q('retry').onclick","q('reset').onclick","[data-view]"):
+            with self.subTest(required=required):self.assertIn(required,response.text)
+
+    def test_app_script_is_inside_returned_body(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+            document=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app").text
+        script=document.find("<script");closing_script=document.find("</script>",script);closing_body=document.find("</body>")
+        self.assertGreaterEqual(script,0);self.assertGreater(closing_script,script);self.assertGreater(closing_body,closing_script)
+
     def test_chat_endpoint_receives_selected_profile_and_current_form(self):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")];service=Mock();service.message.return_value={"message":"Ready","commands":[],"suggestions":[],"warnings":[]}
         values={"csrf_token":api._COMMERCE_CREATE_CSRF,"conversation_id":"conversation-12345678901234567890","message":"shorten it","active_view":"commerce.new","active_profile_id":"unitystitches","selected_job_id":"","form":{"exact_phrase":"KEEP THIS","product_brief":"Detailed brief"}}
