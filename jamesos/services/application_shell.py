@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from dataclasses import asdict,dataclass,field
 import json
+from html import escape as html_escape
 from pathlib import Path
 import re
 from typing import Any,Callable
@@ -119,12 +120,16 @@ def validate_chat_response(value:Any,profile_ids:set[str])->dict[str,Any]:
 def safe_plain_model_text(raw:Any)->str:
     if not isinstance(raw,str):return ""
     candidate=raw.strip()
+    if not candidate:return ""
     if candidate.startswith("{"):
-        match=re.search(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"',candidate,re.S)
+        match=re.search(r'"(?:message|response)"\s*:\s*"((?:[^"\\]|\\.)*)"',candidate,re.S)
         if not match:return ""
         try:candidate=json.loads('"'+match.group(1)+'"')
         except Exception:return ""
-    try:return _model_text(candidate,4000,"message",multiline=True)
+    else:candidate=re.split(r"```(?:json)?|(?m:^\s*\{)",candidate,maxsplit=1)[0].strip()
+    if not candidate:return ""
+    candidate=html_escape(candidate,quote=False)
+    try:return _text(candidate,4000,"message",multiline=True)
     except Exception:return ""
 
 
@@ -149,14 +154,10 @@ class WorkspaceChatService:
             f"Schema: {json.dumps(SCHEMA,separators=(',',':'))}\nEnabled profile IDs: {json.dumps(sorted(profile_ids))}\nProfile context: {json.dumps(context,ensure_ascii=False)}\nWorkspace: {json.dumps(safe_workspace,ensure_ascii=False)}\nAttachments: {json.dumps(attachments,ensure_ascii=False)}\nUser: {message}")
         try:self.readiness();raw=self.model(prompt,format_schema=SCHEMA);result=validate_chat_response(parse_json_object(raw),profile_ids)
         except Exception as first:
-            raw=locals().get("raw","");repair=("Return corrected JSON only. Do not include HTML or JavaScript. "f"Schema: {json.dumps(SCHEMA,separators=(',',':'))}\nMalformed response:\n{str(raw)[:50000]}")
-            try:
-                repaired_raw=self.model(repair,format_schema=SCHEMA);result=validate_chat_response(parse_json_object(repaired_raw),profile_ids)
-            except Exception as second:
-                diagnostic=ValidationError("VALIDATION_FAILED",diagnostic_message=f"JamesOS chat structured response failed after one repair: {type(second).__name__}: {second}",user_message="JamesOS could not safely interpret the local model response. Try again.",operation="application_shell",stage="structured_response",cause=second)
-                plain=safe_plain_model_text(raw) or safe_plain_model_text(locals().get("repaired_raw",""))
-                if not plain:handle_error(diagnostic,operation="application_shell",context={"conversation_id":conversation_id,"profile_id":profile_id})
-                result={"message":plain or diagnostic.user_message,"commands":[],"suggestions":[],"warnings":["No workspace changes were applied."] if not plain else []}
+            raw=locals().get("raw","");plain=safe_plain_model_text(raw)
+            diagnostic=ValidationError("VALIDATION_FAILED",diagnostic_message=f"JamesOS chat structured response was unusable: {type(first).__name__}: {first}",user_message="JamesOS could not safely interpret the local model response. Try again.",operation="application_shell",stage="structured_response",cause=first)
+            if not plain:handle_error(diagnostic,operation="application_shell",context={"conversation_id":conversation_id,"profile_id":profile_id})
+            result={"message":plain or diagnostic.user_message,"commands":[],"suggestions":[],"warnings":["No workspace changes were applied."]}
         destination=context.get("destination") or {};printify=f"{destination.get('printify_shop_title') or 'Printify shop'} — {destination.get('printify_shop_id')}";etsy=str(destination.get("etsy_shop_slug") or "configured Etsy destination")
         for command in result["commands"]:
             if command.get("type")=="show_confirmation" and command.get("action")=="start_generation":command["message"]=f"Confirm {printify} and Etsy {etsy} before creating an unpublished draft."
