@@ -18,7 +18,7 @@ from jamesos.services.product_orchestrator import _atomic_json
 
 ROOT=VAULT/"JamesOS"/"ApplicationShell"/"conversations"
 CONVERSATION_RE=re.compile(r"^[A-Za-z0-9_-]{20,100}$")
-VIEWS={"dashboard","commerce.new","commerce.loading","commerce.review","commerce.diagnostics","commerce.published","jobs.list","jobs.detail","profiles","settings","diagnostics"}
+VIEWS={"dashboard","agency.home","commerce.new","commerce.loading","commerce.review","commerce.diagnostics","commerce.published","jobs.list","jobs.detail","profiles","settings","diagnostics","admin.home"}
 FORM_FIELDS={"exact_phrase":500,"product_brief":5000,"listing_title":140,"special_instructions":3000}
 COMMANDS={"navigate","select_profile","form_patch","form_clear","open_job","open_review","show_notification","show_confirmation"}
 CONFIRMATIONS={"start_generation","request_revision","publish"}
