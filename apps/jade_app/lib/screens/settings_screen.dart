@@ -96,9 +96,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Connection failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Connection failed: $e')));
     }
   }
 
@@ -135,7 +135,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Lock API URL and key'),
-            subtitle: const Text('Prevents accidentally clearing the server address or key.'),
+            subtitle: const Text(
+              'Prevents accidentally clearing the server address or key.',
+            ),
             value: connectionLocked,
             secondary: Icon(connectionLocked ? Icons.lock : Icons.lock_open),
             onChanged: (v) {
@@ -151,7 +153,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             enabled: !connectionLocked,
             decoration: InputDecoration(
               labelText: 'JamesOS API URL',
-              helperText: connectionLocked ? 'Locked to prevent accidental changes.' : null,
+              helperText: connectionLocked
+                  ? 'Locked to prevent accidental changes.'
+                  : null,
               border: const OutlineInputBorder(),
             ),
           ),
@@ -162,7 +166,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             obscureText: true,
             decoration: InputDecoration(
               labelText: 'API key',
-              helperText: connectionLocked ? 'Locked to prevent accidental changes.' : null,
+              helperText: connectionLocked
+                  ? 'Locked to prevent accidental changes.'
+                  : null,
               border: const OutlineInputBorder(),
             ),
           ),
@@ -201,7 +207,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onTap: () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
-                    content: Text('Push notifications are planned for the next mobile phase.'),
+                    content: Text(
+                      'Push notifications are planned for the next mobile phase.',
+                    ),
                   ),
                 );
               },

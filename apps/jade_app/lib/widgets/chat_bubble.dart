@@ -6,7 +6,11 @@ class ChatBubble extends StatelessWidget {
   final ChatMessage message;
   final bool showMetadata;
 
-  const ChatBubble({super.key, required this.message, this.showMetadata = true});
+  const ChatBubble({
+    super.key,
+    required this.message,
+    this.showMetadata = true,
+  });
 
   String get sourceLabel {
     if (message.sources.isEmpty) return '';
@@ -69,10 +73,15 @@ class ChatBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             MarkdownBody(data: message.text),
-            if (showMetadata && !user && metaLabel != null && metaLabel.isNotEmpty) ...[
+            if (showMetadata &&
+                !user &&
+                metaLabel != null &&
+                metaLabel.isNotEmpty) ...[
               const SizedBox(height: 12),
               Text(
-                hasLimitedConfidence ? '$metaLabel. Some details may need verification.' : metaLabel,
+                hasLimitedConfidence
+                    ? '$metaLabel. Some details may need verification.'
+                    : metaLabel,
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.55),
                   fontSize: 12,

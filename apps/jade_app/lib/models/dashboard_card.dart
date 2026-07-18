@@ -16,7 +16,8 @@ class DashboardCard {
       title: json['title']?.toString() ?? 'Item',
       body: json['body']?.toString() ?? '',
       kind: json['kind']?.toString() ?? 'info',
-      prompt: json['prompt']?.toString() ?? json['title']?.toString() ?? 'Brief me',
+      prompt:
+          json['prompt']?.toString() ?? json['title']?.toString() ?? 'Brief me',
     );
   }
 }

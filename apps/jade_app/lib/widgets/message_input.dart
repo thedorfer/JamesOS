@@ -27,8 +27,12 @@ class MessageInput extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
         decoration: BoxDecoration(
-          color: Theme.of(context).scaffoldBackgroundColor.withValues(alpha: 0.96),
-          border: Border(top: BorderSide(color: Colors.white.withValues(alpha: 0.06))),
+          color: Theme.of(
+            context,
+          ).scaffoldBackgroundColor.withValues(alpha: 0.96),
+          border: Border(
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+          ),
         ),
         child: Row(
           children: [
@@ -53,14 +57,22 @@ class MessageInput extends StatelessWidget {
                   hintText: listening ? 'Listening...' : 'Ask Jade...',
                   filled: true,
                   fillColor: Colors.white.withValues(alpha: 0.045),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+                    borderSide: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.12),
+                    ),
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(16),
-                    borderSide: const BorderSide(color: Colors.tealAccent, width: 1.6),
+                    borderSide: const BorderSide(
+                      color: Colors.tealAccent,
+                      width: 1.6,
+                    ),
                   ),
                 ),
               ),
