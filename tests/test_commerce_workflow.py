@@ -22,6 +22,12 @@ from tests import test_product_orchestrator as product_tests
 
 
 class CommerceWorkflowTests(unittest.TestCase):
+    def test_inspect_draft_cli_is_read_only(self):
+        workflow=SimpleNamespace(orchestrator=SimpleNamespace(inspect_draft=lambda job_id:{"result":"draft_ownership_inspection","job_id":job_id,"write_performed":False,"provider_write_performed":False}))
+        output=StringIO()
+        with patch.object(sys,"argv",["jamesos.py","commerce","inspect-draft","--job-id","job-1"]),redirect_stdout(output):self.assertEqual(jamesos_cli._main(workflow=workflow),0)
+        result=json.loads(output.getvalue());self.assertEqual(result["job_id"],"job-1");self.assertFalse(result["provider_write_performed"])
+
     def test_currency_formatting(self):
         self.assertEqual(format_currency(2499,"USD"),"$24.99")
         self.assertEqual(format_currency(2500,"USD"),"$25.00")

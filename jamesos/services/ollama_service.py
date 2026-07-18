@@ -20,7 +20,7 @@ def _model_for_prompt(prompt: str, configured_model: str) -> str:
     return configured_model or DEFAULT_MODEL
 
 
-def ask_ollama(prompt: str, model: str | None = None) -> str:
+def ask_ollama(prompt: str, model: str | None = None, *, format_schema: dict | str | None = None) -> str:
     cfg = get_config("ollama.yaml").get("ollama", {})
     host = cfg.get("host", "http://localhost:11434").rstrip("/")
     configured_model = model or cfg.get("model", DEFAULT_MODEL)
@@ -35,6 +35,7 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
             "num_predict": 180 if selected_model == FAST_MODEL else 700,
         },
     }
+    if format_schema is not None:payload["format"]=format_schema
 
     req = urllib.request.Request(
         f"{host}/api/generate",

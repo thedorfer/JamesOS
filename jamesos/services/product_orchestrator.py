@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import copy
 from datetime import datetime
 from hashlib import sha256
+from collections import Counter
 import html
 from io import BytesIO
 import json
@@ -106,13 +107,13 @@ def resolve_garment_colors(value: str | list[str], *, configured_aliases: dict[s
 
 def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: list[str] | None = None,
                      sizes: list[str] | None = None) -> dict[str, Any]:
-    heading=re.search(r"(?im)^\s*exact\s+phrase\s*:\s*\n?\s*([A-Z0-9][A-Z0-9 '&+!-]{2,})\s*$",prompt)
+    heading=re.search(r"(?is)(?:^|\n)\s*exact\s+phrase\s*:\s*\n?(.+?)(?=\n\s*\n|\Z)",prompt)
     cleaned = " ".join(prompt.split())
     if not cleaned: raise ValidationError("VALIDATION_FAILED", diagnostic_message="Product prompt is empty.", operation="product_orchestrator", stage="prompt_received")
     quoted = re.search(r"[\"“](.+?)[\"”]", cleaned)
     labeled = re.search(r"\b(?:phrase|saying|text)\s*(?:is|:|-)?\s*([A-Z][A-Z ]{2,}?)(?=\s*(?:…|[.,;!?]|$))", cleaned)
     bare_phrase = re.fullmatch(r"[A-Z0-9][A-Z0-9 '&+!-]{2,}", cleaned)
-    exact = heading.group(1).strip() if heading else quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else bare_phrase.group(0).strip() if bare_phrase else "SAMPLE" if "sample" in cleaned.lower() else ""
+    exact = normalize_exact_phrase(heading.group(1)) if heading else quoted.group(1).upper().strip() if quoted else labeled.group(1).strip() if labeled else bare_phrase.group(0).strip() if bare_phrase else "SAMPLE" if "sample" in cleaned.lower() else ""
     price_match = re.search(r"\$\s*(\d{1,4})(?:\.(\d{2}))?", cleaned)
     parsed_price = int(price_match.group(1)) * 100 + int(price_match.group(2) or 0) if price_match else 2499
     lower = cleaned.lower(); color_resolution = resolve_garment_colors(garment_colors if garment_colors is not None else cleaned)
@@ -137,6 +138,30 @@ def normalize_prompt(prompt: str, *, price: int | None = None, garment_colors: l
         "listing_tone": "playful positive", "blank": "Bella+Canvas 3001", "print_provider": "Monster Digital",
         "artwork_palette":"trans_pride" if "trans-pride" in lower or "trans pride" in lower or "trans rights" in lower else "high_contrast",
         "negative_visual_constraints":negatives,"requested_motifs":requested_motifs,"force_new_composition":force_new}
+
+
+def normalize_exact_phrase(value:Any)->str:
+    text=str(value or "").replace("\r\n","\n").replace("\r","\n")
+    return "\n".join(" ".join(line.strip().split()) for line in text.split("\n") if line.strip())
+
+
+def phrase_adherence_evidence(expected:Any,rendered_phrase:Any,rendered_lines:Any=None)->dict[str,Any]:
+    expected_phrase=normalize_exact_phrase(expected);lines=[" ".join(str(line).strip().split()) for line in (rendered_lines or []) if str(line).strip()]
+    rendered=normalize_exact_phrase("\n".join(lines) if lines else rendered_phrase)
+    tokens=lambda value:[item.casefold() for item in re.findall(r"[A-Za-z0-9]+",value)]
+    expected_tokens=tokens(expected_phrase);rendered_tokens=tokens(rendered);remaining=Counter(rendered_tokens);missing=[]
+    for token in expected_tokens:
+        if remaining[token]:remaining[token]-=1
+        else:missing.append(token.upper())
+    expected_counts=Counter(expected_tokens);unexpected=[]
+    for token in rendered_tokens:
+        if expected_counts[token]:expected_counts[token]-=1
+        else:unexpected.append(token.upper())
+    order_ok=not missing and [token for token in rendered_tokens if token in set(expected_tokens)][:len(expected_tokens)]==expected_tokens
+    passed=bool(expected_tokens) and not missing and not unexpected and order_ok
+    rendered_evidence=" ".join(lines) if lines else " ".join(rendered.split("\n"))
+    return {"expected_phrase":expected_phrase,"rendered_phrase":rendered_evidence,"rendered_text_lines":lines or rendered.split("\n"),"missing_tokens":missing,
+        "unexpected_tokens":unexpected,"phrase_adherence_passed":passed}
 
 
 def score_candidate(candidate: dict[str, Any], brief: dict[str, Any]) -> dict[str, Any]:
@@ -473,6 +498,22 @@ def _draft_marker(state: dict[str, Any]) -> str:
     return f"jamesos-orchestrator-{_json_sha(stable)[:20]}"
 
 
+DRAFT_OWNERSHIP_VERSION="1"
+
+
+def _ownership_hash(record:dict[str,Any])->str:
+    return _json_sha({key:value for key,value in record.items() if key!="ownership_hash"})
+
+
+def build_draft_ownership(state:dict[str,Any],product_id:str,provider_journal_id:str,*,certainty:str="confirmed")->dict[str,Any]:
+    destination=state.get("destination") or {};shop_id=destination.get("printify_shop_id",state.get("shop_id"))
+    record={"job_id":state["job_id"],"commerce_profile_id":state.get("commerce_profile_id") or state.get("profile_id") or "unbound-orchestrator",
+        "printify_shop_id":shop_id,"printify_product_id":product_id,"provider_create_journal_id":provider_journal_id,
+        "ownership_marker":_draft_marker(state),"ownership_version":DRAFT_OWNERSHIP_VERSION,
+        "confirmed_at":datetime.now().astimezone().isoformat(),"remote_result_certainty":certainty,"shop_scoped_result":True}
+    record["ownership_hash"]=_ownership_hash(record);return record
+
+
 def _products(response: Any) -> list[dict[str, Any]]:
     if isinstance(response, list): return [row for row in response if isinstance(row, dict)]
     if isinstance(response, dict):
@@ -567,9 +608,9 @@ def _independent_evidence(state: dict[str, Any], root: Path, brief: dict[str, An
 
 
 def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[str, Any]) -> list[dict[str, Any]]:
-    root.mkdir(parents=True,exist_ok=True);phrase=" ".join(str(brief.get("exact_text") or "").split()).upper()
+    root.mkdir(parents=True,exist_ok=True);phrase=normalize_exact_phrase(brief.get("exact_text")).upper()
     if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design requires an exact phrase.",operation="product_orchestrator",stage="design_candidates_ready")
-    words=phrase.split();lines=[" ".join(words[:2])," ".join(words[2:-2])," ".join(words[-2:])] if len(words)>=5 else [" ".join(part) for part in (words[:max(1,len(words)//3)],words[max(1,len(words)//3):max(2,2*len(words)//3)],words[max(2,2*len(words)//3):]) if part]
+    intentional_lines=phrase.split("\n");words=phrase.split();lines=intentional_lines if len(intentional_lines)>1 else ([" ".join(words[:2])," ".join(words[2:-2])," ".join(words[-2:])] if len(words)>=5 else [" ".join(part) for part in (words[:max(1,len(words)//3)],words[max(1,len(words)//3):max(2,2*len(words)//3)],words[max(2,2*len(words)//3):]) if part])
     if phrase=="YOU ARE SAFE WITH ME":lines=["YOU ARE","SAFE","WITH ME"]
     font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";palette=((91,206,250,255),(245,169,184,255),(255,255,255,255),(245,169,184,255),(91,206,250,255)) if brief.get("artwork_palette")=="trans_pride" else ((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
     def rainbow_heart(canvas,bounds):
@@ -602,16 +643,16 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
             draw.rectangle((430,650,2050,4650),outline=(232,68,74,255),width=70);draw.rectangle((2450,650,4070,4650),outline=(55,126,195,255),width=70);draw_lines(canvas,lines,(650,850,3850,4500),fill=(255,255,255,255))
         has_heart=bool({"heart","rainbow_heart"}&motifs)
         if has_heart and "heart" not in negatives:rainbow_heart(canvas,(1500,500,3000,1750))
-        path=root/f"{name}.png";canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);phrase_ok=" ".join(lines)==phrase
+        path=root/f"{name}.png";canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);adherence=phrase_adherence_evidence(phrase,"\n".join(lines),lines);phrase_ok=adherence["phrase_adherence_passed"]
         features={"heart":has_heart,"badge":False,"rounded_rectangle":False,"dark_background_panel":False,"gradient":False}
         violations=[constraint for constraint in negatives if features.get(constraint) is True]
         checks={"hard_phrase_correct":phrase_ok,"hard_no_duplicate_or_missing_text":phrase_ok,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_dimensions":True,
             "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True}
         checks["hard_negative_constraints"]=not violations
         result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,"source_artwork_sha256":evidence["candidate_sha"],
-            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
+            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","generation_prompt":f"Render the complete exact phrase:\n{phrase}","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
             "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","typography"),"features":features},
-            "prompt_validation":{"negative_constraint_violations":violations,"compliant":not violations},"prompt_adherence_score":40 if not violations else 0,"novelty_score":20,
+            **adherence,"prompt_validation":{"negative_constraint_violations":violations,"compliant":not violations and phrase_ok,**adherence},"prompt_adherence_score":40 if not violations and phrase_ok else 0,"novelty_score":20,
             "quality_checks":checks,"thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":9,"balanced_bounds_score":9,
             "warnings":["Automated technical checks do not prove artistic quality; human artistic review is required."]})
     validate_candidate_uniqueness(result)
@@ -665,16 +706,33 @@ def validate_candidate_set(candidates:list[dict[str,Any]],brief:dict[str,Any],pr
     rows=[]
     for candidate in candidates:
         novelty=assess_artwork_novelty(candidate,prior);prompt=candidate.get("prompt_validation") or {}
-        eligible=novelty["eligible"] and prompt.get("compliant",True) is True
+        adherence=phrase_adherence_evidence(brief.get("exact_text"),candidate.get("rendered_phrase"),candidate.get("rendered_text_lines"))
+        candidate.update(adherence);prompt={**prompt,**adherence,"compliant":prompt.get("compliant",True) is True and adherence["phrase_adherence_passed"]};candidate["prompt_validation"]=prompt
+        eligible=novelty["eligible"] and prompt.get("compliant") is True
         candidate["novelty_evidence"]=novelty;candidate["novelty_score"]=20 if novelty["eligible"] else 0
+        candidate["novelty_passed"]=novelty["eligible"];candidate["novelty_reasons"]=[item["category"] for item in novelty.get("comparisons") or []]
         candidate.setdefault("quality_checks",{})["hard_novelty"]=novelty["eligible"]
         candidate["quality_checks"]["hard_prompt_adherence"]=prompt.get("compliant",True) is True
+        rejection_reasons=[]
+        if not adherence["phrase_adherence_passed"]:
+            omitted=" ".join(adherence["missing_tokens"]);rejection_reasons.append({"category":"prompt_adherence","reason":f"omitted required phrase text: {omitted}" if omitted else "rendered phrase did not exactly preserve the required token order"})
+        elif prompt.get("compliant",True) is not True:rejection_reasons.append({"category":"prompt_adherence","reason":str(prompt.get("reason") or "candidate did not follow the requested design direction")})
+        if not novelty["eligible"]:rejection_reasons.append({"category":"novelty","reason":novelty["status"]})
+        candidate["rejection_reasons"]=rejection_reasons
         rows.append({"candidate_id":candidate.get("candidate_id"),"composition_family":candidate.get("composition_family"),"eligible":eligible,
-            "novelty_status":novelty["status"],"prompt_mismatch":prompt.get("compliant",True) is not True})
+            "expected_phrase":adherence["expected_phrase"],"rendered_phrase":adherence["rendered_phrase"],"rendered_text_lines":adherence["rendered_text_lines"],
+            "missing_tokens":adherence["missing_tokens"],"unexpected_tokens":adherence["unexpected_tokens"],"phrase_adherence_passed":adherence["phrase_adherence_passed"],
+            "novelty_passed":novelty["eligible"],"novelty_reasons":candidate["novelty_reasons"],"novelty_status":novelty["status"],"prompt_mismatch":prompt.get("compliant",True) is not True,"rejection_reasons":rejection_reasons})
     report={"candidate_count":len(candidates),"distinct_composition_families":len({item.get('composition_family') for item in candidates}),
         "rejected_for_prompt_mismatch":sum(item["prompt_mismatch"] for item in rows),"rejected_for_similarity":sum(item["novelty_status"]!="materially_distinct" for item in rows),"candidates":rows}
     if not any(item["eligible"] for item in rows):
-        raise ValidationError("VALIDATION_FAILED",diagnostic_message="artwork_revision_required: every candidate failed prompt-adherence or novelty checks; no provider work was performed.",operation="product_orchestrator",stage="design_candidates_ready",context={"candidate_diversity":report,"external_write_performed":False})
+        missing=[]
+        for row in rows:
+            for token in row["missing_tokens"]:
+                if token not in missing:missing.append(token)
+        safe=(f"All candidates omitted the required phrase ‘{' '.join(missing)}’." if missing else f"Artwork candidates were rejected: {report['rejected_for_prompt_mismatch']} for prompt adherence and {report['rejected_for_similarity']} for novelty.")
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message="artwork_revision_required: every candidate failed prompt-adherence or novelty checks; no provider work was performed.",user_message=safe,
+            operation="product_orchestrator",stage="design_candidates_ready",context={"candidate_diversity":report,"external_write_performed":False})
     return report
 
 
@@ -765,6 +823,42 @@ class ProductOrchestrator:
 
     def _path(self, job_id: str) -> Path: return self.root / job_id / "orchestrator-state.json"
     def load(self, job_id: str) -> dict[str, Any]: return json.loads(self._path(job_id).read_text(encoding="utf-8"))
+
+    def verify_draft_ownership(self,state:dict[str,Any],remote:dict[str,Any])->dict[str,Any]:
+        evidence=state.get("evidence") or {};draft=evidence.get("draft") or {};record=evidence.get("draft_ownership") or {};reasons=[]
+        product_id=draft.get("printify_product_id");destination=state.get("destination") or {};shop_id=destination.get("printify_shop_id",state.get("shop_id"))
+        required=("job_id","commerce_profile_id","printify_shop_id","printify_product_id","provider_create_journal_id","ownership_marker","ownership_version","confirmed_at","remote_result_certainty","ownership_hash")
+        if any(record.get(key) in (None,"") for key in required):reasons.append("ownership_record_incomplete")
+        if record and record.get("ownership_hash")!=_ownership_hash(record):reasons.append("ownership_hash_mismatch")
+        expected_profile=state.get("commerce_profile_id") or state.get("profile_id") or "unbound-orchestrator"
+        if record.get("job_id")!=state.get("job_id") or record.get("commerce_profile_id")!=expected_profile:reasons.append("job_binding_mismatch")
+        if shop_id!=state.get("shop_id") or record.get("printify_shop_id")!=shop_id:reasons.append("shop_binding_mismatch")
+        if record.get("printify_product_id")!=product_id or remote.get("id")!=product_id:reasons.append("product_id_mismatch")
+        if remote.get("shop_id") not in (None,shop_id):reasons.append("remote_shop_mismatch")
+        if record.get("ownership_marker")!=_draft_marker(state) or record.get("ownership_version")!=DRAFT_OWNERSHIP_VERSION:reasons.append("marker_mismatch")
+        if record.get("remote_result_certainty")!="confirmed" or record.get("shop_scoped_result") is not True:reasons.append("remote_result_not_confirmed")
+        journal_path=self._path(state["job_id"]).parent/"unified-preparation.json"
+        try:journal=json.loads(journal_path.read_text(encoding="utf-8"))
+        except (OSError,ValueError):journal={}
+        action=next((item for item in journal.get("provider_actions") or [] if item.get("journal_id")==record.get("provider_create_journal_id")),None)
+        if journal.get("job_id")!=state.get("job_id") or journal.get("profile_id") not in (None,state.get("commerce_profile_id")) or not action:reasons.append("provider_journal_mismatch")
+        elif action.get("status")!="completed" or action.get("uncertain") is True:reasons.append("provider_journal_not_confirmed")
+        for path in self.root.glob("*/orchestrator-state.json") if self.root.is_dir() else []:
+            if path==self._path(state["job_id"]):continue
+            try:other=json.loads(path.read_text(encoding="utf-8"))
+            except (OSError,ValueError):continue
+            other_evidence=other.get("evidence") or {};other_record=other_evidence.get("draft_ownership") or {};other_draft=other_evidence.get("draft") or {}
+            if (other_record.get("printify_product_id") or other_draft.get("printify_product_id"))==product_id:reasons.append("product_claimed_by_other_job");break
+        return {"verified":not reasons,"reasons":list(dict.fromkeys(reasons)),"job_id":state.get("job_id"),"printify_shop_id":shop_id,
+            "printify_product_id":product_id,"ownership_version":record.get("ownership_version"),"remote_result_certainty":record.get("remote_result_certainty"),"write_performed":False}
+
+    def inspect_draft(self,job_id:str)->dict[str,Any]:
+        state=self.load(job_id);draft=(state.get("evidence") or {}).get("draft") or {};product_id=draft.get("printify_product_id");shop_id=(state.get("destination") or {}).get("printify_shop_id",state.get("shop_id"))
+        if not product_id:raise StateConflictError("STATE_CONFLICT",diagnostic_message="No confirmed Printify product ID is recorded.",operation="product_orchestrator.inspect_draft",stage="ownership")
+        remote=self.adapters.client_factory().get_product(shop_id,product_id);verification=self.verify_draft_ownership(state,remote)
+        return {"result":"draft_ownership_inspection","job_id":job_id,"printify_shop_id":shop_id,"printify_product_id":product_id,
+            "ownership_verified":verification["verified"],"manual_verification_required":not verification["verified"],"reasons":verification["reasons"],
+            "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"write_performed":False,"provider_write_performed":False}
 
     def _prior_designs(self,state:dict[str,Any])->list[dict[str,Any]]:
         prior=[]
@@ -1248,6 +1342,12 @@ class ProductOrchestrator:
         if current_error and not any(item.get("error_id")==current_error.get("error_id") for item in state.setdefault("recovered_errors",[])):state["recovered_errors"].append({**current_error,"recovered_at":datetime.now().astimezone().isoformat()})
         state["brief"]=brief;evidence["listing"]=listing;evidence["upload"]={"printify_image_id":upload_id,"selected_design_sha256":selected_sha};evidence["variant_selection"]=selection
         evidence["draft"]={"printify_product_id":product_id,"variant_ids":chosen,"draft_marker":marker,"reconciled_existing_remote_draft":not created,"publish_status":"not_published","order_status":"not_created"}
+        journal_path=self._path(state["job_id"]).parent/"unified-preparation.json"
+        try:journal=json.loads(journal_path.read_text(encoding="utf-8"))
+        except (OSError,ValueError):journal={"job_id":state["job_id"],"profile_id":state.get("commerce_profile_id"),"provider_actions":[]}
+        journal_id=f"create-{uuid4().hex}";journal.setdefault("provider_actions",[]).append({"journal_id":journal_id,"status":"completed","uncertain":False,
+            "completed_at":datetime.now().astimezone().isoformat(),"response_evidence":{"draft_recorded":True,"recovery":True}});_atomic_json(journal_path,journal)
+        state["active_provider_create_journal_id"]=journal_id;evidence["draft_ownership"]=build_draft_ownership(state,product_id,journal_id)
         evidence.setdefault("draft_recovery_history",[]).append({"status":"verified","recovery_type":"independent_create_failure","replacement_product_id":product_id,"reused_upload":reusable,"new_upload_created":not reusable,"created_at":datetime.now().astimezone().isoformat()})
         state["stage"]="awaiting_human_approval";state["last_error"]=None;_atomic_json(self._path(state["job_id"]),state)
         return {"result":"independent_draft_recovered","write_performed":True,"printify_write_performed":True,"product_id":product_id,"reused_upload":reusable,"new_upload_created":not reusable,"new_product_created":created,"enabled_variant_count":18,"front_artwork_only":True,"publish_status":"not_published","order_status":"not_created"}
@@ -1259,11 +1359,12 @@ class ProductOrchestrator:
         if not product_id or product_id==PROTECTED_PRODUCT_ID:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="The recorded draft is missing or protected.",operation="product_orchestrator.review_draft",stage="ownership")
         client=self.adapters.client_factory();remote=client.get_product(state["shop_id"],product_id)
-        marker=state.get("evidence",{}).get("draft_marker") or draft.get("draft_marker")
         publication=assess_draft_publication_state(state,remote)
-        ownership_ok=replacement_ownership_matches(state,remote,product_id)
-        if not ownership_ok:
-            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote draft ownership evidence did not match the job.",operation="product_orchestrator.review_draft",stage="ownership")
+        ownership=(self.verify_draft_ownership(state,remote) if (state.get("evidence") or {}).get("draft_ownership") else
+            {"verified":replacement_ownership_matches(state,remote,product_id) and not state.get("commerce_profile_id"),"reasons":["canonical_ownership_record_missing"]})
+        if not ownership["verified"]:
+            raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote draft ownership evidence did not match the job.",operation="product_orchestrator.review_draft",stage="ownership",
+                context={"manual_verification_required":True,"printify_product_id":product_id,"printify_shop_id":state.get("shop_id"),"ownership_reasons":ownership["reasons"]})
         if remote.get("blueprint_id")!=12 or remote.get("print_provider_id")!=29:
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Remote blueprint or provider differs from the review target.",operation="product_orchestrator.review_draft",stage="provider")
         if not publication["safe_to_reconcile"]:
@@ -1498,8 +1599,11 @@ class ProductOrchestrator:
                 generator=self.adapters.independent_candidates if evidence.get("origin")=="independent_prompt" else self.adapters.candidates
                 candidates = generator(evidence, design_root, state["brief"])
                 if evidence.get("origin")=="independent_prompt":
-                    diversity=validate_candidate_set(candidates,state["brief"],self._prior_designs(state));state["evidence"]["candidate_diversity"]=diversity
-                    _atomic_json(self._path(state["job_id"]).parent/"candidate-diversity.json",diversity)
+                    try:diversity=validate_candidate_set(candidates,state["brief"],self._prior_designs(state))
+                    except ValidationError as exc:
+                        diversity=dict(exc.context.get("candidate_diversity") or {});state["evidence"]["candidate_diversity"]=diversity
+                        _atomic_json(self._path(state["job_id"]).parent/"candidate-diversity.json",diversity);_atomic_json(self._path(state["job_id"]),state);raise
+                    state["evidence"]["candidate_diversity"]=diversity;_atomic_json(self._path(state["job_id"]).parent/"candidate-diversity.json",diversity)
                 state["evidence"]["candidates"] = candidates
                 self._transition(state, "design_candidates_ready", "generate_v4_refinements", {"candidates": candidates})
             candidates = state["evidence"]["candidates"]
@@ -1538,13 +1642,24 @@ class ProductOrchestrator:
                 payload["print_areas"][0]["placeholders"][0]["images"][0]["id"]=state["evidence"]["upload"]["printify_image_id"];validate_create_payload(payload,chosen)
                 state["evidence"]["variant_selection"] = variant_evidence; state["evidence"]["draft_marker"] = marker
                 _atomic_json(self._path(state["job_id"]), state)
-                product = _find_marked_draft(client.list_products(state["shop_id"]), marker)
-                reconciled = product is not None
-                if product is None: product = client.create_product(state["shop_id"], payload)
+                recorded_draft=(state.get("evidence") or {}).get("draft") or {};recorded_id=recorded_draft.get("printify_product_id")
+                if recorded_id:
+                    if not (state.get("evidence") or {}).get("draft_ownership"):raise StateConflictError("STATE_CONFLICT",diagnostic_message="A confirmed product ID lacks canonical ownership evidence; manual verification is required.",operation="product_orchestrator",stage="printify_draft_created")
+                    product=client.get_product(state["shop_id"],recorded_id);reconciled=True
+                else:
+                    product = _find_marked_draft(client.list_products(state["shop_id"]), marker);reconciled = product is not None
+                    if product is None: product = client.create_product(state["shop_id"], payload)
                 if product.get("id") == PROTECTED_PRODUCT_ID: raise StateConflictError("STATE_CONFLICT", diagnostic_message="Printify returned the protected baseline product ID.", operation="product_orchestrator", stage="printify_draft_created")
                 draft = {"printify_product_id": product["id"], "variant_ids": chosen, "draft_marker": marker,
                     "reconciled_existing_remote_draft": reconciled, "publish_status": "not_published", "order_status": "not_created"}
-                state["evidence"]["draft"] = draft; self._transition(state, "printify_draft_created", "printify_create_unpublished_draft", draft)
+                journal_id=str(state.get("active_provider_create_journal_id") or "")
+                standalone_action=None
+                if not journal_id:
+                    journal_id=f"create-{uuid4().hex}";state["active_provider_create_journal_id"]=journal_id
+                    standalone_action={"journal_id":journal_id,"status":"completed","uncertain":False,"completed_at":datetime.now().astimezone().isoformat(),"response_evidence":{"draft_recorded":True}}
+                    _atomic_json(self._path(state["job_id"]).parent/"unified-preparation.json",{"job_id":state["job_id"],"profile_id":state.get("commerce_profile_id"),"provider_actions":[standalone_action]})
+                state["evidence"]["draft"] = draft;state["evidence"]["draft_ownership"]=build_draft_ownership(state,product["id"],journal_id)
+                _atomic_json(self._path(state["job_id"]),state);self._transition(state, "printify_draft_created", "printify_create_unpublished_draft", draft)
             else: client.get_product(state["shop_id"], state["evidence"]["draft"]["printify_product_id"])
             if "mockups_downloaded" not in completed:
                 product = client.get_product(state["shop_id"], state["evidence"]["draft"]["printify_product_id"])

@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 from jamesos.core.errors import StateConflictError, ValidationError
 from jamesos.core.profiles.selection import load_commerce_profile
@@ -76,9 +77,9 @@ class UnifiedCommercePreparation:
             approval={"approved":True,"human_artistic_approval":True,"candidate_id":selected["candidate_id"],"candidate_sha256":selected["png_sha256"],
                 "approved_at":_now(),"approval_scope":"bounded non-public unified preparation"}
             evidence["human_design_approval"]=approval;selection.setdefault("approval",{}).update(approval);state["last_error"]=None
-            action={"intended_action":"upload artwork and create or reconcile one unpublished job-owned draft, then retrieve mockups",
+            action={"journal_id":f"create-{uuid4().hex}","intended_action":"upload artwork and create or reconcile one unpublished job-owned draft, then retrieve mockups",
                 "idempotency_key":f"commerce-draft:{job_id}:{selected['png_sha256']}","started_at":_now(),"status":"started","uncertain":False}
-            journal["provider_actions"].append(action);_atomic_json(journal_path,journal);product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+            journal["provider_actions"].append(action);state["active_provider_create_journal_id"]=action["journal_id"];_atomic_json(journal_path,journal);product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
             state=self.orchestrator.resume(job_id,confirm_printify_draft=True)
             if state.get("stage")=="failed":
                 action.update(status="uncertain",uncertain=True,completed_at=_now(),response_evidence=state.get("last_error"));_atomic_json(journal_path,journal)

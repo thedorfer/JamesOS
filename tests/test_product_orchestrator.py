@@ -37,6 +37,31 @@ product_orchestrator.ETSY_TAGS = [f"sample tag {index}" for index in range(1, 14
 class ProductOrchestratorTests(unittest.TestCase):
     FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
+    def test_canonical_new_draft_ownership_verifies_shop_product_journal_and_unique_claim(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator=product_orchestrator.ProductOrchestrator(root,product_orchestrator.Adapters(client_factory=Mock()))
+            state={"job_id":"owned","commerce_profile_id":"profile","shop_id":1001,"destination":{"printify_shop_id":1001},"publish_status":"not_published","order_status":"not_created",
+                "evidence":{"selection":{"selected":{"png_sha256":"a"*64}},"draft":{"printify_product_id":"product","variant_ids":list(range(18))}},"transitions":[]}
+            record=product_orchestrator.build_draft_ownership(state,"product","create-journal");state["evidence"]["draft_ownership"]=record
+            product_orchestrator._atomic_json(orchestrator._path("owned"),state);product_orchestrator._atomic_json(orchestrator._path("owned").parent/"unified-preparation.json",
+                {"job_id":"owned","profile_id":"profile","provider_actions":[{"journal_id":"create-journal","status":"completed","uncertain":False}]})
+            remote={"id":"product","shop_id":1001}
+            self.assertTrue(orchestrator.verify_draft_ownership(state,remote)["verified"])
+            wrong_shop=orchestrator.verify_draft_ownership(state,{**remote,"shop_id":2});self.assertIn("remote_shop_mismatch",wrong_shop["reasons"])
+            wrong_product=orchestrator.verify_draft_ownership(state,{**remote,"id":"other"});self.assertIn("product_id_mismatch",wrong_product["reasons"])
+            other={"job_id":"other","evidence":{"draft":{"printify_product_id":"product"}}};product_orchestrator._atomic_json(orchestrator._path("other"),other)
+            claimed=orchestrator.verify_draft_ownership(state,remote);self.assertIn("product_claimed_by_other_job",claimed["reasons"])
+
+    def test_canonical_ownership_rejects_uncertain_create_journal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orchestrator=product_orchestrator.ProductOrchestrator(root,product_orchestrator.Adapters(client_factory=Mock()))
+            state={"job_id":"uncertain","commerce_profile_id":"profile","shop_id":1001,"destination":{"printify_shop_id":1001},"publish_status":"not_published","order_status":"not_created",
+                "evidence":{"selection":{"selected":{"png_sha256":"a"*64}},"draft":{"printify_product_id":"product"}},"transitions":[]}
+            state["evidence"]["draft_ownership"]=product_orchestrator.build_draft_ownership(state,"product","create-journal",certainty="uncertain")
+            product_orchestrator._atomic_json(orchestrator._path("uncertain"),state);product_orchestrator._atomic_json(orchestrator._path("uncertain").parent/"unified-preparation.json",
+                {"job_id":"uncertain","profile_id":"profile","provider_actions":[{"journal_id":"create-journal","status":"uncertain","uncertain":True}]})
+            result=orchestrator.verify_draft_ownership(state,{"id":"product","shop_id":1001});self.assertFalse(result["verified"]);self.assertIn("remote_result_not_confirmed",result["reasons"])
+
     def test_independent_recovery_lineage_proves_replacement_ownership(self):
         variants=list(range(1,19));state={"shop_id":1001,"publish_status":"not_published","order_status":"not_created","evidence":{"draft":{"printify_product_id":"replacement","variant_ids":variants,"publish_status":"not_published","order_status":"not_created"},
             "upload":{"printify_image_id":"upload"},"draft_recovery_history":[{"status":"verified",
@@ -91,6 +116,7 @@ class ProductOrchestratorTests(unittest.TestCase):
     @staticmethod
     def candidates(evidence, root: Path, _brief):
         root.mkdir(parents=True, exist_ok=True); result=[]
+        phrase=product_orchestrator.normalize_exact_phrase(_brief.get("exact_text"));rendered_lines=phrase.split("\n")
         for index, name in enumerate(("integrated_shadow_centered","integrated_shadow_curved_caption","integrated_shadow_compact")):
             path=root/f"{name}.png";path.write_bytes(evidence["candidate"].read_bytes())
             checks={"hard_phrase_correct":True,"hard_no_duplicate_or_missing_text":True,"hard_safe_bounds":True,
@@ -99,6 +125,7 @@ class ProductOrchestratorTests(unittest.TestCase):
             result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":sha256(path.read_bytes()).hexdigest(),
                 "svg_path":str(path.with_suffix('.svg')),"svg_sha256":str(index)*64,"source_artwork_sha256":evidence["candidate_sha"],
                 "font_sha256":"f"*64,"layout_id":name,"treatment_id":"integrated_shadow_v4","quality_checks":checks,
+                "rendered_phrase":" ".join(rendered_lines),"rendered_text_lines":rendered_lines,
                 "thumbnail_path":str(path),"thumbnail_readability_score":10+index,"garment_contrast_score":9,"balanced_bounds_score":8,
                 "warnings":["Automated scoring does not prove artistic quality."]})
         return result
@@ -191,6 +218,27 @@ class ProductOrchestratorTests(unittest.TestCase):
             self.assertFalse(state["evidence"]["selection"]["approval"]["human_artistic_approval"]);self.assertEqual(state["stage"],"failed");client_factory.assert_not_called();self.assertTrue((root/"jobs/design-gate/design-review/design-review-sheet.png").is_file())
             product_orchestrator.validate_candidate_uniqueness(candidates)
             with self.assertRaisesRegex(ValidationError,"distinct image hashes"):product_orchestrator.validate_candidate_uniqueness([candidates[0],{**candidates[1],"png_sha256":candidates[0]["png_sha256"]}])
+
+    def test_multiline_phrase_survives_normalization_generation_and_all_layouts(self):
+        prompt="Exact phrase:\r\n  UNREALIZED   LOSSES  \r\n REAL COMFORT \r\n\r\nBold centered retro typography for market traders"
+        brief=product_orchestrator.normalize_prompt(prompt);self.assertEqual(brief["exact_text"],"UNREALIZED LOSSES\nREAL COMFORT")
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);state={"job_id":"multiline","original_prompt":prompt};evidence=product_orchestrator._independent_evidence(state,root,brief)
+            candidates=product_orchestrator._independent_candidates(evidence,root/"design-candidates",brief)
+            self.assertEqual({item["layout_id"] for item in candidates},{"prompt_centered","prompt_balanced","prompt_compact"})
+            for item in candidates:
+                self.assertEqual(item["rendered_text_lines"],["UNREALIZED LOSSES","REAL COMFORT"]);self.assertTrue(item["phrase_adherence_passed"]);self.assertFalse(item["missing_tokens"])
+                self.assertIn("UNREALIZED LOSSES",item["rendered_phrase"]);self.assertIn("REAL COMFORT",item["rendered_phrase"]);self.assertIn("UNREALIZED LOSSES\nREAL COMFORT",item["generation_prompt"])
+
+    def test_phrase_adherence_reports_missing_second_line_and_accepts_complete_rendering(self):
+        expected="UNREALIZED LOSSES\nREAL COMFORT"
+        missing=product_orchestrator.phrase_adherence_evidence(expected,"UNREALIZED LOSSES",["UNREALIZED LOSSES"]);self.assertFalse(missing["phrase_adherence_passed"]);self.assertEqual(missing["missing_tokens"],["REAL","COMFORT"])
+        complete=product_orchestrator.phrase_adherence_evidence(expected,"UNREALIZED LOSSES REAL COMFORT",["UNREALIZED LOSSES","REAL COMFORT"]);self.assertTrue(complete["phrase_adherence_passed"]);self.assertFalse(complete["unexpected_tokens"])
+        candidates=[{"candidate_id":name,"composition_family":name,"rendered_phrase":"UNREALIZED LOSSES","rendered_text_lines":["UNREALIZED LOSSES"],"prompt_validation":{"compliant":True},"png_path":"/missing","png_sha256":name} for name in ("centered","balanced","compact")]
+        with self.assertRaises(Exception) as raised:product_orchestrator.validate_candidate_set(candidates,{"exact_text":expected},[])
+        self.assertEqual(raised.exception.user_message,"All candidates omitted the required phrase ‘REAL COMFORT’.")
+        for row in raised.exception.context["candidate_diversity"]["candidates"]:
+            self.assertEqual(row["missing_tokens"],["REAL","COMFORT"]);self.assertFalse(row["phrase_adherence_passed"]);self.assertTrue(row["rejection_reasons"])
 
     def test_review_and_approval_are_local_and_hash_bound(self):
         with tempfile.TemporaryDirectory() as temporary:

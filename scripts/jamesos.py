@@ -32,6 +32,7 @@ def _main(workflow: CommerceWorkflow | None = None, scheduler: SchedulerService 
     for name in ("prepare","status","review"):
         command=commands.add_parser(name);command.add_argument("--job-id",required=True)
         if name=="review":command.add_argument("--open",action="store_true")
+    inspect_draft=commands.add_parser("inspect-draft");inspect_draft.add_argument("--job-id",required=True)
     for name in ("approve","request-changes"):
         command=commands.add_parser(name);command.add_argument("--job-id",required=True);command.add_argument("--proposal-sha256",required=True)
         command.add_argument("--confirm",action="store_true")
@@ -107,6 +108,7 @@ def _main(workflow: CommerceWorkflow | None = None, scheduler: SchedulerService 
         elif args.command=="resume-revision":
             result=CommerceRevisionService(service).resume(args.job_id)
             if args.open and result.get("review_url"):webbrowser.open(result["review_url"])
+        elif args.command=="inspect-draft":result=service.orchestrator.inspect_draft(args.job_id)
         else:
             result=getattr(service,args.command)(args.job_id)
             if args.command=="review" and args.open:webbrowser.open(result["review_url"])

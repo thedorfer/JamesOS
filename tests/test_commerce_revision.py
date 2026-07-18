@@ -50,6 +50,7 @@ class CommerceRevisionTests(unittest.TestCase):
                 else:draw.rectangle((20,20,180,50),fill=(91,206,250,255));draw.rectangle((20,150,180,180),fill=(245,169,184,255))
                 image.save(target);image.close();rows.append({"candidate_id":f"candidate-{index}","png_path":str(target),"png_sha256":product_orchestrator._file_sha(target),
                     "composition_family":family,"layout_id":family,"treatment_id":family,"quality_checks":{"hard_phrase_correct":True,"hard_safe_bounds":True,"hard_artwork_integrity":True},
+                    "rendered_phrase":brief["exact_text"],"rendered_text_lines":brief["exact_text"].splitlines(),
                     "prompt_validation":{"compliant":True,"negative_constraint_violations":[]},"prompt_adherence_score":40,"thumbnail_readability_score":10,"garment_contrast_score":10,"balanced_bounds_score":10})
             return rows
         adapters=product_orchestrator.Adapters(independent_evidence=evidence,independent_candidates=candidates,client_factory=lambda:client)
