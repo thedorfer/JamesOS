@@ -9,12 +9,15 @@ import uvicorn
 
 from jamesos.core.api import app
 from jamesos.core.memory_routes import router as memory_router
+from jamesos.services.access_policy import AccessPolicy
 
 app.include_router(memory_router)
 
+policy = AccessPolicy.from_runtime_env()
+
 uvicorn.run(
     app,
-    host="0.0.0.0",
+    host=policy.bind_host,
     port=8787,
     reload=False,
 )

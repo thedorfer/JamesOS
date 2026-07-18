@@ -63,6 +63,8 @@ journalctl --user -u jamesos -f
 
 Commerce generation creates an unpublished draft, never an order. Publication requires an explicit destination-specific confirmation. Job destinations are immutable, profile defaults do not overwrite manual edits, and local validation runs before provider writes.
 
+Commerce brands use the generic `commerce_shop` profile type with separate immutable shop destinations.
+
 Start with the [documentation index](docs/INDEX.md), [architecture](docs/ARCHITECTURE.md), [web application](docs/WEB_APPLICATION.md), and [security model](docs/SECURITY_MODEL.md).
 
 ## License

@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-18
 
-- JamesOS is localhost-first and reached remotely through an SSH tunnel, never direct public exposure.
+- JamesOS is loopback-first. Private remote access may use an SSH tunnel or explicitly configured Tailscale Serve; direct public exposure and Tailscale Funnel are prohibited. LAN mode requires exact hosts, origins, and CIDRs and fails closed when incomplete.
 - Mutating browser routes preserve CSRF/same-origin protections and bounded inputs.
 - Model output is schema-validated and cannot provide executable UI, shell, selector, URL, or theme content.
 - Authority order is Jade/system policy, immutable job bindings, user confirmation, then bounded agent suggestions.

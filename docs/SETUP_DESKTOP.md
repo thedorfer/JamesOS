@@ -38,6 +38,30 @@ ssh -N -L 8787:127.0.0.1:8787 james@DESKTOP
 
 Browse to `http://127.0.0.1:8787/app` on the ThinkBook. Never expose JamesOS directly to the public internet.
 
+## Private-network access
+
+Access defaults to `loopback`; in that mode the server binds `127.0.0.1` and rejects non-loopback clients, hosts, and origins. Optional settings are read from `~/JamesOSData/JamesOS/runtime.env`:
+
+```dotenv
+JAMESOS_ACCESS_MODE=tailnet
+JAMESOS_TRUSTED_HOSTS=james.example-tailnet.ts.net
+JAMESOS_TRUSTED_ORIGINS=https://james.example-tailnet.ts.net
+JAMESOS_ALLOWED_NETWORKS=
+```
+
+Use `tailnet` only with Tailscale Serve proxying to the loopback listener. Configure the exact HTTPS origin and Host value; do not use wildcards. JamesOS accepts Tailscale identity headers only on the direct loopback proxy connection and does not treat arbitrary forwarded headers as authentication. Tailscale Funnel/public sharing is out of scope and must remain disabled.
+
+`lan` mode binds broadly only when trusted hosts, trusted origins, and explicit CIDRs are all valid. It never allows all RFC1918 networks implicitly:
+
+```dotenv
+JAMESOS_ACCESS_MODE=lan
+JAMESOS_TRUSTED_HOSTS=james-desktop.lan:8787
+JAMESOS_TRUSTED_ORIGINS=http://james-desktop.lan:8787
+JAMESOS_ALLOWED_NETWORKS=192.168.50.0/24
+```
+
+Plain HTTP LAN access is visibly warned and should be replaced with private HTTPS where practical. Unsafe or incomplete configuration fails closed. These settings do not weaken CSRF, provider confirmations, immutable destinations, publication safeguards, system locks, or the no-order guarantee.
+
 ## Restart and rollback
 
 Run tests, preserve the known-good commit, restart the user service, inspect `/health`, `/app`, and logs, and roll back the Git revision plus restart if acceptance fails. Restarting never bypasses provider confirmation or immutable job binding.
