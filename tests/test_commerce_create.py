@@ -71,5 +71,34 @@ class CommerceCreateTests(unittest.TestCase):
             state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={},last_error={"user_message":"Safe provider-free failure"},stage_output={"user_message":"lower priority"});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
             status=service.safe_status(queued["job_id"]);self.assertEqual(status["failure_message_safe"],"Safe provider-free failure");self.assertTrue(status["retry_allowed"]);self.assertFalse(status["printify_draft_exists"])
 
+    def test_existing_draft_resume_uses_bound_shop_and_never_creates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client=Mock();client.get_product.return_value={"id":"existing-product","shop_id":28275232,"title":"Draft","tags":["job-marker"]}
+            client.create_product.side_effect=AssertionError("must not create a second product")
+            orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:client));workflow=Mock(orchestrator=orch)
+            workflow.prepare.return_value={"proposal_sha256":"a"*64};workflow.review.return_value={"review_url":"/review/existing"}
+            p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(workflow,profile_loader=lambda pid,required=True:p)
+            job_id="existing-draft";state={"job_id":job_id,"commerce_profile_id":"bagholder-supply","shop_id":28275232,"destination":{"printify_shop_id":28275232},
+                "stage":"generation_failed","generation_failure":{"external_result_uncertain":False},"publish_status":"not_published","order_status":"not_created","revision_number":0,
+                "evidence":{"draft":{"printify_product_id":"existing-product","draft_marker":"job-marker"}},"transitions":[]}
+            product_orchestrator._atomic_json(orch._path(job_id),state);journal=orch._path(job_id).parent/"unified-preparation.json"
+            product_orchestrator._atomic_json(journal,{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":False}]})
+            resumed={**state,"stage":"awaiting_human_approval"};orch.resume=Mock(return_value=resumed);orch.review_draft=Mock(return_value={"result":"reviewed"})
+            result=service.resume_existing_draft(job_id)
+            self.assertTrue(result["existing_product_reused"]);client.get_product.assert_called_once_with(28275232,"existing-product");client.create_product.assert_not_called();orch.review_draft.assert_called_once_with(job_id)
+            orch.resume.assert_called_once_with(job_id,confirm_printify_draft=True);workflow.prepare.assert_called_once_with(job_id)
+            state["stage"]="awaiting_final_approval";product_orchestrator._atomic_json(orch._path(job_id),state)
+            repeated=service.resume_existing_draft(job_id);self.assertTrue(repeated["already_completed"]);self.assertEqual(orch.resume.call_count,1)
+
+    def test_uncertain_existing_draft_requires_manual_verification(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client=Mock(side_effect=AssertionError("uncertain recovery must not call provider"));orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=client));workflow=Mock(orchestrator=orch)
+            p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(workflow,profile_loader=lambda pid,required=True:p);job_id="uncertain-draft"
+            state={"job_id":job_id,"commerce_profile_id":"bagholder-supply","shop_id":28275232,"destination":{"printify_shop_id":28275232},"stage":"generation_failed","publish_status":"not_published","order_status":"not_created","evidence":{"draft":{"printify_product_id":"existing-product"}},"transitions":[]}
+            product_orchestrator._atomic_json(orch._path(job_id),state);product_orchestrator._atomic_json(orch._path(job_id).parent/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"uncertain","uncertain":True}]})
+            with self.assertRaises(Exception) as raised:service.resume_existing_draft(job_id)
+            self.assertIn("Manual verification required",raised.exception.diagnostic_message);client.assert_not_called()
+            status=service.safe_status(job_id);self.assertTrue(status["manual_verification_required"]);self.assertFalse(status["resume_existing_draft_allowed"])
+
 
 if __name__=="__main__":unittest.main()
