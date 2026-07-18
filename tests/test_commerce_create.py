@@ -64,5 +64,12 @@ class CommerceCreateTests(unittest.TestCase):
             service=CommerceCreationService(workflow,profile_loader=lambda pid,required=True:p);queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="private brief",destination_confirmed=True)
             status=service.safe_status(queued["job_id"]);self.assertEqual(status["stage"],"generation_queued");self.assertEqual(status["etsy_shop_slug"],"BagholdersSupplyCo");self.assertNotIn("brief",json.dumps(status).casefold())
 
+    def test_safe_status_uses_failure_message_fallbacks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=Mock()));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo")
+            service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p);queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="private brief",destination_confirmed=True)
+            state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={},last_error={"user_message":"Safe provider-free failure"},stage_output={"user_message":"lower priority"});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
+            status=service.safe_status(queued["job_id"]);self.assertEqual(status["failure_message_safe"],"Safe provider-free failure");self.assertTrue(status["retry_allowed"]);self.assertFalse(status["printify_draft_exists"])
+
 
 if __name__=="__main__":unittest.main()

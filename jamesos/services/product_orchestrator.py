@@ -174,10 +174,10 @@ def generate_listing(brief: dict[str, Any], selected: dict[str, Any]) -> dict[st
         "human rights shirt" if "rights" in subject_words else "message shirt","activist apparel" if "rights" in subject_words else "meaningful apparel",
         "unisex graphic tee","front print shirt","statement apparel","rights equality tee" if "rights" in subject_words else "uplifting graphic tee",
         "cause awareness tee" if "rights" in subject_words else "positive message tee",*motifs])
-    tags=sanitize_printify_tags([item for item in candidates if len(item)<=20],phrase=phrase,blank=brief.get("blank"))[:13]
-    if len(tags)!=13:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Fresh listing generation did not produce exactly 13 relevant tags.",operation="product_orchestrator",stage="listing_ready")
+    raw_tags=list(candidates)
+    tags=sanitize_printify_tags([item for item in raw_tags if len(" ".join(str(item).split()))<=20 and len(" ".join(str(item).split()).split())>=2],phrase=phrase,blank=brief.get("blank"))[:13]
     return {"title": f"{exact} Unisex Tee", "description": f"A product-specific {brief['visual_style']} typography design featuring the exact phrase “{phrase}” on a {brief['blank']} unisex tee.".strip(),
-        "tags":tags,
+        "raw_generated_tags":raw_tags,"tags":tags,
         "price_cents": brief["price_cents"], "currency": brief["currency"], "colors": brief["garment_colors"], "sizes": brief["sizes"],
         "blank": brief["blank"], "print_provider": brief["print_provider"], "selected_design_sha256": selected["png_sha256"],
         "draft_status": "not_published", "order_status": "not_created"}
@@ -196,6 +196,55 @@ def sanitize_printify_tags(tags: list[Any] | None, *, phrase: str="", blank: str
             clean=" ".join(value.split())
             if clean and clean.casefold() not in seen:seen.add(clean.casefold());result.append(clean)
     return result
+
+
+def finalize_listing_tags(raw_tags: list[Any] | None, profile: dict[str, Any], title: str) -> dict[str, Any]:
+    """Select exactly 13 marketplace-valid tags without crossing a provider boundary."""
+    raw=list(raw_tags or []);normalized=[];rejected=[];duplicates=[];seen=set()
+    def consider(value: Any, source: str) -> str | None:
+        clean=" ".join(str(value).split())
+        folded=clean.casefold()
+        if not clean:rejected.append({"value":str(value),"source":source,"reason":"empty"});return None
+        if folded in seen:duplicates.append({"value":clean,"source":source,"reason":"case_insensitive_duplicate"});return None
+        reasons=[]
+        if len(clean)>20:reasons.append("exceeds_20_characters")
+        if len(clean.split())<2:reasons.append("requires_at_least_two_words")
+        if "jamesos" in folded:reasons.append("contains_private_name")
+        if reasons:rejected.append({"value":clean,"source":source,"reasons":reasons});return None
+        seen.add(folded);return clean
+    for value in raw:
+        clean=consider(value,"generated")
+        if clean:normalized.append(clean)
+    final=list(normalized[:13]);config=profile.get("configuration") or {};profile_used=[]
+    for value in config.get("listing_tags") or []:
+        if len(final)>=13:break
+        clean=consider(value,"profile")
+        if clean:final.append(clean);profile_used.append(clean)
+    niche=str(config.get("niche") or profile.get("niche") or "").replace("_"," ")
+    title_words=[word.casefold() for word in re.findall(r"[A-Za-z0-9]+",str(title)) if len(word)>2 and word.casefold() not in {"unisex","shirt","tee"}]
+    niche_words=[word.casefold() for word in re.findall(r"[A-Za-z0-9]+",niche) if len(word)>2]
+    derived=[]
+    seeds=[]
+    if title_words:
+        seeds.extend([f"{' '.join(title_words[:2])} shirt",f"{' '.join(title_words[:2])} tee",f"{title_words[0]} gift"])
+    if niche_words:
+        seeds.extend([f"{' '.join(niche_words[:2])} shirt",f"{niche_words[0]} gift",f"{niche_words[0]} humor"])
+    for value in seeds:
+        if len(final)>=13:break
+        clean=consider(value,"derived")
+        if clean:final.append(clean);derived.append(clean)
+    diagnostics={"raw_generated_tags":raw,"normalized_generated_tags":normalized,"rejected_tags":rejected,"duplicate_tags":duplicates,
+        "profile_fallback_tags_used":profile_used,"derived_fallback_tags_used":derived,"final_listing_tags":final}
+    if len(final)!=13:
+        reason_counts={}
+        for item in rejected:
+            for reason in item.get("reasons") or [item.get("reason")]:reason_counts[reason]=reason_counts.get(reason,0)+1
+        diagnostic=(f"Fresh listing generation could not produce exactly 13 relevant tags: raw tag count={len(raw)}; "
+            f"normalized unique count={len(normalized)}; rejected tag count={len(rejected)} reasons={reason_counts}; "
+            f"fallback count={len(profile_used)+len(derived)}; final count={len(final)}.")
+        raise ValidationError("VALIDATION_FAILED",diagnostic_message=diagnostic,user_message=diagnostic,operation="commerce_preparation",stage="listing_metadata",
+            context={**diagnostics,"external_write_performed":False})
+    return diagnostics
 
 
 def create_variant_payload(catalog: dict[str,Any],selected_ids:list[int],price:int)->list[dict[str,Any]]:

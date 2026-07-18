@@ -9,7 +9,7 @@ from jamesos.core.errors import StateConflictError, ValidationError
 from jamesos.core.profiles.selection import load_commerce_profile
 from jamesos.services import product_orchestrator
 from jamesos.services.commerce_workflow import CommerceWorkflow, _atomic_json
-from jamesos.services.product_orchestrator import ProductOrchestrator, validate_listing_metadata
+from jamesos.services.product_orchestrator import ProductOrchestrator, finalize_listing_tags, validate_listing_metadata
 
 
 def _now() -> str:return datetime.now().astimezone().isoformat()
@@ -51,7 +51,18 @@ class UnifiedCommercePreparation:
         diversity=evidence.get("candidate_diversity") or {}
         if diversity and not any(item.get("eligible") for item in diversity.get("candidates") or []):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="artwork_revision_required: no candidate passed prompt-adherence and novelty checks.",operation="commerce_preparation",stage="artwork")
-        listing=self.listing_generator(state["brief"],selected);validate_listing_metadata(state,"commerce_preparation",listing)
+        listing=self.listing_generator(state["brief"],selected)
+        raw_tags=listing.get("raw_generated_tags",listing.get("tags") or [])
+        try:tag_diagnostics=finalize_listing_tags(raw_tags,profile,str(listing.get("title") or ""))
+        except ValidationError as exc:
+            tag_diagnostics={key:exc.context.get(key,[]) for key in ("raw_generated_tags","normalized_generated_tags","rejected_tags","duplicate_tags","profile_fallback_tags_used","final_listing_tags")}
+            state.update(tag_diagnostics);state["stage_output"]={**(state.get("stage_output") or {}),"user_message":exc.user_message,"listing_tag_diagnostics":tag_diagnostics}
+            product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+            raise
+        listing["tags"]=tag_diagnostics["final_listing_tags"]
+        listing["tag_diagnostics"]=tag_diagnostics
+        state.update({key:tag_diagnostics[key] for key in ("raw_generated_tags","normalized_generated_tags","rejected_tags","duplicate_tags","profile_fallback_tags_used","final_listing_tags")})
+        validate_listing_metadata(state,"commerce_preparation",listing)
         evidence["listing"]=listing;state["profile_id"]=selected_profile;state["selected_profile_id"]=selected_profile
         state["commerce_profile_binding"]={"profile_id":selected_profile,"provider":config.get("provider_type","printify"),
             "marketplace":config.get("marketplace_type") or config.get("expected_marketplace"),"shop_id":shop_id,

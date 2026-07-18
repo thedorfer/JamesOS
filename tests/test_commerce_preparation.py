@@ -41,10 +41,29 @@ class FakeWorkflow:
 
 
 def profile(required=True):
-    return {"profile_id":"private-profile","profile_type":"commerce_shop","configuration":{"printify_shop_id":123}}
+    return {"profile_id":"private-profile","profile_type":"commerce_shop","configuration":{"printify_shop_id":123,
+        "listing_tags":["stock market shirt","bagholder shirt","trader humor tee","investor gift","finance joke shirt","market crash tee","wall street humor","stock trader gift","buy the dip shirt","bear market shirt","bull market tee","investment humor","finance nerd gift"]}}
 
 
 class UnifiedCommercePreparationTests(unittest.TestCase):
+    def test_generated_ten_tags_are_completed_from_bound_profile_before_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)
+            generated=[f"generated tag {index}" for index in range(10)]
+            def listing(brief,selected):return {"title":"Market Humor Tee","description":"Relevant market design","tags":generated,"price_cents":2499}
+            result=UnifiedCommercePreparation(orchestrator,workflow=workflow,profile_loader=profile,listing_generator=listing).create(prompt="Market humor",authorize_draft_work=False)
+            state=orchestrator.load(result["job_id"])
+            self.assertEqual(len(state["final_listing_tags"]),13);self.assertEqual(state["profile_fallback_tags_used"],profile()["configuration"]["listing_tags"][:3])
+            self.assertEqual(orchestrator.resume_calls,0)
+
+    def test_tag_shortage_is_persisted_and_fails_before_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)
+            bad_profile=lambda required=True:{"profile_id":"private-profile","profile_type":"commerce_shop","configuration":{"printify_shop_id":123,"listing_tags":["bad"]}}
+            def listing(brief,selected):return {"title":"","description":"Relevant design","tags":["only valid"],"price_cents":2499}
+            with self.assertRaises(Exception):UnifiedCommercePreparation(orchestrator,workflow=workflow,profile_loader=bad_profile,listing_generator=listing).create(prompt="Market humor",authorize_draft_work=True)
+            state=orchestrator.load("unified-job");self.assertEqual(orchestrator.resume_calls,0)
+            self.assertEqual(state["final_listing_tags"],["only valid"]);self.assertTrue(state["rejected_tags"])
     def test_local_then_authorized_resume_is_bounded_and_idempotent(self):
         with tempfile.TemporaryDirectory() as temporary:
             orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)

@@ -82,7 +82,7 @@ class CommerceCreationService:
         preparation=UnifiedCommercePreparation(self.orchestrator,workflow=self.workflow,profile_loader=loader,listing_generator=listing_generator)
         try:result=preparation.create(prompt=None,resume_job_id=job_id,authorize_draft_work=True)
         except Exception as exc:
-            state=self.orchestrator.load(job_id);state["stage"]="generation_failed";state["generation_failure"]={"safe_message":"Product generation did not complete.","external_result_uncertain":any(item.get("uncertain") for item in json.loads((self.orchestrator._path(job_id).parent/"unified-preparation.json").read_text()).get("provider_actions") or []) if (self.orchestrator._path(job_id).parent/"unified-preparation.json").is_file() else False};product_orchestrator._atomic_json(self.orchestrator._path(job_id),state);raise
+            state=self.orchestrator.load(job_id);state["stage"]="generation_failed";safe_message=str(getattr(exc,"user_message","") or getattr(exc,"diagnostic_message","") or "Product generation did not complete.");state["generation_failure"]={"safe_message":safe_message,"external_result_uncertain":any(item.get("uncertain") for item in json.loads((self.orchestrator._path(job_id).parent/"unified-preparation.json").read_text()).get("provider_actions") or []) if (self.orchestrator._path(job_id).parent/"unified-preparation.json").is_file() else False};product_orchestrator._atomic_json(self.orchestrator._path(job_id),state);raise
         state=self.orchestrator.load(job_id);state["stage"]="awaiting_final_approval";state["provider_write_status"]="completed";state["revision_number"]=max(1,int(state.get("revision_number") or 0));product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         return result
 
@@ -91,7 +91,10 @@ class CommerceCreationService:
         labels={"generation_queued":"Queued","generating_artwork":"Generating artwork…","preparing_listing":"Preparing listing…","uploading_artwork":"Uploading artwork…","creating_printify_draft":"Creating unpublished draft…","retrieving_mockups":"Retrieving mockups…","revision_requested":"Revision queued…","revision_generating_artwork":"Revising artwork…","revision_artwork_selected":"Preparing revised listing…","revision_provider_update_started":"Updating existing draft…","revision_provider_update_verified":"Retrieving revision mockups…","revision_mockups_ready":"Preparing revised proposal…","awaiting_final_approval":"Ready for review","generation_failed":"Generation failed","revision_failed":"Revision failed"}
         review_url=None
         if stage=="awaiting_final_approval":review_url=self.workflow.review(job_id)["review_url"]
+        failure_message=(state.get("generation_failure") or {}).get("safe_message") or (state.get("last_error") or {}).get("user_message") or (state.get("stage_output") or {}).get("user_message")
+        draft=(state.get("evidence") or {}).get("draft") or {};uncertain=bool((state.get("generation_failure") or {}).get("external_result_uncertain"))
         return {"job_id":job_id,"stage":stage,"progress_label":labels.get(stage,stage.replace("_"," ").title()),"revision_number":state.get("revision_number",0),
             "brand_display_name":state.get("brand_display_name"),"printify_shop_title":destination.get("printify_shop_title"),"printify_shop_id":destination.get("printify_shop_id"),"etsy_shop_slug":destination.get("etsy_shop_slug"),
-            "ready_for_review":stage=="awaiting_final_approval","failed":stage.endswith("_failed"),"failure_message_safe":(state.get("generation_failure") or {}).get("safe_message"),"review_url":review_url,
+            "ready_for_review":stage=="awaiting_final_approval","failed":stage.endswith("_failed"),"failure_message_safe":failure_message,"review_url":review_url,
+            "printify_draft_exists":bool(draft.get("printify_product_id")),"retry_allowed":stage.endswith("_failed") and not uncertain,
             "publication_status":state.get("publish_status"),"order_status":state.get("order_status")}

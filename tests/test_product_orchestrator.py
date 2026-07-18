@@ -125,6 +125,28 @@ class ProductOrchestratorTests(unittest.TestCase):
         fallback=product_orchestrator.sanitize_printify_tags([],phrase="YOU ARE SAFE WITH ME",blank="Bella+Canvas 3001")
         self.assertEqual(fallback[0],"you are safe with me");self.assertTrue(all(tag.strip() for tag in fallback));self.assertIn("unisex tee",fallback)
 
+    def test_listing_tag_finalization_normalizes_ranks_and_fills(self):
+        generated=["  Alpha   Shirt  ","alpha shirt","Beta Tee",3,"",None,"x","this tag is much too long for etsy"]
+        fallback=["Beta Tee","Gamma Gift","Delta Shirt","Epsilon Tee","Zeta Gift","Eta Shirt","Theta Tee","Iota Gift","Kappa Shirt","Lambda Tee","Mu Gift","Nu Shirt","Xi Tee","Omicron Gift"]
+        result=product_orchestrator.finalize_listing_tags(generated,{"configuration":{"listing_tags":fallback}},"Alpha Beta")
+        self.assertEqual(len(result["final_listing_tags"]),13)
+        self.assertEqual(len({tag.casefold() for tag in result["final_listing_tags"]}),13)
+        self.assertEqual(result["normalized_generated_tags"][:2],["Alpha Shirt","Beta Tee"])
+        self.assertTrue(result["duplicate_tags"]);self.assertTrue(result["rejected_tags"])
+        self.assertNotIn("Beta Tee",result["profile_fallback_tags_used"])
+
+    def test_listing_tag_finalization_keeps_first_thirteen_valid(self):
+        generated=[f"topic {index}" for index in range(20)]
+        result=product_orchestrator.finalize_listing_tags(generated,{"configuration":{"listing_tags":[]}},"Topic Shirt")
+        self.assertEqual(result["final_listing_tags"],generated[:13])
+
+    def test_listing_tag_finalization_shortage_has_specific_diagnostic(self):
+        with self.assertRaises(Exception) as raised:
+            product_orchestrator.finalize_listing_tags(["one"," ","Only One"],{"configuration":{"listing_tags":[]}},"")
+        message=raised.exception.diagnostic_message
+        for field in ("raw tag count=","normalized unique count=","rejected tag count=","fallback count=","final count="):self.assertIn(field,message)
+        self.assertFalse(raised.exception.context["external_write_performed"])
+
     def test_prompt_constraints_novelty_and_fresh_listing_are_hard_gates(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);first=root/"first.png";same=root/"same.png";recolor=root/"recolor.png";different=root/"different.png"
