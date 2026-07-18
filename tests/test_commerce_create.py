@@ -57,6 +57,8 @@ class CommerceCreateTests(unittest.TestCase):
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"_require_local"):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new")
         self.assertEqual(response.status_code,200);self.assertEqual(response.text.count("type='radio'"),2);self.assertIn("28275232",response.text);self.assertIn("9437076",response.text);self.assertIn("Bagholder &lt;Shop&gt;",response.text);self.assertNotIn("Bagholder <Shop>",response.text)
+        self.assertIn("JamesOS Product Studio",response.text);self.assertNotIn("Commerce Copilot",response.text);self.assertIn("Ask Product Studio",response.text)
+        self.assertIn("Thinking…",response.text);self.assertIn("if(inFlight)return",response.text);self.assertNotIn("11434",response.text);self.assertIn("data-request-state='idle'",response.text)
 
     def test_safe_status_exposes_destination_not_prompt(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -99,6 +101,26 @@ class CommerceCreateTests(unittest.TestCase):
             with self.assertRaises(Exception) as raised:service.resume_existing_draft(job_id)
             self.assertIn("Manual verification required",raised.exception.diagnostic_message);client.assert_not_called()
             status=service.safe_status(job_id);self.assertTrue(status["manual_verification_required"]);self.assertFalse(status["resume_existing_draft_allowed"])
+
+    def test_review_ready_history_opens_same_product_without_provider_write(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client=Mock();client.get_product.return_value={"id":"existing-product","shop_id":28275232,"title":"Draft job-marker","tags":[],"order_status":"not_created"}
+            client.create_product.side_effect=AssertionError("review open must not create");client.update_product.side_effect=AssertionError("review open must not update")
+            orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:client));workflow=Mock(orchestrator=orch)
+            workflow.review.side_effect=lambda job_id:{"review_url":f"/review/{job_id}/{workflow.review.call_count}","proposal_sha256":"a"*64}
+            p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(workflow,profile_loader=lambda pid,required=True:p);job_id="review-ready"
+            job_root=orch._path(job_id).parent;mockup=job_root/"mockup.jpg";mockup.parent.mkdir(parents=True);mockup.write_bytes(b"image")
+            visual=job_root/"visual-review"/"visual-review.json";visual.parent.mkdir();visual.write_text(json.dumps({"product_id":"existing-product"}))
+            proposal=job_root/"commerce-proposal"/"current.json";proposal.parent.mkdir();proposal.write_text(json.dumps({"proposal_sha256":"a"*64,"approval_eligible":True,"superseded":False}))
+            state={"job_id":job_id,"commerce_profile_id":"bagholder-supply","shop_id":28275232,"destination":{"printify_shop_id":28275232},"stage":"generation_failed",
+                "publish_status":"not_published","order_status":"not_created","evidence":{"draft":{"printify_product_id":"existing-product","draft_marker":"job-marker"},"mockups":[{"local_path":str(mockup)}]},
+                "transitions":[{"stage":"awaiting_human_approval","result":"completed"}]}
+            product_orchestrator._atomic_json(orch._path(job_id),state);product_orchestrator._atomic_json(job_root/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":False}]})
+            orch.review_draft=Mock()
+            status=service.safe_status(job_id);self.assertEqual(status["terminal_outcome"],"review_ready");self.assertTrue(status["open_product_review_allowed"]);self.assertFalse(status["resume_existing_draft_allowed"])
+            first=service.open_product_review(job_id);self.assertEqual(first["printify_product_id"],"existing-product");self.assertEqual(orch.load(job_id)["stage"],"awaiting_final_approval")
+            second=service.open_product_review(job_id);self.assertTrue(second["already_completed"]);self.assertEqual(workflow.review.call_count,2)
+            orch.review_draft.assert_not_called();workflow.prepare.assert_not_called();client.create_product.assert_not_called();client.update_product.assert_not_called()
 
 
 if __name__=="__main__":unittest.main()

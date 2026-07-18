@@ -98,13 +98,45 @@ class CommerceCreationService:
             try:uncertain=uncertain or any(item.get("uncertain") for item in json.loads(journal_path.read_text(encoding="utf-8")).get("provider_actions") or [])
             except (OSError,ValueError):uncertain=True
         completed=[item.get("stage") for item in state.get("transitions") or [] if item.get("result")=="completed"]
+        last_completed=completed[-1] if completed else None;review_alias=last_completed in {"awaiting_human_approval","awaiting_final_approval"}
+        review_ready_history=stage=="generation_failed" and review_alias and bool(draft.get("printify_product_id")) and state.get("publish_status")=="not_published" and state.get("order_status")=="not_created" and not uncertain
+        terminal_outcome="uncertain" if uncertain else "review_ready" if review_ready_history else "recoverable" if stage.endswith("_failed") and draft.get("printify_product_id") else "failure"
         return {"job_id":job_id,"stage":stage,"progress_label":labels.get(stage,stage.replace("_"," ").title()),"revision_number":state.get("revision_number",0),
             "brand_display_name":state.get("brand_display_name"),"printify_shop_title":destination.get("printify_shop_title"),"printify_shop_id":destination.get("printify_shop_id"),"etsy_shop_slug":destination.get("etsy_shop_slug"),
             "ready_for_review":stage=="awaiting_final_approval","failed":stage.endswith("_failed"),"failure_message_safe":failure_message,"review_url":review_url,
             "printify_draft_exists":bool(draft.get("printify_product_id")),"printify_product_id":draft.get("printify_product_id"),
-            "last_completed_stage":completed[-1] if completed else None,"manual_verification_required":uncertain,
-            "retry_allowed":stage.endswith("_failed") and not uncertain and not draft.get("printify_product_id"),"resume_existing_draft_allowed":stage.endswith("_failed") and not uncertain and bool(draft.get("printify_product_id")),
+            "last_completed_stage":last_completed,"manual_verification_required":uncertain,"terminal_outcome":terminal_outcome,
+            "open_product_review_allowed":review_ready_history,"retry_allowed":stage.endswith("_failed") and not uncertain and not draft.get("printify_product_id"),
+            "resume_existing_draft_allowed":stage.endswith("_failed") and not uncertain and bool(draft.get("printify_product_id")) and not review_ready_history,
             "publication_status":state.get("publish_status"),"order_status":state.get("order_status")}
+
+    def open_product_review(self,job_id:str)->dict[str,Any]:
+        state=self.orchestrator.load(job_id)
+        if state.get("stage")=="awaiting_final_approval":return {"result":"commerce_review_ready","job_id":job_id,"already_completed":True,**self.workflow.review(job_id)}
+        status=self.safe_status(job_id)
+        if not status.get("open_product_review_allowed"):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Job history is not eligible for review-ready restoration.",operation="commerce_creation.open_review",stage="classification")
+        profile=self._profile(str(state.get("commerce_profile_id") or ""));config=profile["configuration"];destination=state.get("destination") or {};shop_id=destination.get("printify_shop_id")
+        draft=(state.get("evidence") or {}).get("draft") or {};product_id=draft.get("printify_product_id")
+        if shop_id!=state.get("shop_id") or shop_id!=config.get("printify_shop_id"):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Job-bound Printify destination verification failed.",operation="commerce_creation.open_review",stage="destination")
+        client=self.orchestrator.adapters.client_factory();remote=client.get_product(shop_id,product_id)
+        marker=draft.get("draft_marker") or (state.get("evidence") or {}).get("draft_marker");marker_present=bool(marker and marker in " ".join([str(remote.get("title") or ""),*(str(x) for x in remote.get("tags") or [])]))
+        if remote.get("id")!=product_id or remote.get("shop_id") not in (None,shop_id) or not (marker_present or product_orchestrator.replacement_ownership_matches(state,remote,product_id)):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Confirmed Printify draft does not match the job binding.",operation="commerce_creation.open_review",stage="draft_verification")
+        if state.get("publish_status")!="not_published" or state.get("order_status")!="not_created" or remote.get("order_status") not in (None,"not_created") or remote.get("orders"):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Only an unpublished draft with no order can be opened for review.",operation="commerce_creation.open_review",stage="publication")
+        root=self.orchestrator._path(job_id).parent;mockups=(state.get("evidence") or {}).get("mockups") or []
+        visual_path=root/"visual-review"/"visual-review.json"
+        try:visual=json.loads(visual_path.read_text(encoding="utf-8"))
+        except (OSError,ValueError):visual={}
+        mockups_current=bool(mockups) and all(Path(str(item.get("local_path") or "")).is_file() for item in mockups) and visual.get("product_id")==product_id
+        state.update(stage="awaiting_human_approval",generation_failure=None);product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        if not mockups_current:self.orchestrator.review_draft(job_id)
+        current=root/"commerce-proposal"/"current.json"
+        try:proposal=json.loads(current.read_text(encoding="utf-8"))
+        except (OSError,ValueError):proposal={}
+        if proposal.get("approval_eligible") is not True or proposal.get("superseded") is True:prepared=self.workflow.prepare(job_id)
+        else:prepared={"proposal_sha256":proposal.get("proposal_sha256")}
+        state=self.orchestrator.load(job_id);state.update(stage="awaiting_final_approval",generation_failure=None,provider_write_status="completed");product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        review=self.workflow.review(job_id)
+        return {"result":"commerce_review_ready","job_id":job_id,"proposal_sha256":prepared["proposal_sha256"],"review_url":review["review_url"],"existing_product_reused":True,"printify_product_id":product_id,"publication_status":"not_published","order_status":"not_created"}
 
     def resume_existing_draft(self,job_id:str)->dict[str,Any]:
         state=self.orchestrator.load(job_id);profile=self._profile(str(state.get("commerce_profile_id") or ""));config=profile["configuration"]
@@ -116,7 +148,8 @@ class CommerceCreationService:
         if not product_id:raise StateConflictError("STATE_CONFLICT",diagnostic_message="No confirmed Printify draft is recorded for this job.",operation="commerce_creation.resume",stage="draft")
         if state.get("stage")=="awaiting_final_approval":return {"result":"commerce_review_ready","job_id":job_id,"already_completed":True,"review_url":self.workflow.review(job_id)["review_url"]}
         client=self.orchestrator.adapters.client_factory();remote=client.get_product(shop_id,product_id);marker=draft.get("draft_marker") or (state.get("evidence") or {}).get("draft_marker")
-        if remote.get("id")!=product_id or remote.get("shop_id") not in (None,shop_id) or marker and marker not in " ".join([str(remote.get("title") or ""),*(str(x) for x in remote.get("tags") or [])]):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Confirmed Printify draft does not match the job binding.",operation="commerce_creation.resume",stage="draft_verification")
+        marker_present=bool(marker and marker in " ".join([str(remote.get("title") or ""),*(str(x) for x in remote.get("tags") or [])]))
+        if remote.get("id")!=product_id or remote.get("shop_id") not in (None,shop_id) or not (marker_present or product_orchestrator.replacement_ownership_matches(state,remote,product_id)):raise StateConflictError("STATE_CONFLICT",diagnostic_message="Confirmed Printify draft does not match the job binding.",operation="commerce_creation.resume",stage="draft_verification")
         state["generation_failure"]=None;state["stage"]="resuming_existing_draft";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         resumed=self.orchestrator.resume(job_id,confirm_printify_draft=True)
         if resumed.get("stage")=="failed":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Existing draft recovery did not complete safely.",operation="commerce_creation.resume",stage="orchestrator")

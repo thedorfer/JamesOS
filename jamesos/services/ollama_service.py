@@ -48,6 +48,16 @@ def ask_ollama(prompt: str, model: str | None = None) -> str:
     return data.get("response", "").strip()
 
 
+def ollama_readiness() -> dict:
+    """Verify the desktop-configured Ollama endpoint and model without generating."""
+    cfg=get_config("ollama.yaml").get("ollama",{});host=cfg.get("host","http://localhost:11434").rstrip("/");model=cfg.get("model",DEFAULT_MODEL)
+    with urllib.request.urlopen(f"{host}/api/tags",timeout=min(5,int(cfg.get("timeout_seconds",60)))) as resp:
+        data=json.loads(resp.read().decode("utf-8"))
+    models={str(item.get("name") or "") for item in data.get("models") or []}
+    if model not in models:raise RuntimeError(f"Configured Ollama model is unavailable: {model}")
+    return {"ready":True,"model":model,"endpoint":host}
+
+
 def ollama_status() -> str:
     cfg = get_config("ollama.yaml").get("ollama", {})
     host = cfg.get("host", "http://localhost:11434").rstrip("/")

@@ -23,22 +23,29 @@ class CommerceCopilotTests(unittest.TestCase):
 
     def test_structured_suggestions_are_local_and_keep_color_domains_separate(self):
         provider=Mock(side_effect=AssertionError("provider must not be called"))
-        model=Mock(return_value=json.dumps({"response":"A bounded idea","exact_phrase":"HOLD THE LINE","product_brief":"Market chaos typography",
+        model=Mock(return_value=json.dumps({"message":"A bounded idea","exact_phrase":"HOLD THE LINE","product_brief":"Market chaos typography",
             "garment_colors":["Black","White"],"artwork_palette":["acid green","warning red"],"listing_title":"Hold The Line Trader Tee",
-            "special_instructions":"Keep artwork high contrast","tags":PROFILE["configuration"]["listing_tags"],"concerns":["Check phrase clearance"]}))
+            "special_instructions":"Keep artwork high contrast","listing_tags":PROFILE["configuration"]["listing_tags"],"risk_notes":["Check phrase clearance"]}))
         with tempfile.TemporaryDirectory() as temporary:
-            result=CommerceCopilotService(model=model,root=Path(temporary)).message(session_id="session_12345678901234567890",profile=PROFILE,message="Build a concept",form={})
-        self.assertEqual(result["garment_colors"],["Black","White"]);self.assertEqual(result["artwork_palette"],["acid green","warning red"])
-        self.assertEqual(len(result["tags"]),13);self.assertTrue(result["tags_valid"]);self.assertFalse(result["provider_calls_performed"]);self.assertFalse(result["form_submitted"])
+            result=CommerceCopilotService(model=model,readiness=lambda:{"ready":True},root=Path(temporary)).message(session_id="session_12345678901234567890",profile=PROFILE,message="Build a concept",form={})
+        self.assertEqual(result["suggestions"]["garment_colors"],["Black","White"]);self.assertEqual(result["suggestions"]["artwork_palette"],["acid green","warning red"])
+        self.assertEqual(len(result["suggestions"]["listing_tags"]),13);self.assertTrue(result["tags_valid"]);self.assertNotIn("provider",json.dumps(result).casefold())
         self.assertIn("Apply all",result["actions"]);provider.assert_not_called()
 
     def test_session_cannot_switch_profiles(self):
-        model=Mock(return_value=json.dumps({"response":"ok","tags":PROFILE["configuration"]["listing_tags"]}))
+        model=Mock(return_value=json.dumps({"message":"ok","listing_tags":PROFILE["configuration"]["listing_tags"]}))
         with tempfile.TemporaryDirectory() as temporary:
-            service=CommerceCopilotService(model=model,root=Path(temporary));session="session_12345678901234567890"
+            service=CommerceCopilotService(model=model,readiness=lambda:{"ready":True},root=Path(temporary));session="session_12345678901234567890"
             service.message(session_id=session,profile=PROFILE,message="first",form={})
             changed={**PROFILE,"profile_id":"another-shop"}
             with self.assertRaises(Exception):service.message(session_id=session,profile=changed,message="switch",form={})
+
+    def test_readiness_failure_is_safe_and_model_is_not_called(self):
+        model=Mock()
+        with tempfile.TemporaryDirectory() as temporary:
+            service=CommerceCopilotService(model=model,readiness=Mock(side_effect=ConnectionError("private desktop cause")),root=Path(temporary))
+            with self.assertRaises(Exception) as raised:service.message(session_id="session_12345678901234567890",profile=PROFILE,message="idea",form={})
+        self.assertEqual(raised.exception.user_message,"Product Studio is temporarily unavailable because the local AI service is not ready.");model.assert_not_called()
 
 
 if __name__=="__main__":unittest.main()
