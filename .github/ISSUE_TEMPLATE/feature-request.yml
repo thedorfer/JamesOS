@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose a bounded workspace or platform feature.
+title: "Feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: outcome
+    attributes: {label: User outcome and affected workspace/view}
+    validations: {required: true}
+  - type: textarea
+    id: ui
+    attributes: {label: Context Dock, components, placement, layouts, and locks}
+    validations: {required: true}
+  - type: textarea
+    id: authority
+    attributes: {label: Agent capabilities, confirmations, external writes, providers, terminal, privileges, and network}
+    validations: {required: true}
+  - type: textarea
+    id: data
+    attributes: {label: Private-data and storage impact}
+  - type: textarea
+    id: acceptance
+    attributes: {label: Acceptance criteria, tests, documentation, and rollback}
+    validations: {required: true}

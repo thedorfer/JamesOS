@@ -1,4 +1,6 @@
-# Jade Creative Studio Roadmap
+# Jade Creative Studio Roadmap (historical phase record)
+
+Status-sensitive claims in this document describe their original phase. Defer to [Current status](CURRENT_STATUS.md) for merged, branch-implemented, desktop-verified, and planned distinctions.
 
 Jade Creative Studio is the creative automation surface for JamesOS. It creates reviewable local work packages and uses guarded provider and marketplace integrations.
 

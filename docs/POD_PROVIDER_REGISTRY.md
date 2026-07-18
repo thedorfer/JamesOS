@@ -1,5 +1,7 @@
 # POD Provider Registry
 
+Last reviewed: 2026-07-18. Provider credentials may be shared at the integration layer, but each shop destination is profile-specific and each job binds immutably to that profile/shop. Credentials remain outside Git; a bound job cannot switch destinations or reuse another job's provider product.
+
 JamesOS uses POD Provider Registry to keep Printify, InkedJoy, and future provider settings out of hardcoded product logic.
 
 Registry path:
@@ -44,18 +46,18 @@ order_enabled: false
 Printify is the preferred provider for current MVP planning:
 
 - Bagholder Supply Co uses Printify for now.
-- Cheeky Peach Prints uses Printify for now.
-- Commerce Shop underwear/panty/thong provider rules prefer Printify for now.
+- UnityStitches uses its own configured Printify shop destination.
+- Bagholder Supply Co. uses its own configured Printify shop destination.
 
 Status:
 
 ```text
-Active planned POD provider for MVP automation. Read-only foundation; writes, draft creation, uploads, orders, and publishing remain disabled.
+Historical foundation status: this registry began read-only. Current commerce code can create or resume a confirmed unpublished Printify draft only through the approval-gated profile-bound workflow. Orders remain outside product generation, and publication requires a separate destination-specific confirmation.
 ```
 
 Design recipes may include `provider: printify` so prompts and plans know the intended review target. This does not call Printify or enable provider writes.
 
-Production-candidate design artifacts may use `provider_target: printify` to mean “manual upload target.” JamesOS still does not upload to Printify, create drafts, publish, order, or send anything externally.
+`provider_target: printify` alone grants no authority. Provider writes occur only through the current commerce workflow with immutable job/profile binding, journal evidence, and confirmation policy; uncertain results require manual verification. Generation does not create an order or automatically publish.
 
 ## InkedJoy
 

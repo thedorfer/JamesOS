@@ -88,4 +88,4 @@ POST /files/build
 
 ## Safety
 
-The API currently does not implement Printify publishing, Etsy publishing, ComfyUI execution, production orders, or live listing creation. Future external side effects should be routed through approval-gated Job Queue jobs.
+Historical note: this API inventory predates the recovery commerce and workspace work. Current branch status is canonical in [Current status](CURRENT_STATUS.md). Provider draft and publication capabilities, where present, remain profile-bound and approval-gated; product generation creates no order. ComfyUI remains desktop-local and separately controlled.

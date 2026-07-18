@@ -1,5 +1,7 @@
 # First Local Image Run
 
+Last reviewed: 2026-07-18. Run this on the Linux desktop GPU host, not the ThinkBook. A failed image run remains local, does not compromise other workspaces, and does not authorize any provider, publication, or order action.
+
 This is the safe path for creating one local flat print design PNG for POD review. It does not call Printify, InkedJoy, or Etsy.
 
 ## 1. Put a checkpoint in ComfyUI
@@ -73,7 +75,7 @@ curl -X POST -H "X-JamesOS-Key: $JAMESOS_API_KEY" http://localhost:8787/image-wo
 
 The job requires approval and does not execute automatically.
 
-The helper creates a `creative_spec` with a `design_recipe` for Commerce Shop pride `design_art` and stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family. The generated prompt asks for standalone flat centered vector-style print artwork with no person, no product mockup, and no lifestyle background.
+This historical helper example creates a `creative_spec` for a legacy commerce-profile name. Current product work must use the job-bound Bagholder Supply Co. or UnityStitches profile. It stores a prompt package with positive/negative prompt, size, recommended workflow type, and recommended model family; artwork remains standalone rather than a lifestyle mockup.
 
 The prompt is built from the design recipe first and uses professional sections: `STYLE`, `SUBJECT`, `TYPOGRAPHY`, `LAYOUT`, and `PRINT`.
 

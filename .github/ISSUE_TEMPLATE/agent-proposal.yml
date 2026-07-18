@@ -40,6 +40,13 @@ body:
     validations:
       required: true
   - type: textarea
+    id: workspace_contract
+    attributes:
+      label: Workspace, Context Dock, and layout contract
+      description: List registered views/components, navigation suggestions, placement hints, and every layout/value/action lock.
+    validations:
+      required: true
+  - type: textarea
     id: permissions
     attributes:
       label: Required and optional permissions
@@ -56,6 +63,13 @@ body:
     attributes:
       label: Side effects and approval gates
       description: Describe local writes, network reads, external writes, purchases, publication, sending, or other consequential behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: terminal_privilege_network
+    attributes:
+      label: Terminal, privilege, and network declarations
+      description: Declare shell/PTY access, root or broker needs, network destinations, arbitrary URLs, and why each is required. Write none when absent.
     validations:
       required: true
   - type: textarea
@@ -96,4 +110,6 @@ body:
         - label: I understand that code contributions require a separate contributor agreement before merge.
           required: true
         - label: I will keep installation, configuration, and execution as separate reviewed stages.
+          required: true
+        - label: I will not supply executable HTML, JavaScript, selectors, shell output, or executable themes through model content.
           required: true

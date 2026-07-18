@@ -1,34 +1,21 @@
-# Unified Commerce Workflow — Phase 1A
+# Unified commerce workflow
 
-Phase 1A compiles one complete, immutable review proposal from an existing validated commerce job. It does not publish, change marketplace state, or create an order.
+Last reviewed: 2026-07-18
 
-```bash
-python scripts/jamesos.py commerce prepare --job-id JOB_ID
-python scripts/jamesos.py commerce status --job-id JOB_ID
-python scripts/jamesos.py commerce review --job-id JOB_ID
-```
+Bagholder Supply Co. and UnityStitches are enabled profile-bound destinations. The recovery `/app` UI uses a compact selector and locked destination summary. Selecting a profile updates only profile-derived guidance and untouched defaults, records changes in Activity, supports Undo, and never mutates the global selected-profile file. The selector locks after `selected_job_id` exists.
 
-`prepare` reuses the ProductOrchestrator listing dry-run, ownership, listing-metadata, visual-review, publication-state, variant, artwork, placement, order, and protected-resource gates. Approved read-only provider queries may occur in normal use. Phase 1A performs no provider writes.
+Each job persists an immutable profile, Printify shop, Etsy destination, and provider-write evidence. A confirmed Printify product ID is never recreated. Uncertain or unprovable ownership requires manual verification; recovery uses the existing job-bound draft and shop.
 
-## Proposal and immutable SHA
+Before image or provider work, preflight rejects placeholders and semantically empty briefs. Intentional multiline exact phrases retain all lines and tokens through prompts, candidate evidence, adherence checks, and review. Garment colors and artwork palette are separate concepts. Listing metadata finalization normalizes and validates exactly 13 unique relevant Etsy tags, using profile fallback tags only when appropriate.
 
-The canonical proposal binds the job and opaque profile reference, artwork and mockup hashes, listing text, tags, price, colors, sizes, exact variants, placement, destination, expected final state, warnings, and required confirmations. Deterministic UTF-8 JSON with sorted keys produces `proposal_sha256`.
+The lifecycle is: validate input, generate candidates, persist candidate-specific adherence/novelty reasons, select/review artwork, create or recover one unpublished draft, retrieve mockups, create a review proposal, revise if requested, and await explicit destination-specific publication confirmation.
 
-Presentation-only values such as `generated_at`, absolute paths, HTML, and transient timestamps are excluded. Semantically unordered tag, color, size, mockup, warning, and confirmation lists are normalized before hashing. Changing any approval-bound value creates a different SHA and invalidates the prior proposal.
+Safety guarantees:
 
-Artifacts are written under the existing private job directory:
-
-```text
-commerce-proposal/
-  current.json
-  current-private.json
-  review.html
-  proposal-sha256.txt
-  archive/<prior-sha>/
-```
-
-`current.json` and `review.html` contain safe review fields only. Provider IDs and the private profile binding are isolated in mode-`0600` `current-private.json`. A changed proposal archives and marks its predecessor superseded; only the current proposal is approval-eligible. Identical preparation is idempotent.
-
-The review page is self-contained, escapes listing content, embeds local evidence images, and prominently states **NOT PUBLISHED**, **NO ORDER CREATED**, and **AWAITING FINAL APPROVAL**. Preparing a valid proposal moves only the local job stage to `awaiting_final_approval`; it grants no final approval.
-
-Future phases may add guided revision, exact-SHA approval with publish-once execution, and a Jade review UI. Those phases must preserve the private binding boundary, one-attempt remote writes, final-state verification, and the prohibition on order creation.
+- Preflight and local failures happen before provider writes.
+- Generation creates an unpublished draft; it does not publish.
+- Product generation never creates an order.
+- Expected background failures are persisted and do not escape into ASGI.
+- Failed jobs are not repurposed for unrelated new products.
+- Retry is offered only when provider state is certain; confirmed drafts resume rather than recreate.
+- Publication remains a separate explicit confirmation tied to the immutable destination.

@@ -2,6 +2,8 @@
 
 Installation and configuration are separate lifecycle stages in JamesOS.
 
+Last reviewed: 2026-07-18. Installation supplies no automatic workspace, network, provider, terminal, or privilege authority. Registered views/components and Context Dock hints are validated; system locks and confirmations remain authoritative. Missing optional capabilities fail safely rather than weakening locks or unrelated workspaces.
+
 - **Install / Hire** makes an agent available in **Your Team**.
 - **Configure** supplies non-secret settings, permission grants, and secret-handle grants.
 - **Enable / On Duty** is allowed only after required setup is complete.

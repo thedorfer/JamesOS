@@ -2,6 +2,8 @@
 
 This guide is the starting point for developers who want to build an agent for JamesOS.
 
+Last reviewed: 2026-07-18. Web-capable agents must declare registered views and components, Context Dock suggestions, placement hints, layout/value/action locks, confirmation requirements, external writes/provider operations, terminal access, and privilege needs. Agents may not emit executable HTML, JavaScript, CSS selectors, shell output, arbitrary URLs, or executable themes. Optional capability failures must be bounded and visible.
+
 An agent is a bounded software component with declared capabilities, permissions, secret requirements, supported side effects, and retry limits. It is not an unrestricted chatbot and it does not receive authority merely because it is installed.
 
 ## 1. Choose a stable identity

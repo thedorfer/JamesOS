@@ -4,6 +4,8 @@ The worker registry is the foundation for future JamesOS workers, addons, and pl
 
 Current implementation is a registry only. It lists workers, supported job types, and safety notes. It does not execute workers.
 
+Last reviewed: 2026-07-18. Workers execute on the Linux desktop, not the ThinkBook. GPU/image workers are optional shell-health dependencies; their failure should produce a yellow degraded state and must not compromise unrelated workspaces.
+
 ## API
 
 ```text

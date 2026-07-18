@@ -2,6 +2,8 @@
 
 JamesOS welcomes agent ideas, bug reports, testing feedback, documentation suggestions, and architecture discussions.
 
+Last reviewed: 2026-07-18. Proposals must list registered views/components, navigation and placement hints, locks, confirmations, local/network/external effects, provider operations, terminal access, and privilege requirements. Executable HTML, JavaScript, selectors, shell output, arbitrary URLs, and executable theme content are not accepted. Include safe optional-capability failure behavior.
+
 Code cannot currently be merged unless the contributor has entered into a separate contributor agreement with the project owner. This preserves the owner's ability to use and license JamesOS commercially under the project's source-available model.
 
 ## Submission path

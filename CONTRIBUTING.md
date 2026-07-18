@@ -1,48 +1,30 @@
-# Contributing to JamesOS
+# Contributing
 
-Thank you for your interest in JamesOS.
+Start with [documentation index](docs/INDEX.md), [architecture](docs/ARCHITECTURE.md), and [security model](docs/SECURITY_MODEL.md).
 
-Issues, bug reports, testing feedback, documentation suggestions, architecture discussions, and agent proposals are welcome.
+## Evidence and documentation
 
-JamesOS is licensed under the PolyForm Noncommercial License 1.0.0.
+- Derive status from Git and direct verification. Distinguish merged to master, implemented on a branch, desktop verified, awaiting acceptance, and planned.
+- Update user-facing architecture docs in the same change as a visible route, view, navigation, layout, health, approval, or capability change.
+- Keep `docs/INDEX.md` canonical, use relative links, preserve labeled history, and do not include secrets, private identifiers, runtime data, or diagnostics.
+- Disclose every agent capability, optional dependency, network read, local write, external write, provider operation, terminal requirement, privilege requirement, and failure mode.
 
-Code contributions are not currently accepted for merging unless the contributor has entered into a separate contributor agreement with the project owner. This is necessary to preserve the project owner's ability to use and license JamesOS commercially.
+## Safety contracts
 
-## Proposing an agent
+- External writes require explicit visible confirmation and destination binding. Tests use fake adapters and prove no publication or order unless that exact behavior is under separately authorized test.
+- Agent/model output cannot supply executable HTML, JavaScript, CSS selectors, arbitrary URLs, shell commands, or executable themes.
+- System/Jade locks override agents, users, and saved layouts. Destination, publication, order, and confirmation controls stay visible and protected.
+- Terminal proposals must declare whether they modify state. Privileged work requires a separately reviewed exact-operation broker; never store a sudo password or add a persistent root shell.
+- Optional-capability failures must degrade safely without breaking unrelated workspaces.
 
-Use the **Agent proposal** issue template before beginning a substantial agent implementation. The proposal should describe capabilities, permissions, secret requirements, side effects, installation, configuration, storage, approval behavior, recovery, and tests.
+## Development
 
-Developer path:
-
-1. Read [Building Agents](docs/BUILDING_AGENTS.md).
-2. Define a versioned Agency manifest.
-3. Keep installation and configuration as separate lifecycle stages.
-4. Add runtime registration, tests, and documentation.
-5. Follow [Installing Agents](docs/INSTALLING_AGENTS.md) and [Configuring Agents](docs/CONFIGURING_AGENTS.md).
-6. Follow the complete [Agent Submission Process](docs/AGENT_SUBMISSIONS.md).
-7. Open a focused pull request only after the contributor-agreement requirement is resolved.
-
-## Private data
-
-Do not include credentials, private deployment information, account IDs, shop names, product IDs, listing IDs, customer data, private artwork, browser cookies, session data, or personal records in issues or pull requests.
-
-Tests must use temporary directories, fixtures, and mocked adapters rather than real `~/JamesOSData` state or external providers.
-
-## Validation
-
-Run:
+Prefer small focused changes and temporary test data. Never write test state to real `~/JamesOSData` or modify private profiles.
 
 ```bash
 git diff --check
-python -m unittest discover tests
+python -m unittest discover -s tests -q
+python -m compileall -q jamesos scripts
 ```
 
-For Jade changes:
-
-```bash
-cd apps/jade_app
-flutter analyze
-flutter test
-```
-
-Pull requests should document capabilities, permissions, secret references, side effects, approval gates, installation/configuration changes, tests, external calls, and any remaining work.
+Run Flutter analysis/tests when Jade changes. Include test totals, rollback instructions, documentation updates, and mocked external-call evidence in the pull request.

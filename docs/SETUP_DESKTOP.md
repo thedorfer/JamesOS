@@ -1,128 +1,43 @@
-# Desktop Setup
+# Desktop setup
 
-This page describes the JamesOS desktop/server setup for local development and daily use.
+Last reviewed: 2026-07-18
 
-## Requirements
+The Linux desktop is the execution host for FastAPI, Ollama, GPU/ComfyUI work, provider access, and private `~/JamesOSData`. The ThinkBook is a browser, SSH/tunnel, and development client; it does not run production workloads.
 
-- Linux desktop
-- Python 3
-- Flutter SDK for the Jade client
-- Local network or Meshnet access from phone
-- Optional: Ollama or other local model tooling
-- Future optional: ComfyUI on the desktop GPU
-
-## Repository
+## Environment
 
 ```bash
 cd ~/JamesOS
-git status
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m scripts.api_server
+curl --fail http://127.0.0.1:8787/health
 ```
 
-Human notes should stay in:
+Open `http://127.0.0.1:8787/app` locally. General shell health checks API, Ollama, GPU, image worker, private storage, and commerce-profile readiness without contacting Printify or Etsy. Missing optional image generation is normally yellow; inaccessible storage or required service state is red.
 
-```text
-~/Notes
-```
+## User service
 
-Machine-owned JamesOS data should stay in:
-
-```text
-~/JamesOSData
-```
-
-## Python Validation
+Install a reviewed unit at `~/.config/systemd/user/jamesos.service` using working directory `%h/JamesOS`, executable `%h/JamesOS/.venv/bin/python -m scripts.api_server`, and optional `%h/JamesOSData/JamesOS/runtime.env`. Do not commit or print environment contents.
 
 ```bash
-python3 -m py_compile jamesos/services/*.py scripts/*.py
-python3 -m unittest discover tests
+systemctl --user daemon-reload
+systemctl --user enable --now jamesos
+loginctl enable-linger james
+systemctl --user status jamesos
+journalctl --user -u jamesos -f
 ```
 
-## API Server
+The 2026-07-18 audit found linger enabled but no installed/active unit, so service installation is pending acceptance. See [Service operations](SERVICE_OPERATIONS.md).
 
-Development run:
+## ThinkBook tunnel
 
 ```bash
-python3 scripts/api_server.py
+ssh -N -L 8787:127.0.0.1:8787 james@DESKTOP
 ```
 
-Health check:
+Browse to `http://127.0.0.1:8787/app` on the ThinkBook. Never expose JamesOS directly to the public internet.
 
-```bash
-curl http://localhost:8787/health
-```
+## Restart and rollback
 
-Service health/config:
-
-```bash
-curl -H "X-JamesOS-Key: YOUR_KEY" http://localhost:8787/server/health
-curl -H "X-JamesOS-Key: YOUR_KEY" http://localhost:8787/server/config
-```
-
-Generated server page:
-
-```text
-~/JamesOSData/JamesOS/Reports/Server Configuration.md
-```
-
-## Flutter Jade App
-
-```bash
-cd ~/JamesOS/apps/jade_app
-flutter analyze
-flutter run -d linux
-```
-
-Android run:
-
-```bash
-flutter run -d 58021FDCQ008QF
-```
-
-Linux builds should not call unavailable TTS/STT plugins. Android builds can keep voice input/output enabled.
-
-## Job Queue
-
-The Job Queue is the automation backbone:
-
-```bash
-python3 scripts/job_queue.py list
-python3 scripts/job_queue.py create review.example --payload '{"draft_only": true}'
-python3 scripts/job_queue.py approve JOB_ID
-```
-
-Approval-gated jobs cannot complete until approved.
-
-## Configuration Files
-
-Config lives under:
-
-```text
-~/JamesOSData/JamesOS/Config/
-```
-
-Important config files:
-
-- `system.yaml`
-- `plugins.yaml`
-- `folders.yaml`
-- `ai.yaml`
-- `server.yaml`
-- `integrations.yaml`
-
-Do not store secrets in Git. Keep API keys and local secrets under JamesOSData.
-
-## Reports
-
-Reports are generated under:
-
-```text
-~/JamesOSData/JamesOS/Reports/
-```
-
-Useful reports:
-
-- `Job Queue.md`
-- `Server Configuration.md`
-- `Daily Briefing.md`
-- `Knowledge Graph.md`
-- `Commerce Shop Product Drafts.md`
+Run tests, preserve the known-good commit, restart the user service, inspect `/health`, `/app`, and logs, and roll back the Git revision plus restart if acceptance fails. Restarting never bypasses provider confirmation or immutable job binding.

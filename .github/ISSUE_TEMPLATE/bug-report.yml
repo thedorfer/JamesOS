@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible JamesOS defect without private data.
+title: "Bug: "
+labels: [bug]
+body:
+  - type: input
+    id: view
+    attributes: {label: Affected workspace or view, placeholder: commerce.new}
+    validations: {required: true}
+  - type: textarea
+    id: observed
+    attributes: {label: Observed behavior and safe reproduction}
+    validations: {required: true}
+  - type: textarea
+    id: expected
+    attributes: {label: Expected behavior}
+    validations: {required: true}
+  - type: textarea
+    id: capabilities
+    attributes: {label: Agent, provider, network, terminal, privilege, and private-data impact}
+    validations: {required: true}
+  - type: textarea
+    id: locks
+    attributes: {label: Context Dock, layout locks, confirmations, and external-write safeguards}
+  - type: textarea
+    id: tests
+    attributes: {label: Test and rollback plan}
+    validations: {required: true}
+  - type: checkboxes
+    id: safe
+    attributes:
+      label: Safety
+      options:
+        - label: No credentials, private identifiers, or active vulnerability details are included.
+          required: true

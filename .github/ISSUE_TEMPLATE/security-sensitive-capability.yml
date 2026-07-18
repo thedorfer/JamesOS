@@ -1,0 +1,23 @@
+name: Security-sensitive capability design
+description: Propose terminal, privilege, network, private-data, or other high-authority behavior—not an active vulnerability report.
+title: "Security design: "
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes: {value: "Do not disclose an active vulnerability here. Follow SECURITY.md and private reporting guidance."}
+  - type: textarea
+    id: capability
+    attributes: {label: Exact capability and affected workspace/view}
+    validations: {required: true}
+  - type: textarea
+    id: authority
+    attributes: {label: Terminal, root/privilege, network, provider, external-write, and private-data requirements}
+    validations: {required: true}
+  - type: textarea
+    id: controls
+    attributes: {label: Confirmations, scope, locks, audit trail, failure containment, and rollback}
+    validations: {required: true}
+  - type: textarea
+    id: tests
+    attributes: {label: Negative tests and acceptance criteria}
+    validations: {required: true}

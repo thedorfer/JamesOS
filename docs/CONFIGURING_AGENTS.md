@@ -2,6 +2,8 @@
 
 Configuration happens after an agent is hired and before it is placed On Duty.
 
+Last reviewed: 2026-07-18. Configuration grants do not override registered views, component allowlists, Context Dock anchors, layout locks, destination binding, or confirmations. External-write, provider, terminal, network, and privilege declarations are explicit and deny-by-default. Placement hints are advisory only; executable UI/theme content is prohibited.
+
 JamesOS separates setup into three categories:
 
 1. ordinary non-secret configuration

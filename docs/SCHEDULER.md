@@ -1,5 +1,7 @@
 # JamesOS Scheduler — Phase 1
 
+Last reviewed: 2026-07-18. Scheduled work is evaluated through the Linux desktop service. Scheduling never bypasses an external-write, provider, publication, order, terminal, or privilege approval; work that requires confirmation waits for that confirmation rather than scheduling around it.
+
 The scheduler determines when declarative work is due and enqueues a normal JamesOS Job Queue item for each confirmed occurrence. It does not execute jobs, call agents, approve work, run shell commands, contact providers, or perform external side effects.
 
 ```text

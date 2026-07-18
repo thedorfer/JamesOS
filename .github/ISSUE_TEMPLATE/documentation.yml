@@ -1,0 +1,22 @@
+name: Documentation issue
+description: Report missing, stale, contradictory, or broken documentation.
+title: "Docs: "
+labels: [documentation]
+body:
+  - type: textarea
+    id: location
+    attributes: {label: Documents and links affected}
+    validations: {required: true}
+  - type: dropdown
+    id: status
+    attributes:
+      label: Status mismatch
+      options: [Merged to master, Implemented on branch, Desktop verified, Awaiting acceptance, Planned, Other]
+    validations: {required: true}
+  - type: textarea
+    id: correction
+    attributes: {label: Evidence and proposed correction}
+    validations: {required: true}
+  - type: textarea
+    id: safety
+    attributes: {label: Security, private-data, external-write, or rollback implications}

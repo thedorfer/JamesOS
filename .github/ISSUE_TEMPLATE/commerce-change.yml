@@ -1,0 +1,25 @@
+name: Commerce change
+description: Propose profile-bound commerce behavior with explicit safeguards.
+title: "Commerce: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: scope
+    attributes: {label: Profiles, views, and workflow stages}
+    validations: {required: true}
+  - type: textarea
+    id: writes
+    attributes: {label: Provider operations, external writes, publication, and order behavior}
+    validations: {required: true}
+  - type: textarea
+    id: safety
+    attributes: {label: Immutable destination, confirmations, locks, uncertainty, retry, and rollback}
+    validations: {required: true}
+  - type: textarea
+    id: testing
+    attributes: {label: Fake-adapter tests and proof of no unintended provider call/publication/order}
+    validations: {required: true}
+  - type: textarea
+    id: docs
+    attributes: {label: Documentation updates}
+    validations: {required: true}

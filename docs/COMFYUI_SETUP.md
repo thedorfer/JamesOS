@@ -1,15 +1,12 @@
 # ComfyUI Setup
 
+Last reviewed: 2026-07-18. ComfyUI and GPU ownership belong to the Linux desktop, never the ThinkBook. General `/app` health treats this as optional/recoverable (normally yellow when absent), and image failure must remain isolated from unrelated workspaces.
+
 ComfyUI is planned as the local image generation engine for JamesOS creative workflows. JamesOS owns the workflow, approval model, prompt records, draft storage, and reporting. ComfyUI should only render images after an approved local job asks it to.
 
-## Current Status
+## Current status
 
-ComfyUI execution is not implemented yet. JamesOS now includes readiness foundations only: Model Registry, Workflow Manager, Image Worker planning, and `/system_stats` health checks.
-
-Current JamesOS rules:
-
-- Do not call ComfyUI from JamesOS yet.
-- Do not generate product artwork automatically yet.
+This guide originated during the readiness-foundation phase. The current recovery branch includes approved local generation paths and health integration; desktop acceptance is still pending. ComfyUI remains a local rendering engine and receives no provider, publication, order, terminal, or privilege authority.
 - Do not upload generated artwork to Printify or Etsy yet.
 - Route future image generation through the Job Queue and approval flow.
 
@@ -63,13 +60,13 @@ The scanner checks local model folders only and keeps every discovered model `en
 Future generated assets:
 
 ```text
-~/JamesOSData/JamesOS/Products/Commerce Shop/Assets/
+~/JamesOSData/JamesOS/Products/<job-bound-profile>/Assets/
 ```
 
 Future product draft packages:
 
 ```text
-~/JamesOSData/JamesOS/Products/Commerce Shop/Drafts/
+~/JamesOSData/JamesOS/Products/<job-bound-profile>/Drafts/
 ```
 
 ## Planned Configuration

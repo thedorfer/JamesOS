@@ -1,5 +1,7 @@
 # Image Worker
 
+Last reviewed: 2026-07-18. Image/GPU execution belongs to the Linux desktop; the ThinkBook does not run production image workloads. Image capability is optional to the general shell, so a missing worker normally degrades health to yellow and cannot compromise unrelated workspaces or trigger provider writes.
+
 The Image Worker prepares safe image-generation plans and can execute exactly one approved local ComfyUI image job at a time.
 
 Default product artwork now means flat printable design artwork, not lifestyle photography or a mockup.
@@ -202,7 +204,7 @@ Composition metadata requires centered artwork, about 75% canvas coverage, safe 
 Asset metadata is selected into `selected_assets`. JamesOS scans general Creative Studio assets plus brand assets such as:
 
 ```text
-~/JamesOSData/JamesOS/Brands/Commerce Shop/Assets/
+~/JamesOSData/JamesOS/Brands/<job-bound-profile>/Assets/
 ```
 
 Pride/LGBTQ/trans/intersex queries prefer matching flag assets when present. Font files remain metadata-only and do not expose file paths or binary content.
