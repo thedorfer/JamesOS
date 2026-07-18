@@ -24,7 +24,7 @@ class ApplicationShellTests(unittest.TestCase):
         self.assertEqual(response.status_code,200);self.assertIn("class='shell'",response.text);self.assertIn("Your local workspace assistant",response.text);self.assertIn(">JamesOS<",response.text)
         self.assertIn("bagholder-supply",response.text);self.assertIn("unitystitches",response.text);self.assertIn("Commerce Creator",response.text)
         self.assertIn("function navigate(view)",response.text);self.assertIn("textContent",response.text);self.assertIn("function restore(s)",response.text);self.assertIn("Undid local form change",response.text)
-        self.assertIn("Local model: desktop",response.text);self.assertIn("GPU: desktop execution host",response.text);self.assertIn("UNPUBLISHED DRAFT ONLY",response.text);self.assertIn("commerce.diagnostics",response.text)
+        self.assertIn("id='health-dot'",response.text);self.assertIn("System health",response.text);self.assertIn("UNPUBLISHED DRAFT ONLY",response.text);self.assertIn("commerce.diagnostics",response.text)
         self.assertNotIn("11434",response.text);self.assertNotIn("Product Studio",response.text);self.assertNotIn("Copilot",response.text)
 
     def test_app_response_delivers_initialized_application_script(self):
