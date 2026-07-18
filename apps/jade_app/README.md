@@ -1,17 +1,12 @@
-# jade_app
+# Jade mobile client
 
-A new Flutter project.
+Jade is a planned secondary JamesOS client for Android and later mobile platforms. The Linux desktop remains the execution host for FastAPI, Ollama, GPU/ComfyUI, provider operations, and private `JamesOSData`; the app must not bypass server-defined views, locks, or external-action confirmations.
 
-## Getting Started
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter run -d 58021FDCQ008QF
+```
 
-This project is a starting point for a Flutter application.
-
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+The secondary-client API and synchronization contract remain planned. See [JamesOS current status](../../docs/CURRENT_STATUS.md) and [roadmap](../../docs/ROADMAP.md).
