@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock,patch
 
@@ -17,6 +21,34 @@ def profile(profile_id:str,shop_id:int,slug:str)->dict:
 
 
 class ApplicationShellTests(unittest.TestCase):
+    def test_actual_app_bootstrap_runs_in_browser_and_binds_safe_shell_controls(self):
+        chrome=shutil.which("google-chrome") or shutil.which("chromium")
+        if not chrome:self.skipTest("Chrome/Chromium is required for the shell smoke test")
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app")
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(response.headers["content-security-policy"],"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
+        smoke="""<script>document.addEventListener('DOMContentLoaded',()=>setTimeout(async()=>{const calls=[],original=window.fetch;window.fetch=async(url,options={})=>{const path=String(url);calls.push({path,method:options.method||'GET',body:options.body||''});if(path==='/app/chat')return new Response(JSON.stringify({message:'Mocked locally',commands:[],warnings:[]}),{status:200,headers:{'Content-Type':'application/json'}});return original(url,options)};document.querySelector('[data-view=dashboard]').click();const home=location.search.includes('dashboard');document.querySelector('[data-view="agency.home"]').click();const agency=!document.getElementById('agency-view').hidden;document.querySelector('[data-view="admin.home"]').click();const admin=!document.getElementById('admin-view').hidden;document.getElementById('health-dot').click();const health=!document.getElementById('health-detail').hidden;document.getElementById('customize-layout').click();const customize=document.body.classList.contains('customizing');document.getElementById('exact_phrase').value='CURRENT FORM';document.getElementById('chat-message').value='smoke message';document.getElementById('send').click();await new Promise(resolve=>setTimeout(resolve,100));const chat=calls.find(call=>call.path==='/app/chat'),body=JSON.parse(chat.body);const result={ready:document.documentElement.dataset.jamesosReady,home,agency,admin,health,customize,initError:!document.getElementById('shell-init-error').hidden,chatMethod:chat.method,body,providerCalls:calls.filter(call=>/ollama|printify|etsy|comfy/i.test(call.path)).length,published:calls.some(call=>/publish|approve/.test(call.path)),orders:calls.some(call=>/order/.test(call.path))};const out=document.createElement('pre');out.id='smoke-result';out.textContent=JSON.stringify(result);document.body.append(out)},100));</script>"""
+        document=response.text.replace("<button type='button' id='close-chat' class='drawer-toggle'>Close</button>","").replace("</body>",smoke+"</body>")
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path.startswith("/app/layouts/"):payload={"theme_id":"jamesos-dark","shell":{"chat_width":420},"panels":[]}
+                elif self.path=="/app/health":payload={"state":"green","label":"Ready","systems":[]}
+                elif self.path=="/app/access-status":payload={"access_mode":"loopback","trusted_hostname":"127.0.0.1","https":False,"connection_type":"direct","access_scope":"loopback","warning":""}
+                else:
+                    raw=document.encode();self.send_response(200);self.send_header("Content-Type","text/html");self.send_header("Content-Security-Policy",response.headers["content-security-policy"]);self.end_headers();self.wfile.write(raw);return
+                raw=json.dumps(payload).encode();self.send_response(200);self.send_header("Content-Type","application/json");self.end_headers();self.wfile.write(raw)
+            def log_message(self,*args):pass
+        server=ThreadingHTTPServer(("127.0.0.1",0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=1500","--dump-dom",f"http://127.0.0.1:{server.server_port}/app"],check=True,capture_output=True,text=True).stdout
+        finally:server.shutdown();server.server_close()
+        marker=rendered.split('<pre id="smoke-result">',1)[1].split("</pre>",1)[0].replace("&quot;",'"');result=json.loads(marker)
+        self.assertEqual(result["ready"],"true");self.assertTrue(result["home"]);self.assertTrue(result["agency"]);self.assertTrue(result["admin"]);self.assertTrue(result["health"]);self.assertTrue(result["customize"]);self.assertTrue(result["initError"]);self.assertEqual(result["chatMethod"],"POST")
+        self.assertEqual(result["body"]["active_view"],"admin.home");self.assertEqual(result["body"]["active_profile_id"],"bagholder-supply");self.assertEqual(result["body"]["form"]["exact_phrase"],"CURRENT FORM");self.assertTrue(result["body"]["csrf_token"]);self.assertTrue(result["body"]["conversation_id"])
+        self.assertEqual(result["providerCalls"],0);self.assertFalse(result["published"]);self.assertFalse(result["orders"])
+
     def test_app_renders_persistent_two_pane_shell_and_both_shops(self):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")]
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
@@ -32,7 +64,7 @@ class ApplicationShellTests(unittest.TestCase):
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app")
         self.assertEqual(response.status_code,200)
-        for required in ("<script","DOMContentLoaded","/app/chat","/commerce/new","prepare-generation","addEventListener","q('send').onclick","q('undo').onclick","q('stop').onclick","q('retry').onclick","q('reset').onclick","[data-view]"):
+        for required in ("<script","DOMContentLoaded","/app/chat","/commerce/new","prepare-generation","addEventListener","bind('send','click'","bind('undo','click'","bind('stop','click'","bind('retry','click'","bind('reset','click'","[data-view]","jamesosReady='true'"):
             with self.subTest(required=required):self.assertIn(required,response.text)
 
     def test_app_script_is_inside_returned_body(self):
