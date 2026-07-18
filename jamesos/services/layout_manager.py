@@ -23,7 +23,6 @@ THEME_TOKEN_NAMES={"color_bg","color_panel","color_surface","color_text","color_
 LOCKED_DEFAULTS=MappingProxyType({
     "destination":{"panel_id":"destination","component":"card","title":"Destination","column":9,"row":1,"width":4,"height":2,"collapsed":False,"hidden":False,"layout_locked":True,"value_locked":True,"action_locks":["hide","move","resize","reorder"],"lock_reason":"Job destination is immutable and must remain visible."},
     "publication_status":{"panel_id":"publication_status","component":"status_banner","title":"Publication safeguards","column":9,"row":3,"width":4,"height":2,"collapsed":False,"hidden":False,"layout_locked":True,"value_locked":True,"action_locks":["hide","move","resize","reorder"],"lock_reason":"Publication and order status must remain visible."},
-    "external_confirmation":{"panel_id":"external_confirmation","component":"confirmation","title":"External action confirmation","column":9,"row":5,"width":4,"height":2,"collapsed":False,"hidden":False,"layout_locked":True,"value_locked":True,"action_locks":["hide","move","resize","reorder"],"lock_reason":"Provider actions always require visible confirmation."},
 })
 
 

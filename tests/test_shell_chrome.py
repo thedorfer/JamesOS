@@ -60,10 +60,10 @@ class ShellChromeTests(unittest.TestCase):
         self.assertIn("data-layout-locked='true'", text)
         self.assertIn("fieldMeta[k].dirty", text)
         self.assertIn("!fieldMeta[k].dirty", text)
-        self.assertIn("undoStack.push(before)", text)
         self.assertIn("profileSelect.value=lastProfile", text)
         self.assertIn("profileSelect.disabled=true", text)
         self.assertIn("updated destination and", text)
+        self.assertNotIn("id='undo'", text)
         self.assertNotIn("input type='radio' name='commerce_profile_id'", text)
 
     def test_health_dot_and_accessible_detail_polling_are_present(self):

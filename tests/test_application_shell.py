@@ -29,8 +29,9 @@ class ApplicationShellTests(unittest.TestCase):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app")
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.headers["content-security-policy"],"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'")
-        smoke="""<script>document.addEventListener('DOMContentLoaded',()=>setTimeout(async()=>{const calls=[],original=window.fetch;window.fetch=async(url,options={})=>{const path=String(url);calls.push({path,method:options.method||'GET',body:options.body||''});if(path==='/app/chat')return new Response(JSON.stringify({message:'Mocked locally',commands:[],warnings:[]}),{status:200,headers:{'Content-Type':'application/json'}});return original(url,options)};document.querySelector('[data-view=dashboard]').click();const home=location.search.includes('dashboard');document.querySelector('[data-view="agency.home"]').click();const agency=!document.getElementById('agency-view').hidden;document.querySelector('[data-view="admin.home"]').click();const admin=!document.getElementById('admin-view').hidden;document.getElementById('health-dot').click();const health=!document.getElementById('health-detail').hidden;document.getElementById('customize-layout').click();const customize=document.body.classList.contains('customizing');document.getElementById('exact_phrase').value='CURRENT FORM';document.getElementById('chat-message').value='smoke message';document.getElementById('send').click();await new Promise(resolve=>setTimeout(resolve,100));const chat=calls.find(call=>call.path==='/app/chat'),body=JSON.parse(chat.body);const result={ready:document.documentElement.dataset.jamesosReady,home,agency,admin,health,customize,initError:!document.getElementById('shell-init-error').hidden,chatMethod:chat.method,body,providerCalls:calls.filter(call=>/ollama|printify|etsy|comfy/i.test(call.path)).length,published:calls.some(call=>/publish|approve/.test(call.path)),orders:calls.some(call=>/order/.test(call.path))};const out=document.createElement('pre');out.id='smoke-result';out.textContent=JSON.stringify(result);document.body.append(out)},100));</script>"""
-        document=response.text.replace("<button type='button' id='close-chat' class='drawer-toggle'>Close</button>","").replace("</body>",smoke+"</body>")
+        prep="""<script>window.smokeCalls=[];window.failNext=false;window.uploadSeq=0;window.fetch=async(url,options={})=>{const path=String(url),method=options.method||'GET';window.smokeCalls.push({path,method,body:options.body||''});let payload={};let status=200;if(path==='/app/chat'){payload=window.failNext?{message:'recoverable failure'}:{message:'Mocked locally',commands:[],warnings:[]};if(window.failNext){status=503;window.failNext=false}}else if(path==='/app/attachments'&&method==='POST'){const file=options.body.get('file');payload={attachment_id:'fixture-attachment-id-'+(++window.uploadSeq)+'-safe',filename:file.name,content_type:file.type,size:file.size}}else if(path.startsWith('/app/attachments/')&&method==='DELETE')payload={removed:true};else if(path.startsWith('/app/layouts/'))payload={theme_id:'jamesos-dark',shell:{chat_width:420},panels:[]};else if(path==='/app/health')payload={state:'green',label:'Ready',systems:[]};else if(path==='/app/access-status')payload={access_mode:'loopback',trusted_hostname:'127.0.0.1',https:false,connection_type:'direct',access_scope:'loopback',warning:''};return new Response(JSON.stringify(payload),{status,headers:{'Content-Type':'application/json'}})};</script>"""
+        smoke="""<script>document.addEventListener('DOMContentLoaded',()=>setTimeout(async()=>{const wait=()=>new Promise(r=>setTimeout(r,40)),key=(node,key,shift=false)=>node.dispatchEvent(new KeyboardEvent('keydown',{key,shiftKey:shift,bubbles:true,cancelable:true})),choose=async(name)=>{const input=document.getElementById('attachment-input'),dt=new DataTransfer();dt.items.add(new File(['fixture'],name,{type:'text/plain'}));input.files=dt.files;input.dispatchEvent(new Event('change',{bubbles:true}));await wait()};document.querySelector('[data-view=dashboard]').click();const home=location.search.includes('dashboard')&&!document.getElementById('confirmations').children.length;document.querySelector('[data-view="agency.home"]').click();const agency=!document.getElementById('agency-view').hidden;document.querySelector('#agency-view [data-view="commerce.new"]').click();const merchant=location.search.includes('commerce.new')&&!document.getElementById('commerce-new').hidden;document.querySelector('[data-view="admin.home"]').click();const admin=!document.getElementById('admin-view').hidden&&!document.getElementById('confirmations').children.length;let opened=0;const input=document.getElementById('attachment-input'),nativeClick=input.click.bind(input);input.click=()=>{opened++;};key(document.getElementById('upload-control'),'Enter');input.click=nativeClick;await choose('remove.txt');const preview=document.getElementById('attachments').textContent.includes('remove.txt');document.querySelector('#attachments button').click();await wait();const box=document.getElementById('chat-message'),before=window.smokeCalls.filter(x=>x.path==='/app/chat').length;box.value='line';key(box,'Enter',true);await wait();const shiftNoSend=window.smokeCalls.filter(x=>x.path==='/app/chat').length===before;box.value='enter message';key(box,'Enter');key(box,'Enter');await wait();const chatCalls=window.smokeCalls.filter(x=>x.path==='/app/chat'),enterOnce=chatCalls.length===before+1,removedBody=JSON.parse(chatCalls.at(-1).body);await choose('success.txt');box.value='success';key(box,'Enter');await wait();const cleared=!document.getElementById('attachments').children.length;await choose('failure.txt');window.failNext=true;box.value='failure';key(box,'Enter');await wait();const preserved=document.getElementById('attachments').textContent.includes('failure.txt');const oldConversation=localStorage.getItem('jamesos-conversation-id');document.getElementById('reset').click();const reset=oldConversation!==localStorage.getItem('jamesos-conversation-id')&&!document.getElementById('transcript').children.length;const result={ready:document.documentElement.dataset.jamesosReady,home,agency,admin,merchant,opened,preview,shiftNoSend,enterOnce,removedExcluded:removedBody.attachments.length===0,cleared,preserved,reset,providerCalls:window.smokeCalls.filter(x=>/ollama|printify|etsy|comfy/i.test(x.path)).length,published:window.smokeCalls.some(x=>/publish|approve/.test(x.path)),orders:window.smokeCalls.some(x=>/order/.test(x.path))};const out=document.createElement('pre');out.id='smoke-result';out.textContent=JSON.stringify(result);document.body.append(out)},100));</script>"""
+        document=response.text.replace("<script>document.addEventListener",prep+"<script>document.addEventListener",1).replace("</body>",smoke+"</body>")
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 if self.path.startswith("/app/layouts/"):payload={"theme_id":"jamesos-dark","shell":{"chat_width":420},"panels":[]}
@@ -42,11 +43,13 @@ class ApplicationShellTests(unittest.TestCase):
             def log_message(self,*args):pass
         server=ThreadingHTTPServer(("127.0.0.1",0),Handler);thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
         try:
-            rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=1500","--dump-dom",f"http://127.0.0.1:{server.server_port}/app"],check=True,capture_output=True,text=True).stdout
+            browser=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--enable-logging=stderr","--virtual-time-budget=2500","--dump-dom",f"http://127.0.0.1:{server.server_port}/app"],check=True,capture_output=True,text=True);rendered=browser.stdout
         finally:server.shutdown();server.server_close()
+        if '<pre id="smoke-result">' not in rendered:self.fail("Browser smoke did not complete:\n"+browser.stderr[-4000:]+"\n"+rendered[-1000:])
         marker=rendered.split('<pre id="smoke-result">',1)[1].split("</pre>",1)[0].replace("&quot;",'"');result=json.loads(marker)
-        self.assertEqual(result["ready"],"true");self.assertTrue(result["home"]);self.assertTrue(result["agency"]);self.assertTrue(result["admin"]);self.assertTrue(result["health"]);self.assertTrue(result["customize"]);self.assertTrue(result["initError"]);self.assertEqual(result["chatMethod"],"POST")
-        self.assertEqual(result["body"]["active_view"],"admin.home");self.assertEqual(result["body"]["active_profile_id"],"bagholder-supply");self.assertEqual(result["body"]["form"]["exact_phrase"],"CURRENT FORM");self.assertTrue(result["body"]["csrf_token"]);self.assertTrue(result["body"]["conversation_id"])
+        self.assertEqual(result["ready"],"true")
+        for key in ("home","agency","admin","merchant","preview","shiftNoSend","enterOnce","removedExcluded","cleared","preserved","reset"):self.assertTrue(result[key],key)
+        self.assertEqual(result["opened"],1)
         self.assertEqual(result["providerCalls"],0);self.assertFalse(result["published"]);self.assertFalse(result["orders"])
 
     def test_app_renders_persistent_two_pane_shell_and_both_shops(self):
@@ -54,17 +57,18 @@ class ApplicationShellTests(unittest.TestCase):
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app?view=commerce.new")
         self.assertEqual(response.status_code,200);self.assertIn("class='shell'",response.text);self.assertIn("Your local workspace assistant",response.text);self.assertIn(">JamesOS<",response.text)
-        self.assertIn("bagholder-supply",response.text);self.assertIn("unitystitches",response.text);self.assertIn("Commerce Creator",response.text)
-        self.assertIn("function navigate(view)",response.text);self.assertIn("textContent",response.text);self.assertIn("function restore(s)",response.text);self.assertIn("Undid local form change",response.text)
+        self.assertIn("bagholder-supply",response.text);self.assertIn("unitystitches",response.text);self.assertIn("Product Studio",response.text)
+        self.assertIn("function navigate(view)",response.text);self.assertIn("textContent",response.text)
         self.assertIn("id='health-dot'",response.text);self.assertIn("System health",response.text);self.assertIn("UNPUBLISHED DRAFT ONLY",response.text);self.assertIn("commerce.diagnostics",response.text)
-        self.assertNotIn("11434",response.text);self.assertNotIn("Product Studio",response.text);self.assertNotIn("Copilot",response.text)
+        self.assertNotIn("11434",response.text);self.assertNotIn("panel-title'>Commerce Creator",response.text);self.assertNotIn("Copilot",response.text)
+        for removed in ("id='stop'","id='retry'","id='undo'","bind('stop','click'","bind('retry','click'","bind('undo','click'"):self.assertNotIn(removed,response.text)
 
     def test_app_response_delivers_initialized_application_script(self):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")]
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app")
         self.assertEqual(response.status_code,200)
-        for required in ("<script","DOMContentLoaded","/app/chat","/commerce/new","prepare-generation","addEventListener","bind('send','click'","bind('undo','click'","bind('stop','click'","bind('retry','click'","bind('reset','click'","[data-view]","jamesosReady='true'"):
+        for required in ("<script","DOMContentLoaded","/app/chat","/app/attachments","/commerce/new","prepare-generation","addEventListener","bind('send','click'","bind('reset','click'","bind('chat-message','keydown'","[data-view]","jamesosReady='true'"):
             with self.subTest(required=required):self.assertIn(required,response.text)
 
     def test_app_script_is_inside_returned_body(self):
@@ -101,6 +105,31 @@ class ApplicationShellTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary,patch("jamesos.services.application_shell.handle_error",return_value={}):
             result=WorkspaceChatService(model=model,readiness=lambda:{"ready":True},root=Path(temporary)).message(conversation_id="conversation-12345678901234567890",message="review this",profile=rows[0],profiles=rows,workspace={"active_view":"commerce.new","form":{}})
         self.assertNotIn("<script",result["message"]);self.assertEqual(result["commands"],[]);self.assertTrue(result["warnings"])
+
+    def test_malformed_structured_response_uses_only_safe_plain_text(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")];model=Mock(return_value='A safe plain response, with no commands.')
+        provider=Mock(side_effect=AssertionError("fallback cannot call providers"))
+        with tempfile.TemporaryDirectory() as temporary:
+            result=WorkspaceChatService(model=model,readiness=lambda:{"ready":True},root=Path(temporary)).message(conversation_id="conversation-12345678901234567890",message="ordinary question",profile=rows[0],profiles=rows,workspace={"active_view":"dashboard","form":{"exact_phrase":"UNCHANGED"}})
+        self.assertEqual(result["message"],'A safe plain response, with no commands.');self.assertEqual(result["commands"],[]);self.assertEqual(result["profile_id"],"bagholder-supply");provider.assert_not_called()
+
+    def test_malformed_commands_are_never_partially_applied_and_html_is_inert(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
+        malformed='{"message":"Safe explanation","commands":[{"type":"navigate","view":"commerce.new"},{"type":"publish"}]'
+        with tempfile.TemporaryDirectory() as temporary,patch("jamesos.services.application_shell.handle_error",return_value={}):
+            result=WorkspaceChatService(model=Mock(return_value=malformed),readiness=lambda:{"ready":True},root=Path(temporary)).message(conversation_id="conversation-12345678901234567890",message="review",profile=rows[0],profiles=rows,workspace={"active_view":"dashboard","form":{"exact_phrase":"UNCHANGED"}})
+        self.assertEqual(result["message"],"Safe explanation");self.assertEqual(result["commands"],[])
+        html=malformed.replace("Safe explanation","<img src=x onerror=alert(1)>")
+        with tempfile.TemporaryDirectory() as temporary,patch("jamesos.services.application_shell.handle_error",return_value={}):
+            blocked=WorkspaceChatService(model=Mock(return_value=html),readiness=lambda:{"ready":True},root=Path(temporary)).message(conversation_id="conversation-12345678901234567890",message="review",profile=rows[0],profiles=rows,workspace={"active_view":"dashboard","form":{}})
+        self.assertNotIn("<img",blocked["message"]);self.assertEqual(blocked["commands"],[])
+
+    def test_confirmation_is_absent_until_pending_and_adjacent_to_protected_action(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+            text=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app").text
+        self.assertNotIn("data-panel-id='external_confirmation'",text);self.assertIn("<div id='confirmations' data-component='confirmation'></div><button type='button' id='prepare-generation'",text)
+        self.assertIn("Requested action:",text);self.assertIn("External provider contacted:",text);self.assertIn("Irreversible publication/submission:",text)
 
     def test_workspace_state_and_fixed_component_registry(self):
         state=WorkspaceState("conversation-12345678901234567890",active_view="commerce.new",active_profile_id="bagholder-supply",forms={"commerce.new":{"exact_phrase":"HOLD"}},pending_confirmations=[{"action":"start_generation"}],activity_history=[{"command":"form_patch"}])

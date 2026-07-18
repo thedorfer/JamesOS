@@ -86,7 +86,8 @@ def build_navigation(value:NavigationContext|dict[str,Any])->list[dict[str,Any]]
         elif context.review_ready:add(validate_nav_item({"item_id":"job-review","label":"Review","view_id":"commerce.review","badge":"ready"}))
         elif context.pending_approval:add(validate_nav_item({"item_id":"job-approval","label":"Review","view_id":"commerce.review","badge":"pending_approval"}))
         else:add(validate_nav_item({"item_id":"current-job","label":"Current job","view_id":"commerce.loading","badge":"progress"}))
-    if context.active_view not in {anchor["view_id"] for anchor in LOCKED_ANCHORS}:add(validate_nav_item({"item_id":"active-workspace","label":context.active_view.replace("."," ").title(),"view_id":context.active_view,"badge":None}))
-    for view in context.recent_workspaces:add(validate_nav_item({"item_id":f"recent-{view.replace('.','-')}","label":view.replace("."," ").title(),"view_id":view,"badge":None}))
+    label=lambda view:"Product Studio" if view=="commerce.new" else view.replace("."," ").title()
+    if context.active_view not in {anchor["view_id"] for anchor in LOCKED_ANCHORS}:add(validate_nav_item({"item_id":"active-workspace","label":label(context.active_view),"view_id":context.active_view,"badge":None}))
+    for view in context.recent_workspaces:add(validate_nav_item({"item_id":f"recent-{view.replace('.','-')}","label":label(view),"view_id":view,"badge":None}))
     for suggestion in context.agent_suggestions:add(validate_nav_item(suggestion,agent=True))
     return [dict(LOCKED_ANCHORS[0]),*contextual,dict(LOCKED_ANCHORS[1]),dict(LOCKED_ANCHORS[2])]

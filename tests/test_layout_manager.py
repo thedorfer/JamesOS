@@ -20,8 +20,9 @@ class LayoutManagerTests(unittest.TestCase):
     def test_default_layout_uses_grid_theme_and_required_system_locks(self):
         value=default_layout("commerce.new");self.assertEqual(value["shell"]["chat_width"],420);self.assertEqual(value["theme_id"],"jamesos-dark")
         panels={item["panel_id"]:item for item in value["panels"]}
-        for panel_id in ("destination","publication_status","external_confirmation"):
+        for panel_id in ("destination","publication_status"):
             self.assertTrue(panels[panel_id]["layout_locked"]);self.assertFalse(panels[panel_id]["hidden"]);self.assertIn("move",panels[panel_id]["action_locks"])
+        self.assertNotIn("external_confirmation",panels)
 
     def test_save_reload_cancel_baseline_and_reset_are_deterministic(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -67,7 +68,7 @@ class LayoutManagerTests(unittest.TestCase):
             text=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app?view=commerce.new").text
         for required in ("shell-divider","clampChat","Math.max(300","window.innerWidth*.55","window.innerWidth<=800","Customize layout","save-layout","cancel-layout","reset-layout","theme-chooser","jamesos-dark","layout-grid","data-panel-id='destination'","data-layout-locked='true'","panel-title","dragHandle","/app/layouts/"):
             with self.subTest(required=required):self.assertIn(required,text)
-        self.assertLess(text.index("panel-title'>Commerce Creator"),text.index("id='commerce-form'"));self.assertNotIn("textarea class='panel-title'",text)
+        self.assertLess(text.index("panel-title'>Product Studio"),text.index("id='commerce-form'"));self.assertNotIn("textarea class='panel-title'",text)
 
 
 if __name__=="__main__":unittest.main()

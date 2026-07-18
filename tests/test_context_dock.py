@@ -25,6 +25,9 @@ class ContextDockTests(unittest.TestCase):
         failed=build_navigation(NavigationContext(active_view="commerce.loading",selected_job_id="job",failed=True));self.assertTrue(any(item["view_id"]=="diagnostics" and item["badge"]=="warning" for item in failed))
         pending=build_navigation(NavigationContext(active_view="commerce.loading",selected_job_id="job",pending_approval=True));self.assertTrue(any(item["badge"]=="pending_approval" for item in pending))
 
+    def test_product_studio_has_human_readable_context_label(self):
+        self.assertEqual(next(item for item in build_navigation(NavigationContext(active_view="commerce.new")) if item["view_id"]=="commerce.new")["label"],"Product Studio")
+
     def test_agents_cannot_override_locked_navigation_or_unknown_views(self):
         for suggestion in ({"item_id":"home","label":"Replace Home","view_id":"commerce.new"},{"item_id":"x","label":"Fake","view_id":"not.registered"},{"item_id":"x","label":"Admin copy","view_id":"admin.home"}):
             with self.assertRaises(Exception):build_navigation(NavigationContext(agent_suggestions=[suggestion]))
