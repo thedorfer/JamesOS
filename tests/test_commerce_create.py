@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import base64
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import Mock,patch
 
@@ -22,6 +27,55 @@ def profile(profile_id,shop_id,slug,*,enabled=True,profile_type="commerce_shop")
 
 
 class CommerceCreateTests(unittest.TestCase):
+    def test_product_studio_pauses_for_revision_checked_selection_then_uploads_only_approved_artwork(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);client=Mock();provider_calls=[]
+            variants=[{"id":index+1,"title":f"{color} / {size}","is_available":True} for index,(color,size) in enumerate((color,size) for color in product_orchestrator.DEFAULT_COLORS for size in product_orchestrator.DEFAULT_SIZES)]
+            client.get_variants.side_effect=lambda *args:(provider_calls.append("variants") or {"variants":variants});client.upload_image_contents.side_effect=lambda name,data:(provider_calls.append(("upload",name,data)) or {"id":"upload-selected"});client.list_products.side_effect=lambda *args:(provider_calls.append("list") or {"data":[]});client.create_product.side_effect=lambda *args:(provider_calls.append("create") or {"id":"draft-selected","images":[]});client.get_product.return_value={"id":"draft-selected","images":[]}
+            orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=lambda:client));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");p["configuration"].update(artwork_palette=["warm cream","muted market red","muted market green"]);service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
+            queued=service.create_job(commerce_profile_id="bagholder-supply",exact_phrase="UNREALIZED LOSSES\nBUILD CHARACTER",product_brief="Bold centered typography artwork for market traders",listing_title="Unrealized Losses Shirt",special_instructions="Transparent source art; unpublished draft only",destination_confirmed=True)
+            paused=service.run_generation(queued["job_id"]);self.assertEqual(paused["stage"],"artwork_review");snapshot=service.artwork_review_snapshot(queued["job_id"]);self.assertEqual((len(snapshot["candidates"]),len(snapshot["local_previews"])),(3,9));self.assertEqual(provider_calls,[]);self.assertFalse(snapshot["selected_candidate_id"])
+            for candidate in snapshot["candidates"]:
+                self.assertEqual(candidate["dimensions"],[4500,5400]);self.assertTrue(candidate["transparency"]);self.assertEqual(candidate["safe_margin_result"],"pass");self.assertEqual(candidate["thumbnail_readability_result"],"pass");self.assertGreaterEqual(candidate["occupied_width_ratio"],.55);self.assertLessEqual(candidate["occupied_width_ratio"],.88);self.assertGreaterEqual(candidate["occupied_height_ratio"],.22);self.assertLessEqual(candidate["occupied_height_ratio"],.78)
+            self.assertEqual({item["candidate_name"] for item in snapshot["candidates"]},{"Clean centered stack","Loss emphasis","Character emphasis"});self.assertEqual({item["garment_color"] for item in snapshot["local_previews"]},{"black","navy","dark-heather"})
+            selected=snapshot["candidates"][1];saved=service.select_artwork(queued["job_id"],selected["candidate_id"],selected["digest"],expected_revision=0);self.assertEqual(saved["selection_revision"],1);self.assertEqual(provider_calls,[])
+            with self.assertRaises(StateConflictError):service.select_artwork(queued["job_id"],snapshot["candidates"][0]["candidate_id"],snapshot["candidates"][0]["digest"],expected_revision=0)
+            result=service.continue_with_selected_artwork(queued["job_id"],expected_revision=1);self.assertEqual(result["result"],"commerce_review_ready");self.assertEqual([item if isinstance(item,str) else item[0] for item in provider_calls].count("upload"),1);self.assertEqual(provider_calls.count("create"),1)
+            uploaded=next(item for item in provider_calls if isinstance(item,tuple));self.assertEqual(product_orchestrator._file_sha(Path(orch.load(queued["job_id"])["evidence"]["selection"]["selected"]["png_path"])),selected["digest"]);self.assertEqual(__import__("hashlib").sha256(base64.b64decode(uploaded[2])).hexdigest(),selected["digest"])
+            with self.assertRaises(StateConflictError):service.continue_with_selected_artwork(queued["job_id"],expected_revision=1)
+            self.assertEqual(orch.load(queued["job_id"])["publish_status"],"not_published");self.assertEqual(orch.load(queued["job_id"])["order_status"],"not_created");self.assertEqual(client.create_product.call_count,1)
+
+    def test_artwork_regeneration_retains_sets_clears_selection_and_never_contacts_provider(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            provider=Mock(side_effect=AssertionError("provider must not be constructed"));orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=provider));p=profile("bagholder-supply",1,"Shop");p["configuration"]["artwork_palette"]=["warm cream","muted market red","muted market green"];service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
+            queued=service.create_job(commerce_profile_id="bagholder-supply",exact_phrase="UNREALIZED LOSSES\nBUILD CHARACTER",product_brief="Bold centered typography artwork for market traders",special_instructions="No provider before selection",destination_confirmed=True);service.run_generation(queued["job_id"]);before=service.artwork_review_snapshot(queued["job_id"]);chosen=before["candidates"][0];service.select_artwork(queued["job_id"],chosen["candidate_id"],chosen["digest"],expected_revision=0)
+            regenerated=service.regenerate_artwork_review(queued["job_id"]);after=service.artwork_review_snapshot(queued["job_id"]);self.assertEqual((regenerated["candidate_set_revision"],len(orch.load(queued["job_id"])["evidence"]["candidate_sets"])),(2,2));self.assertIsNone(after["selected_candidate_id"]);self.assertTrue(regenerated["selection_required"]);self.assertEqual(len(after["local_previews"]),9);provider.assert_not_called()
+            replacement=after["candidates"][0];saved=service.select_artwork(queued["job_id"],replacement["candidate_id"],replacement["digest"],expected_revision=regenerated["selection_revision"]);selected_path=Path(orch.load(queued["job_id"])["evidence"]["selection"]["selected"]["png_path"]);selected_path.write_bytes(selected_path.read_bytes()+b"tampered")
+            with self.assertRaises(StateConflictError):service.continue_with_selected_artwork(queued["job_id"],expected_revision=saved["selection_revision"])
+            provider.assert_not_called()
+
+    def test_artwork_review_api_requires_csrf_and_chromium_enables_continue(self):
+        chrome=shutil.which("google-chrome") or shutil.which("chromium")
+        if not chrome:self.skipTest("Chrome/Chromium is required")
+        with tempfile.TemporaryDirectory() as temporary:
+            provider=Mock(side_effect=AssertionError("browser review must not contact provider"));orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=provider));p=profile("bagholder-supply",1,"Shop");p["configuration"]["artwork_palette"]=["warm cream","muted market red","muted market green"];service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
+            queued=service.create_job(commerce_profile_id="bagholder-supply",exact_phrase="UNREALIZED LOSSES\nBUILD CHARACTER",product_brief="Bold centered typography artwork for market traders",special_instructions="No provider before selection",destination_confirmed=True);service.run_generation(queued["job_id"]);snapshot=service.artwork_review_snapshot(queued["job_id"]);candidate=snapshot["candidates"][0]
+            client=TestClient(api.app,base_url="http://127.0.0.1:8787");headers={"Origin":"http://127.0.0.1:8787"}
+            with patch.object(api,"CommerceCreationService",return_value=service),patch.object(api,"list_commerce_profiles",return_value=[p]),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+                self.assertEqual(client.post(f"/commerce/jobs/{queued['job_id']}/select-artwork",json={"candidate_id":candidate["candidate_id"],"candidate_digest":candidate["digest"],"selection_revision":0},headers=headers).status_code,403)
+                page=client.get(f"/app?view=commerce.artwork-review&job_id={queued['job_id']}").text
+            script="""<script>window.fetch=async(url,options={})=>{const path=String(url);if(path.includes('/select-artwork'))return new Response(JSON.stringify({selection_revision:1}),{status:200,headers:{'Content-Type':'application/json'}});if(path.includes('/continue-selected-artwork')){localStorage.setItem('continued','yes');return new Response(JSON.stringify({review_url:'/final'}),{status:200,headers:{'Content-Type':'application/json'}})}return new Response('{}',{status:200,headers:{'Content-Type':'application/json'}})};document.addEventListener('DOMContentLoaded',()=>setTimeout(()=>{document.querySelector('[data-artwork-background=white]').click();localStorage.setItem('background',document.querySelector('.candidate-artwork').style.background?'yes':'no');document.querySelector('[data-select-artwork]').click();setTimeout(()=>{localStorage.setItem('selected',document.querySelector('[data-selected=true]')?'yes':'no');localStorage.setItem('enabled',document.querySelector('#continue-selected-artwork').disabled?'no':'yes');document.querySelector('#continue-selected-artwork').click()},100)},100))</script>"""
+            document=page.replace("</body>",script+"</body>")
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    if self.path=="/final":body=b"<!doctype html><body><h1>Product package review</h1><p>Selected approved artwork</p><script>document.body.dataset.backgroundWorked=localStorage.getItem('background');document.body.dataset.selectionVisible=localStorage.getItem('selected');document.body.dataset.continueEnabled=localStorage.getItem('enabled');document.body.dataset.continued=localStorage.getItem('continued')</script></body>"
+                    else:body=document.encode()
+                    self.send_response(200);self.send_header("Content-Type","text/html");self.end_headers();self.wfile.write(body)
+                def log_message(self,*args):pass
+            server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
+            try:rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=2500","--dump-dom",f"http://127.0.0.1:{server.server_port}/app"],capture_output=True,text=True,check=True,timeout=30).stdout
+            finally:server.shutdown();server.server_close()
+            self.assertIn('data-background-worked="yes"',rendered);self.assertIn('data-selection-visible="yes"',rendered);self.assertIn('data-continue-enabled="yes"',rendered);self.assertIn('data-continued="yes"',rendered);self.assertIn("Selected approved artwork",rendered);provider.assert_not_called()
     def test_artwork_preview_is_owned_read_only_png_with_safe_headers(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary)/"jobs"/"preview-job";root.mkdir(parents=True);artwork=root/"selected.png"

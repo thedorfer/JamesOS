@@ -13,6 +13,7 @@ from jamesos.core.errors import StateConflictError,ValidationError
 from jamesos.core.profiles.selection import load_commerce_profile_by_id
 from jamesos.services import product_orchestrator
 from jamesos.services.commerce_preparation import UnifiedCommercePreparation
+from jamesos.services.commerce_artwork import provider_free_preflight,render_local_garment_previews
 from jamesos.services.commerce_workflow import CommerceWorkflow,_atomic_json
 from jamesos.services.error_handler import handle_error
 
@@ -226,6 +227,14 @@ class CommerceCreationService:
             state["stage"]="generation_failed";state["generation_failure"]={"safe_message":str(getattr(exc,"user_message","") or "Product generation did not complete."),"upstream_reason_code":upstream,"failed_stage":str(getattr(exc,"stage","") or "local_artwork"),
                 "candidate_rejection_summary":safe_message if diversity else None,"manual_verification_required":False,"external_result_uncertain":False,"terminal_local_failure":True,"last_completed_stage":last_completed};product_orchestrator._atomic_json(self.orchestrator._path(job_id),state);raise
         state=self.orchestrator.load(job_id)
+        if state.get("stage")=="artwork_review":
+            evidence=state.setdefault("evidence",{});sets=evidence.setdefault("candidate_sets",[])
+            if not sets:sets.append({"revision":1,"created_at":_now(),"provider_contacted":False,"candidates":evidence.get("candidates") or []})
+            state["candidate_set_revision"]=int(sets[-1]["revision"]);state.setdefault("selection_revision",0)
+            previews=[];preview_root=self.orchestrator._path(job_id).parent/"local-garment-previews"/f"set-{state['candidate_set_revision']}"
+            for candidate in evidence.get("candidates") or []:previews.extend(render_local_garment_previews(candidate,preview_root))
+            evidence["local_garment_previews"]=previews;state["provider_write_status"]="not_started";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+            return {"result":"artwork_review_required","job_id":job_id,"stage":"artwork_review","artwork_review_url":f"/app?view=commerce.artwork-review&job_id={job_id}","provider_contacted":False,"publication_status":"not_published","order_status":"not_created"}
         if not ((state.get("evidence") or {}).get("selection") or {}).get("selected"):
             last_completed=_last_completed_stage(state);summary="Local artwork generation did not produce an eligible selection."
             state["stage"]="generation_failed";state["generation_failure"]={"safe_message":summary,"candidate_rejection_summary":summary,
@@ -246,6 +255,58 @@ class CommerceCreationService:
             state=self.orchestrator.load(job_id);draft=(state.get("evidence") or {}).get("draft") or {};manual=bool(getattr(exc,"context",{}).get("manual_verification_required") and draft.get("printify_product_id"));safe_message=("Manual verification is required before this Printify draft can continue." if manual else str(getattr(exc,"user_message","") or getattr(exc,"diagnostic_message","") or "Product generation did not complete."));state["stage"]="manual_verification_required" if manual else "generation_failed";state["generation_failure"]={"safe_message":safe_message,"manual_verification_required":manual,"external_result_uncertain":manual or (any(item.get("uncertain") for item in json.loads((self.orchestrator._path(job_id).parent/"unified-preparation.json").read_text()).get("provider_actions") or []) if (self.orchestrator._path(job_id).parent/"unified-preparation.json").is_file() else False)};state["manual_verification_required"]=manual;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state);raise
         state=self.orchestrator.load(job_id);state["stage"]="awaiting_human_approval";state["provider_write_status"]="completed";state["revision_number"]=max(1,int(state.get("revision_number") or 0));product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         return result
+
+    def artwork_review_snapshot(self,job_id:str)->dict[str,Any]:
+        if not isinstance(job_id,str) or not _JOB_ID.fullmatch(job_id) or Path(job_id).name!=job_id:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Artwork review job ID is invalid.",operation="commerce_creation.artwork_review",stage="input")
+        state=self.orchestrator.load(job_id);evidence=state.get("evidence") or {};upload=evidence.get("upload") or {};draft=evidence.get("draft") or {}
+        if state.get("stage")!="artwork_review" or upload or draft:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Artwork review is unavailable after provider contact.",operation="commerce_creation.artwork_review",stage="state")
+        diversity={str(item.get("candidate_id")):item for item in (evidence.get("candidate_diversity") or {}).get("candidates") or []};selected=(evidence.get("selection") or {}).get("selected") or {};rows=[]
+        for item in evidence.get("candidates") or []:
+            checks=item.get("quality_checks") or {};eligible=all(value is True for key,value in checks.items() if key.startswith("hard_")) and diversity.get(str(item.get("candidate_id")),{"eligible":True}).get("eligible") is True
+            if not eligible:continue
+            bounds=item.get("visible_alpha_bounds") or [0,0,0,0];width=(bounds[2]-bounds[0])/4500 if len(bounds)==4 else 0;height=(bounds[3]-bounds[1])/5400 if len(bounds)==4 else 0
+            rows.append({"candidate_id":item["candidate_id"],"candidate_name":{"prompt_centered":"Clean centered stack","prompt_balanced":"Loss emphasis","prompt_compact":"Character emphasis"}.get(item["candidate_id"],item["candidate_id"]),"digest":item["png_sha256"],"layout_style":item.get("composition_family"),"dimensions":item.get("dimensions"),"transparency":item.get("transparency_present"),"palette":item.get("palette_summary"),"occupied_bounds":bounds,"occupied_width_ratio":round(width,3),"occupied_height_ratio":round(height,3),"safe_margin_result":"pass" if item.get("safe_margin_passed") else "fail","thumbnail_readability_result":"pass" if float(item.get("thumbnail_readability_score") or 0)>=7 else "fail","novelty_result":(item.get("novelty_evidence") or {}).get("status","materially_distinct"),"selected":selected.get("candidate_id")==item.get("candidate_id"),"url":f"/commerce/jobs/{job_id}/artwork-candidates/{item['candidate_id']}"})
+        previews=[{"asset_id":item["asset_id"],"candidate_id":item["candidate_id"],"garment_color":item["garment_color"],"label":item["label"],"url":f"/commerce/jobs/{job_id}/local-previews/{item['asset_id']}"} for item in evidence.get("local_garment_previews") or []]
+        return {"job_id":job_id,"stage":"artwork_review","candidate_set_revision":int(state.get("candidate_set_revision") or 1),"selection_revision":int(state.get("selection_revision") or 0),"selected_candidate_id":selected.get("candidate_id"),"candidates":rows,"local_previews":previews,"product_studio_fields":state.get("product_brief") or {},"provider_contacted":False,"printify_image_state":"none","printify_draft_state":"none","publication_status":"not_published","etsy_listing_status":"not_created","order_status":"not_created"}
+
+    def select_artwork(self,job_id:str,candidate_id:str,candidate_digest:str,*,expected_revision:int,action:str="Select this artwork")->dict[str,Any]:
+        state=self.orchestrator.load(job_id);snapshot=self.artwork_review_snapshot(job_id)
+        if expected_revision!=snapshot["selection_revision"]:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Artwork selection changed; refresh before selecting.",operation="commerce_creation.select_artwork",stage="revision")
+        allowed=next((item for item in snapshot["candidates"] if item["candidate_id"]==candidate_id and item["digest"]==candidate_digest),None)
+        if not allowed:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Selected artwork is not an eligible job-owned candidate.",operation="commerce_creation.select_artwork",stage="candidate")
+        candidate=next(item for item in state["evidence"]["candidates"] if item["candidate_id"]==candidate_id)
+        path=Path(candidate["png_path"])
+        if candidate.get("job_id")!=job_id or not path.is_file() or product_orchestrator._file_sha(path)!=candidate_digest:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Selected candidate ownership or digest changed.",operation="commerce_creation.select_artwork",stage="integrity")
+        revision=expected_revision+1;record={"selected":candidate,"candidate_id":candidate_id,"selected_candidate_digest":candidate_digest,"selection_timestamp":_now(),"selection_revision":revision,"approving_user_action":action,"job_ownership":job_id}
+        state["evidence"]["selection"]=record;state["selection_revision"]=revision;state["updated_at"]=_now();product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        return {"job_id":job_id,"selected_candidate_id":candidate_id,"selected_candidate_digest":candidate_digest,"selection_revision":revision,"provider_contacted":False}
+
+    def continue_with_selected_artwork(self,job_id:str,*,expected_revision:int)->dict[str,Any]:
+        state=self.orchestrator.load(job_id);snapshot=self.artwork_review_snapshot(job_id);selection=(state.get("evidence") or {}).get("selection") or {};selected=selection.get("selected") or {}
+        if expected_revision!=snapshot["selection_revision"] or selection.get("selection_revision")!=expected_revision:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Artwork selection revision changed.",operation="commerce_creation.continue_artwork",stage="revision")
+        if not selected:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Select exactly one eligible artwork candidate before continuing.",operation="commerce_creation.continue_artwork",stage="selection")
+        path=Path(str(selected.get("png_path") or ""));digest=selection.get("selected_candidate_digest")
+        if selected.get("job_id")!=job_id or not path.is_file() or product_orchestrator._file_sha(path)!=digest or selected.get("png_sha256")!=digest:raise StateConflictError("STATE_CONFLICT",diagnostic_message="Selected artwork digest no longer matches the approved file.",operation="commerce_creation.continue_artwork",stage="integrity")
+        self.orchestrator._transition(state,"design_selected","human_candidate_selection",{"candidate_id":selected["candidate_id"],"candidate_sha256":digest,"selection_revision":expected_revision})
+        state=self.orchestrator.load(job_id);state["stage"]="provider_preflight";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        profile=self._profile(str(state.get("commerce_profile_id") or ""));requested_title=str((state.get("product_brief") or {}).get("requested_listing_title") or "")
+        def listing_generator(brief,candidate):
+            listing=product_orchestrator.generate_listing(brief,candidate)
+            if requested_title:listing["title"]=requested_title
+            return listing
+        result=UnifiedCommercePreparation(self.orchestrator,workflow=self.workflow,profile_loader=lambda required=True:profile,listing_generator=listing_generator).create(prompt=None,resume_job_id=job_id,authorize_draft_work=True)
+        state=self.orchestrator.load(job_id);state["stage"]="awaiting_human_approval";state["provider_write_status"]="completed";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        return result
+
+    def regenerate_artwork_review(self,job_id:str)->dict[str,Any]:
+        state=self.orchestrator.load(job_id);self.artwork_review_snapshot(job_id);evidence=state["evidence"];revision=int(state.get("candidate_set_revision") or 1)+1;root=self.orchestrator._path(job_id).parent/"candidate-sets"/f"set-{revision}"
+        source=product_orchestrator._independent_evidence(state,root,state["brief"]);candidates=product_orchestrator._independent_candidates(source,root/"candidates",state["brief"])
+        for item in candidates:item["job_id"]=job_id;item["generation_attempt"]=revision
+        diversity=product_orchestrator.validate_candidate_set(candidates,state["brief"],self.orchestrator._prior_designs(state));evidence.setdefault("candidate_sets",[]).append({"revision":revision,"created_at":_now(),"provider_contacted":False,"candidates":candidates});evidence["candidates"]=candidates;evidence["candidate_diversity"]=diversity;evidence.pop("selection",None);evidence.pop("human_design_approval",None)
+        previews=[]
+        for candidate in candidates:previews.extend(render_local_garment_previews(candidate,root/"local-garment-previews"))
+        evidence["local_garment_previews"]=previews;state["candidate_set_revision"]=revision;state["selection_revision"]=int(state.get("selection_revision") or 0)+1;state["stage"]="artwork_review";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        return {"job_id":job_id,"stage":"artwork_review","candidate_set_revision":revision,"selection_revision":state["selection_revision"],"selection_required":True,"provider_contacted":False,"publication_status":"not_published","order_status":"not_created"}
 
     def run_generation_safely(self,job_id:str)->None:
         try:self.run_generation(job_id)
@@ -289,7 +350,7 @@ class CommerceCreationService:
 
     def safe_status(self,job_id:str)->dict[str,Any]:
         state=self._reconcile_review_ready(job_id,self.orchestrator.load(job_id));destination=state.get("destination") or {};stage=str(state.get("stage") or "")
-        labels={"generation_queued":"Queued","generating_artwork":"Generating artwork…","preparing_listing":"Preparing listing…","uploading_artwork":"Uploading artwork…","creating_printify_draft":"Creating unpublished draft…","retrieving_mockups":"Retrieving mockups…","revision_requested":"Revision queued…","revision_generating_artwork":"Revising artwork…","revision_artwork_selected":"Preparing revised listing…","revision_provider_update_started":"Updating existing draft…","revision_provider_update_verified":"Retrieving revision mockups…","revision_mockups_ready":"Preparing revised proposal…","awaiting_final_approval":"Ready for review","generation_failed":"Generation failed","revision_failed":"Revision failed","manual_verification_required":"Manual verification required"}
+        labels={"generation_queued":"Queued","artwork_review":"Select artwork","generating_artwork":"Generating artwork…","preparing_listing":"Preparing listing…","uploading_artwork":"Uploading artwork…","creating_printify_draft":"Creating unpublished draft…","retrieving_mockups":"Retrieving mockups…","revision_requested":"Revision queued…","revision_generating_artwork":"Revising artwork…","revision_artwork_selected":"Preparing revised listing…","revision_provider_update_started":"Updating existing draft…","revision_provider_update_verified":"Retrieving revision mockups…","revision_mockups_ready":"Preparing revised proposal…","awaiting_final_approval":"Ready for review","generation_failed":"Generation failed","revision_failed":"Revision failed","manual_verification_required":"Manual verification required"}
         review_url=f"/app?view=commerce.review&job_id={job_id}"
         failure_message=(state.get("generation_failure") or {}).get("safe_message") or (state.get("last_error") or {}).get("user_message") or (state.get("stage_output") or {}).get("user_message")
         rejection_summary=(state.get("generation_failure") or {}).get("candidate_rejection_summary") or (failure_message if (state.get("evidence") or {}).get("candidate_diversity") else None)
@@ -307,7 +368,7 @@ class CommerceCreationService:
         timeline=[stage_alias.get(str(item.get("stage")),str(item.get("stage"))) for item in state.get("transitions") or [] if item.get("result")=="completed"]
         return {"job_id":job_id,"stage":stage,"progress_label":labels.get(stage,stage.replace("_"," ").title()),"revision_number":state.get("revision_number",0),
             "brand_display_name":state.get("brand_display_name"),"printify_shop_title":destination.get("printify_shop_title"),"printify_shop_id":destination.get("printify_shop_id"),"etsy_shop_slug":destination.get("etsy_shop_slug"),
-            "ready_for_review":review_ready,"failed":stage.endswith("_failed") or manual_state,"failure_message_safe":failure_message,"review_url":review_url,
+            "ready_for_review":review_ready,"artwork_review_required":stage=="artwork_review","artwork_review_url":f"/app?view=commerce.artwork-review&job_id={job_id}","failed":stage.endswith("_failed") or manual_state,"failure_message_safe":failure_message,"review_url":review_url,
             "printify_draft_exists":bool(draft.get("printify_product_id")),"printify_product_id":draft.get("printify_product_id"),
             "last_completed_stage":last_completed,"failed_stage":(state.get("generation_failure") or {}).get("failed_stage"),"provider_write_status":state.get("provider_write_status","not_started"),"candidate_rejection_summary":rejection_summary,"manual_verification_required":uncertain or manual_state,"terminal_outcome":terminal_outcome,
             "open_product_review_allowed":review_ready,"retry_allowed":stage=="generation_failed" and not uncertain and not draft.get("printify_product_id"),

@@ -19,8 +19,8 @@ from jamesos.services.product_orchestrator import _atomic_json
 
 ROOT=VAULT/"JamesOS"/"ApplicationShell"/"conversations"
 CONVERSATION_RE=re.compile(r"^[A-Za-z0-9_-]{20,100}$")
-VIEWS={"dashboard","agency.home","agency.agent","commerce.new","commerce.loading","commerce.review","commerce.diagnostics","commerce.published","jobs.list","jobs.detail","profiles","settings","diagnostics","admin.home"}
-VIEW_TITLES={"dashboard":"Home","agency.home":"The Agency","agency.agent":"Agent details","admin.home":"Admin","commerce.new":"Product Studio","commerce.loading":"Product Studio","commerce.review":"Product Studio review","commerce.diagnostics":"Product Studio diagnostics","commerce.published":"Published product","jobs.list":"Jobs","jobs.detail":"Job detail","profiles":"Profiles","settings":"Settings","diagnostics":"Diagnostics"}
+VIEWS={"dashboard","agency.home","agency.agent","commerce.new","commerce.loading","commerce.artwork-review","commerce.review","commerce.diagnostics","commerce.published","jobs.list","jobs.detail","profiles","settings","diagnostics","admin.home"}
+VIEW_TITLES={"dashboard":"Home","agency.home":"The Agency","agency.agent":"Agent details","admin.home":"Admin","commerce.new":"Product Studio","commerce.loading":"Product Studio","commerce.artwork-review":"Product Studio artwork review","commerce.review":"Product Studio review","commerce.diagnostics":"Product Studio diagnostics","commerce.published":"Published product","jobs.list":"Jobs","jobs.detail":"Job detail","profiles":"Profiles","settings":"Settings","diagnostics":"Diagnostics"}
 FORM_FIELDS={"exact_phrase":500,"product_brief":5000,"listing_title":140,"special_instructions":3000}
 COMMANDS={"navigate","select_profile","form_patch","form_clear","open_job","open_review","show_notification","show_confirmation"}
 CONFIRMATIONS={"start_generation","request_revision","publish"}

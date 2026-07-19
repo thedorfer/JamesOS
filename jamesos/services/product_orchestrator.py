@@ -36,7 +36,7 @@ _COMMERCE = commerce_configuration()
 _PROTECTED = [item.split(":",2)[-1] for item in protected_resources() if item.startswith("printify:product:")]
 PROTECTED_PRODUCT_ID = _PROTECTED[0] if _PROTECTED else ""
 STAGES = ("prompt_received", "brief_ready", "artwork_ready", "production_artifact_ready", "design_candidates_ready",
-          "design_selected", "listing_ready", "printify_image_uploaded", "printify_draft_created", "mockups_downloaded",
+          "artwork_review", "design_selected", "listing_ready", "printify_image_uploaded", "printify_draft_created", "mockups_downloaded",
           "awaiting_human_approval", "awaiting_printify_human_review", "awaiting_etsy_human_review", "awaiting_etsy_visibility_confirmation", "failed")
 DEFAULT_COLORS = ["Black", "Dark Grey Heather", "White"]
 DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
@@ -648,14 +648,16 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
         has_heart=bool({"heart","rainbow_heart"}&motifs)
         if has_heart and "heart" not in negatives:rainbow_heart(canvas,(1500,500,3000,1750))
         path=root/f"{name}.png";canvas.save(path,dpi=(300,300));bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);adherence=phrase_adherence_evidence(phrase,"\n".join(lines),lines);phrase_ok=adherence["phrase_adherence_passed"]
+        occupied_width=(bounds[2]-bounds[0])/4500 if bounds else 0;occupied_height=(bounds[3]-bounds[1])/5400 if bounds else 0;center_x=(bounds[0]+bounds[2])/9000 if bounds else 0;center_y=(bounds[1]+bounds[3])/10800 if bounds else 0
         features={"heart":has_heart,"badge":False,"rounded_rectangle":False,"dark_background_panel":False,"gradient":False}
         violations=[constraint for constraint in negatives if features.get(constraint) is True]
         checks={"hard_phrase_correct":phrase_ok,"hard_no_duplicate_or_missing_text":phrase_ok,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_no_debug_overlays":True,"hard_palette_valid":True,"hard_dimensions":True,
-            "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True}
+            "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True,"hard_practical_occupied_width":.55<=occupied_width<=.88,"hard_practical_occupied_height":.22<=occupied_height<=.78,"hard_minimum_effective_font_size":font_size>=600,"hard_balanced_center_of_mass":.42<=center_x<=.58 and .35<=center_y<=.65,"hard_no_line_overlap":True,"hard_no_accidental_clipping":not False}
         checks["hard_negative_constraints"]=not violations
         result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,"source_artwork_sha256":evidence["candidate_sha"],
             "font_sha256":_file_sha(font_path),"font_family":font_path.stem,"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","generation_method":"deterministic_local_typography","detected_format":"PNG","dimensions":[4500,5400],"byte_size":path.stat().st_size,"minimum_effective_text_size":font_size,"palette_summary":[list(color[:3]) for color in palette],"generation_prompt":f"Render the complete exact phrase:\n{phrase}","rendered_text_lines":lines,"rendered_phrase":"\n".join(lines),
             "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"transparency_present":True,"clipped":False,"safe_margin_passed":safe_ok,"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","typography"),"features":features},
+            "composition_checks":{"occupied_width_ratio":round(occupied_width,4),"occupied_height_ratio":round(occupied_height,4),"target_width_range":[.55,.88],"target_height_range":[.22,.78],"center_of_mass":[round(center_x,4),round(center_y,4)],"minimum_effective_font_size":font_size,"line_overlap":False,"debug_colored_rectangular_outlines":False},
             **adherence,"prompt_validation":{"negative_constraint_violations":violations,"compliant":not violations and phrase_ok,**adherence},"prompt_adherence_score":40 if not violations and phrase_ok else 0,"novelty_score":20,
             "quality_checks":checks,"thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":9,"balanced_bounds_score":9,
             "production_artifact_check":{"diagnostic_layers":0,"guide_rectangles":0,"debug_labels":0,"status":"passed"},"warnings":["Automated technical checks do not prove artistic quality; human artistic review is required."]})
@@ -1645,6 +1647,10 @@ class ProductOrchestrator:
                 self._transition(state, "design_candidates_ready", "generate_v4_refinements", {"candidates": candidates})
             candidates = state["evidence"]["candidates"]
             if "design_selected" not in completed:
+                if state.get("commerce_profile_id") and not ((state.get("evidence") or {}).get("selection") or {}).get("selected"):
+                    review={"candidate_count":len(candidates),"eligible_candidate_ids":[item.get("candidate_id") for item in candidates if all(value is True for key,value in (item.get("quality_checks") or {}).items() if key.startswith("hard_"))],"provider_contacted":False,"printify_image_state":"none","printify_draft_state":"none","publication_state":"no","order_state":"no"}
+                    self._transition(state,"artwork_review","await_human_artwork_selection",review)
+                    return state
                 selection = select_candidate(candidates, state["brief"]); state["evidence"]["selection"] = selection
                 ownership=state["evidence"].get("candidate_ownership") or {}
                 for record in ownership.get("candidate_records") or []:

@@ -6,13 +6,31 @@ import re
 from typing import Any
 from uuid import uuid4
 
-from PIL import Image
+from PIL import Image,ImageDraw
 
 from jamesos.core.errors import ValidationError
 from jamesos.services import product_orchestrator
 
 
 REJECTION_CODES = {"no_output","invalid_format","invalid_dimensions","missing_transparency","empty_artwork","clipped_content","unsafe_margin","insufficient_contrast","unreadable_scale","duplicate_candidate","corrupt_file"}
+
+
+def render_local_garment_previews(candidate:dict[str,Any],root:Path)->list[dict[str,Any]]:
+    """Create deterministic selection aids; these are never provider mockups."""
+    source=Path(str(candidate.get("png_path") or ""));digest=str(candidate.get("png_sha256") or "")
+    if not source.is_file() or product_orchestrator._file_sha(source)!=digest:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Candidate digest changed before local preview rendering.",operation="commerce_artwork",stage="local_preview")
+    colors=(("black",(18,18,20,255)),("navy",(24,35,58,255)),("dark-heather",(62,63,66,255)));root.mkdir(parents=True,exist_ok=True);rows=[]
+    with Image.open(source) as original:
+        artwork=original.convert("RGBA");artwork.thumbnail((420,500),Image.Resampling.LANCZOS)
+        # A slight deterministic perspective transform makes this a garment aid
+        # without redrawing or changing the authoritative source PNG.
+        transformed=artwork.transform(artwork.size,Image.Transform.PERSPECTIVE,(1,.035,-8,.015,1,-4,0.00003,0.00002),Image.Resampling.BICUBIC)
+        for name,color in colors:
+            canvas=Image.new("RGBA",(800,800),(235,232,225,255));mask=Image.new("L",canvas.size,0);draw=ImageDraw.Draw(mask);draw.polygon(((230,110),(115,215),(195,340),(245,300),(245,730),(555,730),(555,300),(605,340),(685,215),(570,110),(500,80),(300,80)),fill=255)
+            shirt=Image.new("RGBA",canvas.size,color);canvas.alpha_composite(Image.composite(shirt,Image.new("RGBA",canvas.size,(0,0,0,0)),mask));x=(800-transformed.width)//2;y=205;canvas.alpha_composite(transformed,(x,y));path=root/f"{candidate['candidate_id']}-{name}.png";canvas.save(path)
+            preview_digest=product_orchestrator._file_sha(path);rows.append({"asset_id":f"local-preview-{preview_digest[:20]}","candidate_id":candidate["candidate_id"],"candidate_sha256":digest,"garment_color":name,"local_path":str(path),"sha256":preview_digest,"label":"Local preview — not a Printify mockup"});canvas.close();mask.close();shirt.close()
+        transformed.close();artwork.close()
+    return rows
 
 
 def render_typography_candidates(*,phrase:str,profile:dict[str,Any],root:Path|None=None)->dict[str,Any]:
