@@ -57,22 +57,16 @@ class CommerceCreateTests(unittest.TestCase):
         rows=[profile("unitystitches",9437076,"UnityStitches"),profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
         rows[1]["display_name"]="Bagholder <Shop>"
         with patch.object(api,"list_commerce_profiles",return_value=rows) as listed,patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
-            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new")
-        listed.assert_called_once_with(enabled_only=True)
-        self.assertEqual(response.status_code,200);self.assertEqual(response.text.count("type='radio'"),2);self.assertIn("28275232",response.text);self.assertIn("9437076",response.text);self.assertIn("Bagholder &lt;Shop&gt;",response.text);self.assertNotIn("Bagholder <Shop>",response.text)
-        bagholder=response.text.split("value='bagholder-supply'",1)[1].split(">",1)[0];unity=response.text.split("value='unitystitches'",1)[1].split(">",1)[0]
-        self.assertIn("checked",bagholder);self.assertNotIn("checked",unity);self.assertIn("data-shop-id='28275232'",response.text);self.assertIn("data-shop-id='9437076'",response.text)
-        self.assertIn("JamesOS Product Studio",response.text);self.assertNotIn("Commerce Copilot",response.text);self.assertIn("Ask Product Studio",response.text)
-        self.assertIn("Thinking…",response.text);self.assertIn("Preparing suggestions…",response.text);self.assertIn("Suggestions ready",response.text);self.assertIn("if(inFlight)return",response.text);self.assertNotIn("11434",response.text);self.assertIn("data-request-state='idle'",response.text)
-        self.assertIn("type='button' id='copilot-send'",response.text);self.assertIn("profile_id:x.value",response.text);self.assertIn("finally{inFlight=false;box.disabled=false;send.disabled=false",response.text)
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new",follow_redirects=False)
+        listed.assert_not_called();self.assertEqual(response.status_code,303);self.assertEqual(response.headers["location"],"/app?view=commerce.new");self.assertNotIn("Bagholder <Shop>",response.text)
 
     def test_new_page_does_not_change_selected_profile_pointer(self):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")]
         with tempfile.TemporaryDirectory() as temporary:
             pointer=Path(temporary)/"selected_commerce_profile";pointer.write_text("unitystitches\n");before=pointer.read_bytes()
             with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",side_effect=lambda:pointer.read_text().strip()),patch.object(api,"_require_local"):
-                response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new")
-            self.assertEqual(response.status_code,200);self.assertEqual(pointer.read_bytes(),before);self.assertIn("value='unitystitches' data-printify-title='unitystitches' data-shop-id='9437076' data-etsy='UnityStitches' checked",response.text)
+                response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new",follow_redirects=False)
+            self.assertEqual(response.status_code,303);self.assertEqual(response.headers["location"],"/app?view=commerce.new");self.assertEqual(pointer.read_bytes(),before)
 
     def test_safe_status_exposes_destination_not_prompt(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -226,7 +220,13 @@ class CommerceCreateTests(unittest.TestCase):
             p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
             queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="Bold centered typography for market traders",destination_confirmed=True)
             state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={"safe_message":"All candidates omitted the required phrase ‘REAL COMFORT’.","last_completed_stage":"production_artifact_ready","terminal_local_failure":True});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
-            status=service.safe_status(queued["job_id"]);self.assertEqual(status["last_completed_stage"],"production_artifact_ready");self.assertEqual(status["provider_write_status"],"not_started");self.assertEqual(status["return_to_form_url"],"/commerce/new");self.assertFalse(status["retry_allowed"]);self.assertFalse(status["printify_draft_exists"]);self.assertEqual(status["publication_status"],"not_published");self.assertEqual(status["order_status"],"not_created")
+            status=service.safe_status(queued["job_id"]);self.assertEqual(status["last_completed_stage"],"production_artifact_ready");self.assertEqual(status["provider_write_status"],"not_started");self.assertEqual(status["return_to_form_url"],"/app?view=commerce.new");self.assertTrue(status["retry_allowed"]);self.assertFalse(status["printify_draft_exists"]);self.assertEqual(status["publication_status"],"not_published");self.assertEqual(status["order_status"],"not_created")
+
+    def test_failed_artwork_status_has_sanitized_candidate_diagnostics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no provider"))));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
+            queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="Bold centered typography artwork palette for market traders",destination_confirmed=True);state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={"safe_message":"No eligible artwork.","last_completed_stage":"brief_ready","terminal_local_failure":True});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
+            diagnostic=service.safe_status(queued["job_id"])["artwork_diagnostics"];self.assertEqual((diagnostic["candidate_count"],diagnostic["accepted_candidate_count"],diagnostic["rejected_candidate_count"]),(0,0,0));self.assertEqual(diagnostic["zero_candidate_rejection"]["code"],"no_candidates");self.assertNotIn(str(Path(temporary)),json.dumps(diagnostic))
 
     def test_no_eligible_selection_is_persisted_without_reraising(self):
         with tempfile.TemporaryDirectory() as temporary:

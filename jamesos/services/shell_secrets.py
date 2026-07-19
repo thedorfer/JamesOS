@@ -38,7 +38,7 @@ class ShellSecretStore:
     def status(self) -> list[dict[str, object]]:
         values = self._read()
         updated = datetime.fromtimestamp(self.path.stat().st_mtime, timezone.utc).isoformat() if self.path.exists() else None
-        return [{"provider": p, "configured": bool(values.get(key)), "last_updated": updated} for p, key in SUPPORTED_PROVIDERS.items()]
+        return [{"provider": p, "configured": bool(values.get(key)), "last_updated": updated,"masked":("********"+values[key][-4:] if values.get(key) else None)} for p, key in SUPPORTED_PROVIDERS.items()]
 
     def save(self, provider: str, secret: str) -> dict[str, object]:
         provider = self._provider(provider)

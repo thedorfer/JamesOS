@@ -24,6 +24,13 @@ class DashboardAdminTests(unittest.TestCase):
             self.assertEqual(saved["configuration"]["printify_shop_id"],123);self.assertTrue(path.is_file());job.assert_not_called()
             with self.assertRaises(ValueError):service.save("unknown",{"display_name":"X"})
             with self.assertRaises(ValueError):service.save("bagholder-supply",{"environment":"SECRET"})
+
+    def test_profile_settings_require_current_revision_and_create_rollback_and_sanitized_audit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/"profiles.json";service=ShellProfileSettings(path);first=service.save("bagholder-supply",{"display_name":"First"})
+            second=service.save("bagholder-supply",{"display_name":"Second"},revision=first["revision"]);self.assertNotEqual(first["revision"],second["revision"])
+            self.assertTrue(path.with_name("profiles.rollback.json").is_file());audit=path.with_name("profiles.audit.json").read_text();self.assertIn("commerce_profile_updated",audit);self.assertNotIn("First",audit);self.assertNotIn("Second",audit)
+            with self.assertRaisesRegex(ValueError,"refresh"):service.save("bagholder-supply",{"display_name":"Stale"},revision=first["revision"])
     def test_dashboard_is_sanitized_and_read_only(self):
         provider = unittest.mock.Mock(side_effect=AssertionError("provider call"))
         health = lambda profiles: {"state":"yellow","label":"Usable","systems":[{"id":"ollama","label":"Ollama","status":"unavailable","message":"Optional"}]}
@@ -40,6 +47,7 @@ class DashboardAdminTests(unittest.TestCase):
             self.assertEqual(os.stat(path).st_mode & 0o777,0o600)
             self.assertNotIn("private-secret-123",str(store.status()))
             store.save("printify",""); self.assertIn("private-secret-123",path.read_text())
+            status=next(x for x in store.status() if x["provider"]=="printify");self.assertEqual(status["masked"],"********-123");self.assertNotIn("private-secret-123",str(status))
             with self.assertRaises(PermissionError):store.delete("printify",confirmed=False)
             store.delete("printify",confirmed=True); self.assertNotIn("private-secret-123",path.read_text())
             with self.assertRaises(ValueError):store.save("unknown","value")
@@ -53,6 +61,12 @@ class DashboardAdminTests(unittest.TestCase):
         self.assertIn("sessionStorage.setItem('jamesos-commerce-form'",text)
         self.assertNotIn("Confirm destination '+(selected()?.dataset.etsy",text)
         self.assertIn("type='password'",text);self.assertNotIn("11434",text)
+        self.assertIn("data-profile-edit",text);self.assertIn("data-profile-cancel",text);self.assertIn("readonly",text);self.assertIn("Listing guidance defines the identifier",text)
+
+    def test_legacy_new_product_route_redirects_to_shell(self):
+        with patch.object(api,"_require_local"):
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/commerce/new",follow_redirects=False)
+        self.assertEqual(response.status_code,303);self.assertEqual(response.headers["location"],"/app?view=commerce.new")
 
     def test_credential_routes_require_origin_csrf_and_valid_provider_and_never_return_secret(self):
         client=TestClient(api.app,base_url="http://127.0.0.1:8787")

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 from typing import Any,Callable
 from uuid import uuid4
+from PIL import Image
 
 from jamesos.core.errors import StateConflictError,ValidationError
 from jamesos.core.profiles.selection import load_commerce_profile_by_id
@@ -27,6 +28,35 @@ def _clean(value:Any,limit:int,field:str,*,required:bool=False)->str:
     if required and not value:raise ValidationError("VALIDATION_FAILED",diagnostic_message=f"{field} is required.",operation="commerce_creation",stage="input")
     if len(value)>limit or any(ord(char)<32 and char not in "\n\t" for char in value):raise ValidationError("VALIDATION_FAILED",diagnostic_message=f"{field} is invalid or too long.",operation="commerce_creation",stage="input")
     return value
+
+
+_ARTWORK_REJECTIONS={"hard_dimensions":("dimensions_too_small","Artwork dimensions do not meet the print requirement."),"hard_valid_transparency":("invalid_transparency","Artwork transparency is missing or invalid."),"hard_no_unexpected_opaque_canvas":("background_detected","An opaque background was detected where transparency is required."),"hard_artwork_integrity":("file_corruption","The artwork file could not be validated."),"hard_candidate_unique":("duplicate_candidate","The candidate duplicates another generated design."),"hard_phrase_correct":("typography_readability","The required phrase was not rendered exactly."),"hard_no_duplicate_or_missing_text":("typography_readability","Required typography was missing or duplicated."),"hard_safe_bounds":("incorrect_aspect_or_bounds","Artwork extends outside the safe print bounds."),"hard_print_resolution":("dimensions_too_small","Artwork resolution is below the print requirement."),"hard_novelty":("duplicate_candidate","The artwork is not materially distinct."),"hard_prompt_adherence":("candidate_quality_rejection","Artwork did not follow the approved brief."),"hard_negative_constraints":("candidate_quality_rejection","Artwork included prohibited visual content.")}
+
+
+def _artwork_diagnostics(state:dict[str,Any])->dict[str,Any]:
+    evidence=state.get("evidence") or {};candidates=evidence.get("candidates") if isinstance(evidence.get("candidates"),list) else [];diversity=evidence.get("candidate_diversity") if isinstance(evidence.get("candidate_diversity"),dict) else {};rows=[]
+    diversity_rows={str(item.get("candidate_id") or ""):item for item in diversity.get("candidates") or [] if isinstance(item,dict)}
+    for index,candidate in enumerate(candidates):
+        checks=candidate.get("quality_checks") if isinstance(candidate.get("quality_checks"),dict) else {};rejections=[]
+        for key,passed in checks.items():
+            if key.startswith("hard_") and passed is not True:
+                code,explanation=_ARTWORK_REJECTIONS.get(key,("candidate_quality_rejection","Artwork failed a required local eligibility check."));rejections.append({"code":code,"explanation":explanation})
+        for reason in (diversity_rows.get(str(candidate.get("candidate_id") or ""),{}).get("rejection_reasons") or candidate.get("rejection_reasons") or []):
+            category=str(reason.get("category") if isinstance(reason,dict) else reason);code="duplicate_candidate" if category=="novelty" else "typography_readability" if category=="prompt_adherence" else "candidate_quality_rejection";rejections.append({"code":code,"explanation":"Artwork was rejected by the local novelty check." if code=="duplicate_candidate" else "Artwork did not preserve the requested phrase and design direction."})
+        detected_format=str(candidate.get("detected_format") or "PNG").upper();dimensions=candidate.get("dimensions") or candidate.get("canvas_dimensions");byte_size=candidate.get("byte_size");alpha="present" if candidate.get("visible_alpha_bounds") else "unknown"
+        path=Path(str(candidate.get("png_path") or ""))
+        try:
+            if path.is_file():
+                byte_size=path.stat().st_size
+                with Image.open(path) as image:detected_format=str(image.format or detected_format);dimensions=list(image.size);alpha="present" if "A" in image.getbands() and image.getchannel("A").getextrema()[0]<255 else "opaque"
+        except (OSError,ValueError):rejections.append({"code":"file_corruption","explanation":"The artwork file could not be inspected safely."})
+        unique=[]
+        for item in rejections:
+            if item not in unique:unique.append(item)
+        rows.append({"candidate_id":str(candidate.get("candidate_id") or f"candidate-{index+1}"),"detected_format":detected_format,"dimensions":dimensions,"byte_size":byte_size,"alpha_transparency":alpha,"eligible":not unique,"rejections":unique})
+    selected=(((evidence.get("selection") or {}).get("selected") or {}).get("candidate_id"));accepted=sum(item["eligible"] for item in rows)
+    if not rows and (state.get("stage")=="generation_failed" or (state.get("generation_failure") or {}).get("terminal_local_failure")):rows=[]
+    return {"image_generation_readiness":"ready" if rows or selected else "unavailable_or_no_output" if state.get("stage")=="generation_failed" else "not_tested","request_started":state.get("stage") not in {"generation_queued","prompt_received"},"request_completed":bool(rows or state.get("stage")=="generation_failed"),"candidate_count":len(rows),"accepted_candidate_count":accepted,"rejected_candidate_count":len(rows)-accepted,"selected_candidate_id":selected,"candidates":rows,"zero_candidate_rejection":{"code":"no_candidates","explanation":"The local image-generation stage returned no candidates."} if not rows and state.get("stage")=="generation_failed" else None}
 
 
 _PLACEHOLDER_PHRASES={"test","testing","asdf","qwerty","lorem ipsum","placeholder","sample text","foo","bar"}
@@ -171,6 +201,16 @@ class CommerceCreationService:
                 except Exception:pass
             return None
 
+    def retry_local_artwork(self,job_id:str)->dict[str,Any]:
+        state=self.orchestrator.load(job_id);draft=((state.get("evidence") or {}).get("draft") or {});selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected"))
+        if selected:return {"result":"artwork_already_eligible","job_id":job_id,"selected_candidate_id":selected.get("candidate_id"),"provider_write_status":state.get("provider_write_status","not_started")}
+        if state.get("stage")!="generation_failed" or draft.get("printify_product_id") or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Only a failed local artwork stage without a provider draft can be retried.",operation="commerce_creation.retry_local_artwork",stage="state")
+        state["stage"]="generating_artwork";state["generation_failure"]=None;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        self.orchestrator.resume(job_id,confirm_printify_draft=False);state=self.orchestrator.load(job_id);selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected"))
+        if not selected:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Local artwork retry produced no eligible candidate.",user_message="Local artwork retry produced no eligible candidate.",operation="commerce_creation.retry_local_artwork",stage="design_selected")
+        state["stage"]="artwork_ready";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        return {"result":"local_artwork_ready","job_id":job_id,"selected_candidate_id":selected.get("candidate_id"),"provider_write_status":"not_started","publication_status":"not_published","order_status":"not_created"}
+
     def run_generation_background(self,job_id:str)->None:
         """Compatibility alias for callers outside the ASGI route."""
         return self.run_generation_safely(job_id)
@@ -195,9 +235,9 @@ class CommerceCreationService:
             "ready_for_review":review_ready,"failed":stage.endswith("_failed") or manual_state,"failure_message_safe":failure_message,"review_url":review_url,
             "printify_draft_exists":bool(draft.get("printify_product_id")),"printify_product_id":draft.get("printify_product_id"),
             "last_completed_stage":last_completed,"provider_write_status":state.get("provider_write_status","not_started"),"candidate_rejection_summary":rejection_summary,"manual_verification_required":uncertain or manual_state,"terminal_outcome":terminal_outcome,
-            "open_product_review_allowed":review_ready,"retry_allowed":stage.endswith("_failed") and not uncertain and not draft.get("printify_product_id") and not bool((state.get("generation_failure") or {}).get("terminal_local_failure")),
+            "open_product_review_allowed":review_ready,"retry_allowed":stage=="generation_failed" and not uncertain and not draft.get("printify_product_id"),
             "resume_existing_draft_allowed":stage.endswith("_failed") and not uncertain and bool(draft.get("printify_product_id")) and not review_ready,
-            "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"return_to_form_url":"/commerce/new"}
+            "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"return_to_form_url":"/app?view=commerce.new","artwork_diagnostics":_artwork_diagnostics(state)}
 
     def open_product_review(self,job_id:str)->dict[str,Any]:
         state=self.orchestrator.load(job_id)

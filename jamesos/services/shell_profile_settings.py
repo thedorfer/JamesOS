@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import json
+from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -26,11 +29,24 @@ class ShellProfileSettings:
                 clean[key]=int(text)
             else:clean[key]=text
         return clean
-    def save(self,profile_id:str,values:Any)->dict[str,Any]:
-        clean=self.validate(profile_id,values);current={}
+    def _read(self)->dict[str,Any]:
+        if not self.path.is_file():return {}
+        try:return json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError,ValueError):return {}
+    def revision(self)->str:return sha256(json.dumps(self._read(),sort_keys=True,separators=(",",":")).encode()).hexdigest()
+    def view(self,profile_id:str)->dict[str,Any]:
+        if profile_id not in PROFILE_IDS:raise ValueError("Unsupported commerce profile")
+        return {"profile_id":profile_id,"configuration":self._read().get(profile_id,{}) if isinstance(self._read().get(profile_id,{}),dict) else {},"revision":self.revision()}
+    def save(self,profile_id:str,values:Any,*,revision:str|None=None)->dict[str,Any]:
+        if isinstance(values,dict) and "revision" in values:values=dict(values);revision=str(values.pop("revision"))
+        clean=self.validate(profile_id,values);current=self._read();current_revision=self.revision()
+        if revision is not None and revision!=current_revision:raise ValueError("Profile configuration changed; refresh before saving")
         if self.path.is_file():
-            import json
-            try:current=json.loads(self.path.read_text())
-            except (OSError,ValueError):current={}
+            rollback=self.path.with_name(self.path.stem+".rollback.json");_atomic_json(rollback,current)
         current.setdefault(profile_id,{}).update(clean);_atomic_json(self.path,current)
-        return {"profile_id":profile_id,"configuration":current[profile_id]}
+        audit=self.path.with_name(self.path.stem+".audit.json");events=[]
+        if audit.is_file():
+            try:events=json.loads(audit.read_text(encoding="utf-8"))
+            except (OSError,ValueError):events=[]
+        events.append({"timestamp":datetime.now().astimezone().isoformat(),"event":"commerce_profile_updated","profile_id":profile_id,"fields":sorted(clean)});_atomic_json(audit,events[-200:])
+        return {"profile_id":profile_id,"configuration":current[profile_id],"revision":self.revision()}
