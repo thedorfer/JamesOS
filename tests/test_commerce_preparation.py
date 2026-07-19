@@ -61,22 +61,24 @@ class UnifiedCommercePreparationTests(unittest.TestCase):
             orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator);service=UnifiedCommercePreparation(orchestrator,workflow=workflow,profile_loader=profile)
             local=service.create(prompt="Create YOU ARE SAFE WITH ME",authorize_draft_work=False);ready=service.create(prompt=None,resume_job_id=local["job_id"],authorize_draft_work=True)
             status={"brand_display_name":"Fixture","printify_shop_title":"Fixture","printify_shop_id":123,"etsy_shop_slug":"Fixture","progress_label":"Ready for review","open_product_review_allowed":True,"ready_for_review":True,"failed":False}
-            mocked=Mock();mocked.safe_status.return_value=status
-            with patch.object(api,"CommerceCreationService",return_value=mocked),patch.object(api,"_require_local"):
+            mocked=Mock();mocked.safe_status.return_value=status;mocked.review_snapshot.return_value={"job_id":ready["job_id"],"ready_for_review":True,"selected_candidate_id":"best","generation_method":"deterministic_local_typography","dimensions":[4500,5400],"brand_display_name":"Fixture","printify_shop_title":"Fixture","printify_product_id":"private-product","listing_title":"Market review","description":"Review description","tags":[f"tag {index}" for index in range(13)],"artwork_palette":["red"],"garment_colors":["Black"],"provider_contacted":True,"workflow_timeline":["printify_draft_ready","ready_for_review"],"publication_status":"not_published","order_status":"not_created","artwork_url":f"/commerce/jobs/{ready['job_id']}/artwork-preview"}
+            shell_profile={"profile_id":"private-profile","profile_type":"commerce_shop","enabled":True,"display_name":"Fixture","configuration":{"printify_shop_id":123,"printify_shop_title":"Fixture","etsy_shop_slug":"Fixture"}}
+            with patch.object(api,"CommerceCreationService",return_value=mocked),patch.object(api,"list_commerce_profiles",return_value=[shell_profile]),patch.object(api,"selected_profile_id",return_value="private-profile"),patch.object(api,"_require_local"):
                 loading=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/commerce/jobs/{ready['job_id']}/loading").text
+                review_document=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/app?view=commerce.review&job_id={ready['job_id']}").text.replace("</body>","<p id='review-location'></p><script>document.getElementById('review-location').textContent=location.pathname+location.search</script></body>")
             class Handler(BaseHTTPRequestHandler):
                 def do_GET(self):
                     if self.path.endswith("/status.json"):body=json.dumps(status).encode();content="application/json"
-                    elif self.path.startswith("/commerce/proposals/"):body=b"<!doctype html><h1>Product review</h1><p>UNPUBLISHED</p><p>NO ORDER CREATED</p>";content="text/html"
+                    elif self.path.startswith("/app?view=commerce.review"):body=review_document.encode();content="text/html"
                     else:body=loading.encode();content="text/html"
                     self.send_response(200);self.send_header("Content-Type",content);self.end_headers();self.wfile.write(body)
                 def do_POST(self):
-                    self.send_response(303);self.send_header("Location",f"/commerce/proposals/{ready['job_id']}/review");self.end_headers()
+                    self.send_response(303);self.send_header("Location",f"/app?view=commerce.review&job_id={ready['job_id']}");self.end_headers()
                 def log_message(self,*args):pass
             server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
             try:rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=2500","--dump-dom",f"http://127.0.0.1:{server.server_port}/commerce/jobs/{ready['job_id']}/loading"],check=True,capture_output=True,text=True).stdout
             finally:server.shutdown();server.server_close()
-            self.assertIn("Product review",rendered);self.assertIn("UNPUBLISHED",rendered);self.assertIn("NO ORDER CREATED",rendered);self.assertEqual(orchestrator.resume_calls,1)
+            self.assertIn(f"view=commerce.review&amp;job_id={ready['job_id']}",rendered);self.assertIn("review-artwork-preview",rendered);self.assertIn("private-product",rendered);self.assertIn("Etsy tags (13)",rendered);self.assertIn("Publication:</strong> no",rendered);self.assertIn("Order:</strong> no",rendered);self.assertEqual(orchestrator.resume_calls,1);self.assertEqual(orchestrator.review_calls,0)
     def test_generated_ten_tags_are_completed_from_bound_profile_before_provider(self):
         with tempfile.TemporaryDirectory() as temporary:
             orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)
@@ -103,12 +105,12 @@ class UnifiedCommercePreparationTests(unittest.TestCase):
             self.assertEqual(local["stage"],"draft_authorization_required");self.assertFalse(local["external_write_performed"])
             self.assertEqual(local["listing_summary"]["tag_count"],13);self.assertEqual(orchestrator.resume_calls,0)
             ready=service.create(prompt=None,resume_job_id=local["job_id"],authorize_draft_work=True)
-            self.assertEqual(ready["result"],"commerce_review_ready");self.assertEqual(ready["stage"],"awaiting_final_approval")
+            self.assertEqual(ready["result"],"commerce_review_ready");self.assertEqual(ready["stage"],"awaiting_human_approval")
             self.assertEqual(ready["publication_status"],"not_published");self.assertEqual(ready["order_status"],"not_created")
             self.assertEqual(orchestrator.resume_calls,1);self.assertNotIn("private-product",json.dumps(ready))
             repeated=service.create(prompt=None,resume_job_id=local["job_id"],authorize_draft_work=True)
             self.assertEqual(repeated["proposal_sha256"],ready["proposal_sha256"]);self.assertEqual(orchestrator.resume_calls,1)
-            self.assertEqual(orchestrator.review_calls,1)
+            self.assertEqual(orchestrator.review_calls,0)
 
     def test_blank_prompt_fails_and_publication_executor_fails_closed(self):
         with tempfile.TemporaryDirectory() as temporary:

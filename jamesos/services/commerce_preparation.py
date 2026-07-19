@@ -92,12 +92,10 @@ class UnifiedCommercePreparation:
                 action.update(status="uncertain",uncertain=True,completed_at=_now(),response_evidence=state.get("last_error"));_atomic_json(journal_path,journal)
                 raise StateConflictError("STATE_CONFLICT",diagnostic_message="Provider draft result is uncertain; it will not be retried automatically.",operation="commerce_preparation",stage="provider_write")
             action.update(status="completed",completed_at=_now(),response_evidence={"upload_recorded":bool((state.get("evidence") or {}).get("upload")),"draft_recorded":bool((state.get("evidence") or {}).get("draft"))});_atomic_json(journal_path,journal)
-        visual_review=root/"visual-review"/"visual-review.json"
-        if not visual_review.is_file():self.orchestrator.review_draft(job_id)
-        prepared=self.workflow.prepare(job_id);review=self.workflow.review(job_id)
-        state=self.orchestrator.load(job_id)
-        return {"result":"commerce_review_ready","job_id":job_id,"stage":"awaiting_final_approval","proposal_sha256":prepared["proposal_sha256"],
-            "review_url":review["review_url"],"review_path":review["review_path"],"publication_status":state.get("publish_status"),"order_status":state.get("order_status"),
+        state=self.orchestrator.load(job_id);state.update(stage="awaiting_human_approval",provider_write_status="completed",generation_failure=None,manual_verification_required=False)
+        product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        return {"result":"commerce_review_ready","job_id":job_id,"stage":"awaiting_human_approval","proposal_sha256":None,
+            "review_url":f"/app?view=commerce.review&job_id={job_id}","review_path":None,"publication_status":state.get("publish_status"),"order_status":state.get("order_status"),
             "external_write_summary":{"authorized_non_public_writes":["artwork_upload","unpublished_job_owned_draft","mockup_retrieval"],"publication_performed":False,"order_created":False}}
 
     def _authorization_result(self,state:dict[str,Any],journal:dict[str,Any])->dict[str,Any]:

@@ -21,6 +21,21 @@ def profile(profile_id:str,shop_id:int,slug:str)->dict:
 
 
 class ApplicationShellTests(unittest.TestCase):
+    def test_product_review_workspace_is_job_bound_complete_and_read_only(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")];service=Mock();service.review_snapshot.return_value={"job_id":"product-review","ready_for_review":True,"selected_candidate_id":"prompt_compact","generation_method":"deterministic_local_typography","dimensions":[4500,5400],"brand_display_name":"Bagholder Supply Co.","printify_shop_title":"BagholderSupplyCo","printify_product_id":"draft-fixture","listing_title":"Review title","description":"Safe description","tags":[f"tag {index}" for index in range(13)],"artwork_palette":["red","gold"],"garment_colors":["Black","White"],"provider_contacted":True,"workflow_timeline":["printify_draft_ready","ready_for_review"],"publication_status":"not_published","order_status":"not_created","artwork_url":"/commerce/jobs/product-review/artwork-preview"}
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"CommerceCreationService",return_value=service),patch.object(api,"_require_local"):
+            client=TestClient(api.app,base_url="http://127.0.0.1:8787");first=client.get("/app?view=commerce.review&job_id=product-review");second=client.get("/app?view=commerce.review&job_id=product-review")
+        for response in (first,second):
+            self.assertEqual(response.status_code,200);self.assertIn("id='review-artwork-preview'",response.text);self.assertIn("draft-fixture",response.text);self.assertIn("Etsy tags (13)",response.text);self.assertIn("<strong>Publication:</strong> no",response.text);self.assertIn("<strong>Order:</strong> no",response.text);self.assertNotIn("Approve and Publish",response.text)
+            self.assertIn("selectedJob?'&job_id='",response.text)
+        self.assertEqual(service.review_snapshot.call_count,2)
+
+    def test_missing_review_job_shows_safe_return_action(self):
+        rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]
+        with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app?view=commerce.review")
+        self.assertEqual(response.status_code,200);self.assertIn("Select a completed unpublished draft",response.text);self.assertIn("Return to Product Studio",response.text)
+
     def test_actual_app_bootstrap_runs_in_browser_and_binds_safe_shell_controls(self):
         chrome=shutil.which("google-chrome") or shutil.which("chromium")
         if not chrome:self.skipTest("Chrome/Chromium is required for the shell smoke test")

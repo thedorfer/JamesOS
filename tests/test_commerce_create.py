@@ -151,14 +151,31 @@ class CommerceCreateTests(unittest.TestCase):
             visual=job_root/"visual-review"/"visual-review.json";visual.parent.mkdir();visual.write_text(json.dumps({"product_id":"existing-product"}))
             proposal=job_root/"commerce-proposal"/"current.json";proposal.parent.mkdir();proposal.write_text(json.dumps({"proposal_sha256":"a"*64,"approval_eligible":True,"superseded":False}))
             state={"job_id":job_id,"commerce_profile_id":"bagholder-supply","shop_id":28275232,"destination":{"printify_shop_id":28275232},"stage":"generation_failed",
-                "publish_status":"not_published","order_status":"not_created","evidence":{"draft":{"printify_product_id":"existing-product","draft_marker":"job-marker"},"mockups":[{"local_path":str(mockup)}]},
-                "transitions":[{"stage":"awaiting_human_approval","result":"completed"}]}
-            product_orchestrator._atomic_json(orch._path(job_id),state);product_orchestrator._atomic_json(job_root/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":False}]})
+                "publish_status":"not_published","order_status":"not_created","evidence":{"upload":{"printify_image_id":"upload-1"},"draft":{"printify_product_id":"existing-product","draft_marker":"job-marker"},"mockups":[{"local_path":str(mockup)}]},
+                "transitions":[{"stage":"printify_draft_created","result":"completed"},{"stage":"awaiting_human_approval","result":"completed"}]}
+            product_orchestrator._atomic_json(orch._path(job_id),state);product_orchestrator._atomic_json(job_root/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":False,"response_evidence":{"draft_recorded":True}}]})
             orch.review_draft=Mock()
             status=service.safe_status(job_id);self.assertEqual(status["terminal_outcome"],"review_ready");self.assertTrue(status["open_product_review_allowed"]);self.assertFalse(status["resume_existing_draft_allowed"])
-            first=service.open_product_review(job_id);self.assertEqual(first["printify_product_id"],"existing-product");self.assertEqual(orch.load(job_id)["stage"],"awaiting_final_approval")
-            second=service.open_product_review(job_id);self.assertEqual(second["printify_product_id"],"existing-product");self.assertEqual(workflow.review.call_count,2)
+            first=service.open_product_review(job_id);self.assertEqual(first["printify_product_id"],"existing-product");self.assertEqual(orch.load(job_id)["stage"],"awaiting_human_approval")
+            second=service.open_product_review(job_id);self.assertEqual(second["printify_product_id"],"existing-product");self.assertEqual(workflow.review.call_count,0)
             orch.review_draft.assert_not_called();workflow.prepare.assert_not_called();client.create_product.assert_not_called();client.update_product.assert_not_called()
+
+    def test_authoritative_review_reconciliation_is_local_and_product_id_alone_is_insufficient(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);provider=Mock(side_effect=AssertionError("review reconciliation must not contact provider"));orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=provider));workflow=Mock(orchestrator=orch);p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(workflow,profile_loader=lambda pid,required=True:p)
+            def state(job_id,authoritative):
+                value={"job_id":job_id,"commerce_profile_id":"bagholder-supply","shop_id":28275232,"destination":{"printify_shop_id":28275232,"printify_shop_title":"Bagholders"},"stage":"generation_failed","provider_write_status":"not_started","generation_failure":{"safe_message":"presentation failed"},"publish_status":"not_published","order_status":"not_created","evidence":{"upload":{"printify_image_id":"upload-1"},"draft":{"printify_product_id":"draft-1"}},"transitions":[]}
+                if authoritative:value["transitions"]=[{"stage":"printify_draft_created","result":"completed"},{"stage":"awaiting_human_approval","result":"completed"}]
+                product_orchestrator._atomic_json(orch._path(job_id),value)
+                if authoritative:product_orchestrator._atomic_json(orch._path(job_id).parent/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":False,"response_evidence":{"draft_recorded":True}}]})
+            state("product-authoritative",True);status=service.safe_status("product-authoritative");self.assertTrue(status["ready_for_review"]);self.assertFalse(status["failed"]);self.assertEqual(status["provider_write_status"],"completed");self.assertIn("job_id=product-authoritative",status["review_url"]);self.assertTrue((orch._path("product-authoritative").parent/"review-reconciliation.json").is_file())
+            state("product-id-only",False);status=service.safe_status("product-id-only");self.assertTrue(status["failed"]);self.assertEqual(status["provider_write_status"],"not_started");provider.assert_not_called()
+
+    def test_uncertain_journal_does_not_reconcile_review_ready_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no provider"))));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p);job_id="product-uncertain"
+            state={"job_id":job_id,"commerce_profile_id":"bagholder-supply","stage":"generation_failed","provider_write_status":"not_started","publish_status":"not_published","order_status":"not_created","evidence":{"upload":{"printify_image_id":"upload"},"draft":{"printify_product_id":"draft"}},"transitions":[{"stage":"printify_draft_created","result":"completed"},{"stage":"awaiting_human_approval","result":"completed"}]};product_orchestrator._atomic_json(orch._path(job_id),state);product_orchestrator._atomic_json(orch._path(job_id).parent/"unified-preparation.json",{"job_id":job_id,"profile_id":"bagholder-supply","provider_actions":[{"status":"completed","uncertain":True,"response_evidence":{"draft_recorded":True}}]})
+            status=service.safe_status(job_id);self.assertTrue(status["failed"]);self.assertFalse((orch._path(job_id).parent/"review-reconciliation.json").exists())
 
     def test_background_failure_is_persisted_and_never_reraised(self):
         with tempfile.TemporaryDirectory() as temporary:
