@@ -1,6 +1,6 @@
 # Jade mobile client
 
-Jade is a planned secondary JamesOS client for Android and later mobile platforms. The Linux desktop remains the execution host for FastAPI, Ollama, GPU/ComfyUI, provider operations, and private `JamesOSData`; the app must not bypass server-defined views, locks, or external-action confirmations.
+Jade's Flutter app is an experimental secondary client for Android and later mobile platforms; `/app` is the primary interface. The Linux desktop remains the execution host for FastAPI, Ollama, GPU/ComfyUI, provider operations, and private `JamesOSData`; the app must not bypass server-defined views, locks, or external-action confirmations.
 
 ```bash
 flutter pub get

@@ -6,7 +6,7 @@ ComfyUI is planned as the local image generation engine for JamesOS creative wor
 
 ## Current status
 
-This guide originated during the readiness-foundation phase. The current recovery branch includes approved local generation paths and health integration; desktop acceptance is still pending. ComfyUI remains a local rendering engine and receives no provider, publication, order, terminal, or privilege authority.
+This guide originated during the readiness-foundation phase. The current implementation includes approved local generation paths and health integration. Automated local preflight has produced eligible artwork, but the latest browser commerce run produced zero eligible output, so the browser/runtime handoff remains unaccepted. ComfyUI remains a local rendering engine and receives no provider, publication, order, terminal, or privilege authority.
 - Do not upload generated artwork to Printify or Etsy yet.
 - Route future image generation through the Job Queue and approval flow.
 

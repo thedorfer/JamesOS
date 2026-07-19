@@ -1,6 +1,6 @@
 # Documentation index
 
-Last reviewed: 2026-07-18
+Last reviewed: 2026-07-19
 
 ## Getting started
 
@@ -50,6 +50,8 @@ Last reviewed: 2026-07-18
 
 ## Operations and security
 
+- [Admin and EHF](ADMIN_AND_EHF.md)
+- [Attachments](ATTACHMENTS.md)
 - [Scheduler](SCHEDULER.md)
 - [Terminal security](TERMINAL_SECURITY.md)
 - [Integrations](INTEGRATIONS.md)

@@ -1,6 +1,6 @@
 # Desktop setup
 
-Last reviewed: 2026-07-18
+Last reviewed: 2026-07-19
 
 The Linux desktop is the execution host for FastAPI, Ollama, GPU/ComfyUI work, provider access, and private `~/JamesOSData`. The ThinkBook is a browser, SSH/tunnel, and development client; it does not run production workloads.
 
@@ -18,7 +18,7 @@ Open `http://127.0.0.1:8787/app` locally. General shell health checks API, Ollam
 
 ## User service
 
-Install a reviewed unit at `~/.config/systemd/user/jamesos.service` using working directory `%h/JamesOS`, executable `%h/JamesOS/.venv/bin/python -m scripts.api_server`, and optional `%h/JamesOSData/JamesOS/runtime.env`. Do not commit or print environment contents.
+JamesOS uses the reviewed unit at `~/.config/systemd/user/jamesos.service`, with working directory `%h/JamesOS`, executable `%h/JamesOS/.venv/bin/python -m scripts.api_server`, and optional `%h/JamesOSData/JamesOS/runtime.env`. Do not commit or print environment contents.
 
 ```bash
 systemctl --user daemon-reload
@@ -28,7 +28,7 @@ systemctl --user status jamesos
 journalctl --user -u jamesos -f
 ```
 
-The 2026-07-18 audit found linger enabled but no installed/active unit, so service installation is pending acceptance. See [Service operations](SERVICE_OPERATIONS.md).
+The unit and user lingering are enabled. Verify health after every deliberate deployment. See [Service operations](SERVICE_OPERATIONS.md).
 
 ## ThinkBook tunnel
 
@@ -49,7 +49,7 @@ JAMESOS_TRUSTED_ORIGINS=https://james.example-tailnet.ts.net
 JAMESOS_ALLOWED_NETWORKS=
 ```
 
-Use `tailnet` only with Tailscale Serve proxying to the loopback listener. Configure the exact HTTPS origin and Host value; do not use wildcards. JamesOS accepts Tailscale identity headers only on the direct loopback proxy connection and does not treat arbitrary forwarded headers as authentication. Tailscale Funnel/public sharing is out of scope and must remain disabled.
+Use `tailnet` only with Tailscale Serve proxying to the loopback listener. Configure the exact HTTPS origin and Host value; do not use wildcards. JamesOS accepts Tailscale identity headers only on the direct loopback proxy connection and does not treat arbitrary forwarded headers as authentication. Tailscale Funnel/public sharing is out of scope and must remain disabled. Repository evidence does not currently verify that Serve is deployed on the desktop.
 
 `lan` mode binds broadly only when trusted hosts, trusted origins, and explicit CIDRs are all valid. It never allows all RFC1918 networks implicitly:
 

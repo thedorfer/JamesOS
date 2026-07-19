@@ -1,21 +1,29 @@
 # Unified commerce workflow
 
-Last reviewed: 2026-07-18
+Last reviewed: 2026-07-19
 
-Bagholder Supply Co. and UnityStitches are enabled profile-bound destinations. The recovery `/app` UI uses a compact selector and locked destination summary. Selecting a profile updates only profile-derived guidance and untouched defaults, records changes in Activity, supports Undo, and never mutates the global selected-profile file. The selector locks after `selected_job_id` exists.
+Product Studio is the preferred commerce interface at `/app?view=commerce.new`. Bagholder Supply Co. (`bagholder-supply`) and UnityStitches (`unitystitches`) are enabled profile-bound destinations. A destination becomes immutable when a job is created.
 
-Each job persists an immutable profile, Printify shop, Etsy destination, and provider-write evidence. A confirmed Printify product ID is never recreated. Uncertain or unprovable ownership requires manual verification; recovery uses the existing job-bound draft and shop.
+The form keeps Exact phrase, Listing title, Product brief, and Special instructions separate. New Listing title starts blank. Multiline phrases are preserved, artwork colors remain separate from garment colors, and profile changes preserve manual edits. Jade may propose validated patches but cannot start generation.
 
-Before image or provider work, preflight rejects placeholders and semantically empty briefs. Intentional multiline exact phrases retain all lines and tokens through prompts, candidate evidence, adherence checks, and review. Garment colors and artwork palette are separate concepts. Listing metadata finalization normalizes and validates exactly 13 unique relevant Etsy tags, using profile fallback tags only when appropriate.
+## Implemented and test-covered
 
-The lifecycle is: validate input, generate candidates, persist candidate-specific adherence/novelty reasons, select/review artwork, create or recover one unpublished draft, retrieve mockups, create a review proposal, revise if requested, and await explicit destination-specific publication confirmation.
+- semantic form preflight and immutable destination binding
+- deterministic local typography renderer producing three transparent 4500 × 5400 PNG candidates in automated tests
+- candidate format, dimensions, transparency, bounds, clipping, scale, contrast, digest, ownership, and duplicate checks
+- private candidate storage and provider-free preflight
+- local listing title/description preparation and exactly 13 unique Etsy tags
+- guarded Printify upload and one-unpublished-draft adapter paths
+- provider-action journals, ownership evidence, digest-based reuse, and fail-closed uncertain results
+- in-shell progress, failure diagnostics, local retry, and review routing
+- no automatic publication, Etsy listing, or order
 
-Safety guarantees:
+The **Generate unpublished draft** form submission is the narrow authorization for local artwork, preflight, one image upload, and one job-owned unpublished Printify draft. Publication remains a separate protected workflow.
 
-- Preflight and local failures happen before provider writes.
-- Generation creates an unpublished draft; it does not publish.
-- Product generation never creates an order.
-- Expected background failures are persisted and do not escape into ASGI.
-- Failed jobs are not repurposed for unrelated new products.
-- Retry is offered only when provider state is certain; confirmed drafts resume rather than recreate.
-- Publication remains a separate explicit confirmation tied to the immutable destination.
+## Validation status
+
+Automated local preflight and fake-provider tests pass. They made no real provider call and do not validate a real provider workflow.
+
+The latest manual browser attempt failed after `production_artifact_ready` with zero candidates and rejection `no_output`. No Printify draft or Etsy listing was created, nothing was published, and no order was created. The browser/runtime artifact handoff remains under investigation. See [Current status](CURRENT_STATUS.md).
+
+Retries may reuse a validated candidate, confirmed upload, or owned draft. An uncertain provider result is never retried automatically. No job may switch destinations or claim another job's provider resource.
