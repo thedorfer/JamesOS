@@ -668,8 +668,6 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
 
 
 def validate_candidate_uniqueness(candidates:list[dict[str,Any]])->None:
-    hashes=[item.get("png_sha256") for item in candidates]
-    if not hashes or None in hashes or len(set(hashes))!=len(candidates):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidates must have distinct image hashes.",operation="product_orchestrator",stage="design_candidates_ready")
     families=[item.get("composition_family") or item.get("layout_id") for item in candidates]
     if len(candidates)<3 or None in families or len(set(families))!=len(candidates):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design candidates must use at least three distinct composition families.",operation="product_orchestrator",stage="design_candidates_ready")
 
@@ -677,12 +675,15 @@ def validate_candidate_uniqueness(candidates:list[dict[str,Any]])->None:
 def _image_similarity_signature(path:Path)->dict[str,Any] | None:
     try:
         with Image.open(path) as source:
-            rgba=source.convert("RGBA");alpha=rgba.getchannel("A").resize((16,16),Image.Resampling.LANCZOS)
-            gray=rgba.convert("L").resize((16,16),Image.Resampling.LANCZOS)
-            alpha_bits="".join("1" if value>24 else "0" for value in alpha.getdata())
-            gray_values=list(gray.getdata());mean=sum(gray_values)/len(gray_values)
+            rgba=source.convert("RGBA");bounds=rgba.getchannel("A").getbbox()
+            if not bounds:return None
+            occupied=rgba.crop(bounds);alpha=occupied.getchannel("A").resize((32,32),Image.Resampling.LANCZOS)
+            gray=Image.new("L",occupied.size,0);gray.paste(occupied.convert("L"),mask=occupied.getchannel("A"));gray=gray.resize((32,32),Image.Resampling.LANCZOS)
+            pixels=lambda image:list(image.get_flattened_data() if hasattr(image,"get_flattened_data") else image.getdata())
+            alpha_bits="".join("1" if value>24 else "0" for value in pixels(alpha))
+            gray_values=pixels(gray);mean=sum(gray_values)/len(gray_values)
             gray_bits="".join("1" if value>=mean else "0" for value in gray_values)
-            return {"alpha":alpha_bits,"gray":gray_bits,"bounds":list(rgba.getchannel("A").getbbox() or ())}
+            return {"alpha":alpha_bits,"gray":gray_bits,"bounds":list(bounds)}
     except (OSError,ValueError):return None
 
 
@@ -691,27 +692,39 @@ def _bit_distance(first:str,second:str)->int:
 
 
 def assess_artwork_novelty(candidate:dict[str,Any],prior:list[dict[str,Any]])->dict[str,Any]:
-    signature=_image_similarity_signature(Path(str(candidate.get("png_path") or "")));matches=[]
+    signature=_image_similarity_signature(Path(str(candidate.get("png_path") or "")));matches=[];nearest=None
     for old in prior:
-        category=None
-        if candidate.get("png_sha256") and candidate.get("png_sha256")==old.get("png_sha256"):category="exact_duplicate"
+        category=None;score=0.0
+        if candidate.get("png_sha256") and candidate.get("png_sha256")==old.get("png_sha256"):category="duplicate_authoritative_artifact";score=1.0
         old_signature=_image_similarity_signature(Path(str(old.get("png_path") or "")))
         if category is None and signature and old_signature:
             alpha_distance=_bit_distance(signature["alpha"],old_signature["alpha"]);gray_distance=_bit_distance(signature["gray"],old_signature["gray"])
-            if alpha_distance<=8 and gray_distance<=16:category="near_duplicate"
-            elif alpha_distance<=8:category="same_template_changed_text_or_color"
+            score=1.0-(.6*alpha_distance/max(1,len(signature["alpha"]))+.4*gray_distance/max(1,len(signature["gray"])))
+            if score>=.96:category="duplicate_authoritative_artifact"
+            elif score>=.90:category="insufficient_visual_distinction"
         same_family=(candidate.get("composition_family") or candidate.get("layout_id"))==(old.get("composition_family") or old.get("layout_id"))
         same_treatment=candidate.get("treatment_id") and candidate.get("treatment_id")==old.get("treatment_id")
-        if category is None and same_family and same_treatment:category="same_template_changed_text_or_color"
-        if category:matches.append({"category":category,"prior_candidate_id":old.get("candidate_id"),"prior_job_id":old.get("job_id")})
+        if category is None and same_family and same_treatment:category="insufficient_visual_distinction";score=max(score,.90)
+        safe_id=str(old.get("safe_reference_id") or f"{old.get('job_id','reference')}:{old.get('candidate_id','artwork')}")
+        comparison={"category":category,"safe_reference_id":safe_id,"similarity_score":round(score,4)}
+        if nearest is None or score>nearest["similarity_score"]:nearest=comparison
+        if category:matches.append(comparison)
     status="materially_distinct" if not matches else matches[0]["category"]
-    return {"status":status,"eligible":not matches,"comparisons":matches,"method":"sha256 plus deterministic grayscale/alpha composition signatures and template metadata"}
+    return {"status":status,"eligible":not matches,"comparisons":matches,"comparison_scope":"authoritative_completed_products",
+        "authoritative_reference_count":len(prior),"nearest_comparison_safe_id":nearest["safe_reference_id"] if nearest else None,
+        "similarity_metric":"occupied_alpha_grayscale_similarity","similarity_score":nearest["similarity_score"] if nearest else None,
+        "threshold":.90,"rejection_code":None if not matches else status,"reuse_decision":"new_candidate","method":"SHA-256 plus occupied-pixel alpha/grayscale composition similarity"}
 
 
 def validate_candidate_set(candidates:list[dict[str,Any]],brief:dict[str,Any],prior:list[dict[str,Any]])->dict[str,Any]:
-    rows=[]
+    rows=[];digest_winners={}
+    for candidate in candidates:
+        digest=str(candidate.get("png_sha256") or "")
+        if digest:digest_winners[digest]=max(digest_winners.get(digest,""),str(candidate.get("candidate_id") or ""))
     for candidate in candidates:
         novelty=assess_artwork_novelty(candidate,prior);prompt=candidate.get("prompt_validation") or {}
+        digest=str(candidate.get("png_sha256") or "");sibling_duplicate=bool(digest and digest_winners.get(digest)!=str(candidate.get("candidate_id") or ""))
+        if sibling_duplicate:novelty={**novelty,"status":"duplicate_within_batch","eligible":False,"rejection_code":"duplicate_within_batch","reuse_decision":f"retain:{digest_winners[digest]}"}
         adherence=phrase_adherence_evidence(brief.get("exact_text"),candidate.get("rendered_phrase"),candidate.get("rendered_text_lines"))
         candidate.update(adherence);prompt={**prompt,**adherence,"compliant":prompt.get("compliant",True) is True and adherence["phrase_adherence_passed"]};candidate["prompt_validation"]=prompt
         eligible=novelty["eligible"] and prompt.get("compliant") is True
@@ -725,10 +738,10 @@ def validate_candidate_set(candidates:list[dict[str,Any]],brief:dict[str,Any],pr
         elif prompt.get("compliant",True) is not True:rejection_reasons.append({"category":"prompt_adherence","reason":str(prompt.get("reason") or "candidate did not follow the requested design direction")})
         if not novelty["eligible"]:rejection_reasons.append({"category":"novelty","reason":novelty["status"]})
         candidate["rejection_reasons"]=rejection_reasons
-        rows.append({"candidate_id":candidate.get("candidate_id"),"composition_family":candidate.get("composition_family"),"eligible":eligible,
+        rows.append({"candidate_id":candidate.get("candidate_id"),"candidate_digest_prefix":str(candidate.get("png_sha256") or "")[:12],"job_ownership":candidate.get("job_id"),"composition_family":candidate.get("composition_family"),"eligible":eligible,
             "expected_phrase":adherence["expected_phrase"],"rendered_phrase":adherence["rendered_phrase"],"rendered_text_lines":adherence["rendered_text_lines"],
             "missing_tokens":adherence["missing_tokens"],"unexpected_tokens":adherence["unexpected_tokens"],"phrase_adherence_passed":adherence["phrase_adherence_passed"],
-            "novelty_passed":novelty["eligible"],"novelty_reasons":candidate["novelty_reasons"],"novelty_status":novelty["status"],"prompt_mismatch":prompt.get("compliant",True) is not True,"rejection_reasons":rejection_reasons})
+            "novelty_passed":novelty["eligible"],"novelty_reasons":candidate["novelty_reasons"],"novelty_status":novelty["status"],"novelty_diagnostics":novelty,"prompt_mismatch":prompt.get("compliant",True) is not True,"rejection_reasons":rejection_reasons})
     report={"candidate_count":len(candidates),"distinct_composition_families":len({item.get('composition_family') for item in candidates}),
         "rejected_for_prompt_mismatch":sum(item["prompt_mismatch"] for item in rows),"rejected_for_similarity":sum(item["novelty_status"]!="materially_distinct" for item in rows),"candidates":rows}
     if not any(item["eligible"] for item in rows):
@@ -867,6 +880,7 @@ class ProductOrchestrator:
             "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"write_performed":False,"provider_write_performed":False}
 
     def _prior_designs(self,state:dict[str,Any])->list[dict[str,Any]]:
+        """Return only cross-job artwork with completed approval or provider ownership."""
         prior=[]
         if not self.root.is_dir():return prior
         for path in sorted(self.root.glob("*/orchestrator-state.json"),reverse=True)[:100]:
@@ -874,10 +888,14 @@ class ProductOrchestrator:
             try:old=json.loads(path.read_text(encoding="utf-8"))
             except (OSError,ValueError):continue
             if old.get("shop_id")!=state.get("shop_id"):continue
+            if old.get("stage") in {"failed","generation_failed","revision_failed","manual_verification_required"}:continue
             evidence=old.get("evidence") or {};selected=(evidence.get("selection") or {}).get("selected")
-            approved=evidence.get("human_design_approval") or {};status=old.get("publish_status")
-            if selected and (approved.get("approved") is True or status in {"published","not_published"}):prior.append({**selected,"job_id":old.get("job_id")})
-        prior.extend((state.get("evidence") or {}).get("superseded_candidates") or [])
+            approved=evidence.get("human_design_approval") or {};draft=evidence.get("draft") or {};ownership=evidence.get("draft_ownership") or {}
+            approval_valid=bool(selected and approved.get("approved") is True and approved.get("candidate_id")==selected.get("candidate_id") and approved.get("candidate_sha256")==selected.get("png_sha256"))
+            provider_bound=bool(selected and draft.get("printify_product_id") and (ownership.get("remote_result_certainty")=="confirmed" or ownership.get("shop_scoped_result") is True))
+            path_value=str((selected or {}).get("png_path") or "");path_obj=Path(path_value) if path_value else None
+            artifact_valid=bool(selected and path_obj and path_obj.is_file() and selected.get("png_sha256") and _file_sha(path_obj)==selected.get("png_sha256"))
+            if artifact_valid and (approval_valid or provider_bound):prior.append({**selected,"job_id":old.get("job_id"),"safe_reference_id":f"artwork:{str(old.get('job_id') or '')[-12:]}:{str(selected.get('candidate_id') or '')}"})
         return prior
 
     def _transition(self, state: dict[str, Any], stage: str, operation: str, output: Any, *, result: str = "completed", error_id: str | None = None) -> None:
@@ -1606,7 +1624,17 @@ class ProductOrchestrator:
             design_root = self._path(state["job_id"]).parent / "design-candidates"
             if "design_candidates_ready" not in completed:
                 generator=self.adapters.independent_candidates if evidence.get("origin")=="independent_prompt" else self.adapters.candidates
-                candidates = generator(evidence, design_root, state["brief"])
+                inputs_sha=_json_sha({"brief":state["brief"],"artwork_sha256":evidence.get("candidate_sha"),"generator":"independent" if evidence.get("origin")=="independent_prompt" else "source"})
+                ownership=state["evidence"].get("candidate_ownership") or {};existing=state["evidence"].get("candidates") or []
+                reusable=bool(existing and ownership.get("validated_inputs_sha256")==inputs_sha and all(item.get("png_sha256") and Path(str(item.get("png_path") or "")).is_file() and _file_sha(Path(str(item["png_path"])))==item["png_sha256"] for item in existing))
+                candidates = existing if reusable else generator(evidence, design_root, state["brief"])
+                attempt=int(ownership.get("generation_attempt") or 0)+(0 if reusable else 1)
+                for item in candidates:item["job_id"]=state["job_id"];item["generation_attempt"]=attempt
+                state["evidence"]["candidates"]=candidates
+                state["evidence"]["candidate_ownership"]={"job_id":state["job_id"],"generation_attempt":attempt,"validated_inputs_sha256":inputs_sha,
+                    "candidate_records":[{"candidate_id":item.get("candidate_id"),"candidate_digest":item.get("png_sha256"),"selected":False,"state":"pending_validation","provider_bound":False,"authoritative_reference_eligible":False} for item in candidates],
+                    "reuse_decision":"duplicate_same_job_reused" if reusable else "generated"}
+                _atomic_json(self._path(state["job_id"]),state)
                 if evidence.get("origin")=="independent_prompt":
                     try:diversity=validate_candidate_set(candidates,state["brief"],self._prior_designs(state))
                     except ValidationError as exc:
@@ -1618,6 +1646,9 @@ class ProductOrchestrator:
             candidates = state["evidence"]["candidates"]
             if "design_selected" not in completed:
                 selection = select_candidate(candidates, state["brief"]); state["evidence"]["selection"] = selection
+                ownership=state["evidence"].get("candidate_ownership") or {}
+                for record in ownership.get("candidate_records") or []:
+                    record["selected"]=record.get("candidate_id")==selection["selected"].get("candidate_id");record["state"]="eligible" if record["selected"] else "unselected"
                 self._transition(state, "design_selected", "technical_candidate_selection", selection)
             selected = state["evidence"]["selection"]["selected"]
             if "listing_ready" not in completed:

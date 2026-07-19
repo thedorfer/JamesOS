@@ -187,8 +187,8 @@ class ProductOrchestratorTests(unittest.TestCase):
             exact={**old,"candidate_id":"exact","png_path":str(same)}
             color={**old,"candidate_id":"color","png_path":str(recolor),"png_sha256":product_orchestrator._file_sha(recolor)}
             fresh={"candidate_id":"fresh","png_path":str(different),"png_sha256":product_orchestrator._file_sha(different),"composition_family":"columns","treatment_id":"columns-v1"}
-            self.assertEqual(product_orchestrator.assess_artwork_novelty(exact,[old])["status"],"exact_duplicate")
-            self.assertIn(product_orchestrator.assess_artwork_novelty(color,[old])["status"],{"near_duplicate","same_template_changed_text_or_color"})
+            self.assertEqual(product_orchestrator.assess_artwork_novelty(exact,[old])["status"],"duplicate_authoritative_artifact")
+            self.assertIn(product_orchestrator.assess_artwork_novelty(color,[old])["status"],{"duplicate_authoritative_artifact","insufficient_visual_distinction"})
             self.assertEqual(product_orchestrator.assess_artwork_novelty(fresh,[old])["status"],"materially_distinct")
         brief=product_orchestrator.normalize_prompt('Create "TRANS RIGHTS ARE HUMAN RIGHTS" with no heart, no rounded rectangle, and a new composition.')
         self.assertIn("heart",brief["negative_visual_constraints"]);self.assertIn("rounded_rectangle",brief["negative_visual_constraints"]);self.assertTrue(brief["force_new_composition"])
@@ -217,7 +217,40 @@ class ProductOrchestratorTests(unittest.TestCase):
                 left,top,right,bottom=item["visible_alpha_bounds"];self.assertGreaterEqual(left,360);self.assertGreaterEqual(top,432);self.assertLessEqual(right,4140);self.assertLessEqual(bottom,4968);self.assertTrue(item["quality_checks"]["hard_safe_bounds"])
             self.assertFalse(state["evidence"]["selection"]["approval"]["human_artistic_approval"]);self.assertEqual(state["stage"],"failed");client_factory.assert_not_called();self.assertTrue((root/"jobs/design-gate/design-review/design-review-sheet.png").is_file())
             product_orchestrator.validate_candidate_uniqueness(candidates)
-            with self.assertRaisesRegex(ValidationError,"distinct image hashes"):product_orchestrator.validate_candidate_uniqueness([candidates[0],{**candidates[1],"png_sha256":candidates[0]["png_sha256"]}])
+            product_orchestrator.validate_candidate_uniqueness([candidates[0],{**candidates[1],"png_sha256":candidates[0]["png_sha256"]},candidates[2]])
+
+    def test_novelty_corpus_excludes_failed_jobs_and_same_job_artifacts(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);jobs=root/"jobs";orchestrator=product_orchestrator.ProductOrchestrator(jobs,product_orchestrator.Adapters(client_factory=Mock()))
+            image=root/"candidate.png";Image.new("RGBA",(40,40),(0,0,0,0)).save(image);with_pixels=Image.open(image);with_pixels.close()
+            candidate={"candidate_id":"prompt_compact","png_path":str(image),"png_sha256":product_orchestrator._file_sha(image),"composition_family":"compact"}
+            current={"job_id":"current","shop_id":1,"evidence":{"superseded_candidates":[candidate]}}
+            failed={"job_id":"failed","shop_id":1,"stage":"generation_failed","publish_status":"not_published","evidence":{"selection":{"selected":candidate}}}
+            product_orchestrator._atomic_json(orchestrator._path("failed"),failed)
+            self.assertEqual(orchestrator._prior_designs(current),[])
+
+    def test_authoritative_completed_artwork_remains_in_novelty_corpus(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);jobs=root/"jobs";orchestrator=product_orchestrator.ProductOrchestrator(jobs,product_orchestrator.Adapters(client_factory=Mock()))
+            image=root/"approved.png";canvas=Image.new("RGBA",(80,80),(0,0,0,0));ImageDraw.Draw(canvas).rectangle((20,10,60,70),fill="white");canvas.save(image);canvas.close()
+            digest=product_orchestrator._file_sha(image);candidate={"candidate_id":"approved","png_path":str(image),"png_sha256":digest,"composition_family":"compact"}
+            old={"job_id":"completed","shop_id":1,"stage":"awaiting_human_approval","publish_status":"not_published","evidence":{"selection":{"selected":candidate},"human_design_approval":{"approved":True,"candidate_id":"approved","candidate_sha256":digest}}}
+            product_orchestrator._atomic_json(orchestrator._path("completed"),old)
+            prior=orchestrator._prior_designs({"job_id":"current","shop_id":1,"evidence":{}})
+            self.assertEqual(len(prior),1);assessment=product_orchestrator.assess_artwork_novelty(candidate,prior)
+            self.assertEqual(assessment["rejection_code"],"duplicate_authoritative_artifact");self.assertFalse(assessment["eligible"])
+            self.assertNotIn(str(root),json.dumps(assessment))
+
+    def test_identical_siblings_retain_one_and_common_phrase_is_not_novelty_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/"same.png";image=Image.new("RGBA",(80,80),(0,0,0,0));ImageDraw.Draw(image).rectangle((20,10,60,70),fill="white");image.save(path);image.close();digest=product_orchestrator._file_sha(path)
+            candidates=[]
+            for name in ("prompt_centered","prompt_balanced","prompt_compact"):
+                candidates.append({"candidate_id":name,"composition_family":name,"png_path":str(path),"png_sha256":digest,"rendered_phrase":"SAME WORDS","rendered_text_lines":["SAME WORDS"],"prompt_validation":{"compliant":True},"quality_checks":{}})
+            report=product_orchestrator.validate_candidate_set(candidates,{"exact_text":"SAME WORDS"},[])
+            eligible=[row for row in report["candidates"] if row["eligible"]]
+            self.assertEqual([row["candidate_id"] for row in eligible],["prompt_compact"])
+            self.assertEqual({row["novelty_status"] for row in report["candidates"] if not row["eligible"]},{"duplicate_within_batch"})
 
     def test_multiline_phrase_survives_normalization_generation_and_all_layouts(self):
         prompt="Exact phrase:\r\n  UNREALIZED   LOSSES  \r\n REAL COMFORT \r\n\r\nBold centered retro typography for market traders"

@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock,patch
 
 from fastapi.testclient import TestClient
+from PIL import Image,ImageDraw
 
 from jamesos.core import api
 from jamesos.core.errors import StateConflictError
@@ -227,6 +228,20 @@ class CommerceCreateTests(unittest.TestCase):
             orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no provider"))));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
             queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="Bold centered typography artwork palette for market traders",destination_confirmed=True);state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={"safe_message":"No eligible artwork.","last_completed_stage":"brief_ready","terminal_local_failure":True});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
             diagnostic=service.safe_status(queued["job_id"])["artwork_diagnostics"];self.assertEqual((diagnostic["candidate_count"],diagnostic["accepted_candidate_count"],diagnostic["rejected_candidate_count"]),(0,0,0));self.assertEqual(diagnostic["zero_candidate_rejection"]["code"],"no_output");self.assertNotIn(str(Path(temporary)),json.dumps(diagnostic))
+
+    def test_novelty_failure_reports_generated_candidates_and_real_failed_stage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);orch=product_orchestrator.ProductOrchestrator(root/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no provider"))));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
+            queued=service.create_job(commerce_profile_id="bagholder-supply",exact_phrase="UNREALIZED LOSSES\nBUILD CHARACTER",product_brief="Bold centered typography artwork for market traders",destination_confirmed=True);state=orch.load(queued["job_id"]);candidate_root=root/"candidate";candidate_root.mkdir()
+            candidates=[]
+            for index,name in enumerate(("prompt_centered","prompt_balanced","prompt_compact")):
+                path=candidate_root/f"{name}.png";image=Image.new("RGBA",(40,40),(0,0,0,0));ImageDraw.Draw(image).rectangle((5+index,5,30,35),fill="white");image.save(path);image.close()
+                novelty={"comparison_scope":"authoritative_completed_products","authoritative_reference_count":1,"nearest_comparison_safe_id":"artwork:reference:approved","similarity_metric":"occupied_alpha_grayscale_similarity","similarity_score":1.0,"threshold":.9,"status":"duplicate_authoritative_artifact","rejection_code":"duplicate_authoritative_artifact","reuse_decision":"new_candidate"}
+                candidates.append({"candidate_id":name,"job_id":queued["job_id"],"png_path":str(path),"png_sha256":product_orchestrator._file_sha(path),"quality_checks":{"hard_dimensions":True,"hard_novelty":False,"hard_prompt_adherence":True},"novelty_evidence":novelty})
+            state["evidence"]={"candidates":candidates,"candidate_diversity":{"candidate_count":3,"rejected_for_prompt_mismatch":0,"rejected_for_similarity":3,"candidates":[{"candidate_id":item["candidate_id"],"eligible":False,"novelty_diagnostics":item["novelty_evidence"],"rejection_reasons":[{"category":"novelty","reason":"duplicate_authoritative_artifact"}]} for item in candidates]}}
+            state.update(stage="generation_failed",generation_failure={"safe_message":"Artwork candidates were rejected: 0 for prompt adherence and 3 for novelty.","last_completed_stage":"production_artifact_ready","failed_stage":"design_candidates_ready","terminal_local_failure":True});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
+            status=service.safe_status(queued["job_id"]);diagnostic=status["artwork_diagnostics"]
+            self.assertEqual(status["failed_stage"],"design_candidates_ready");self.assertEqual((diagnostic["generated_candidate_count"],diagnostic["technically_eligible_count"],diagnostic["prompt_adherence_rejected_count"],diagnostic["novelty_rejected_count"]),(3,3,0,3));self.assertIsNone(diagnostic["zero_candidate_rejection"]);self.assertEqual(diagnostic["image_generation_readiness"],"ready");self.assertNotIn(str(root),json.dumps(diagnostic))
 
     def test_no_eligible_selection_is_persisted_without_reraising(self):
         with tempfile.TemporaryDirectory() as temporary:

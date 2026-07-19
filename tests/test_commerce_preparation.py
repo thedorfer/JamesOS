@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
+import shutil
+import subprocess
 import tempfile
+import threading
 import unittest
+from unittest.mock import Mock,patch
 
+from fastapi.testclient import TestClient
+
+from jamesos.core import api
 from jamesos.services.commerce_preparation import UnifiedCommercePreparation
 from jamesos.services.commerce_publication import CommercePublicationExecutor
 
@@ -46,6 +54,29 @@ def profile(required=True):
 
 
 class UnifiedCommercePreparationTests(unittest.TestCase):
+    def test_chromium_loading_path_reaches_review_after_fake_provider_preparation(self):
+        chrome=shutil.which("google-chrome") or shutil.which("chromium")
+        if not chrome:self.skipTest("Chrome/Chromium is required")
+        with tempfile.TemporaryDirectory() as temporary:
+            orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator);service=UnifiedCommercePreparation(orchestrator,workflow=workflow,profile_loader=profile)
+            local=service.create(prompt="Create YOU ARE SAFE WITH ME",authorize_draft_work=False);ready=service.create(prompt=None,resume_job_id=local["job_id"],authorize_draft_work=True)
+            status={"brand_display_name":"Fixture","printify_shop_title":"Fixture","printify_shop_id":123,"etsy_shop_slug":"Fixture","progress_label":"Ready for review","open_product_review_allowed":True,"ready_for_review":True,"failed":False}
+            mocked=Mock();mocked.safe_status.return_value=status
+            with patch.object(api,"CommerceCreationService",return_value=mocked),patch.object(api,"_require_local"):
+                loading=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/commerce/jobs/{ready['job_id']}/loading").text
+            class Handler(BaseHTTPRequestHandler):
+                def do_GET(self):
+                    if self.path.endswith("/status.json"):body=json.dumps(status).encode();content="application/json"
+                    elif self.path.startswith("/commerce/proposals/"):body=b"<!doctype html><h1>Product review</h1><p>UNPUBLISHED</p><p>NO ORDER CREATED</p>";content="text/html"
+                    else:body=loading.encode();content="text/html"
+                    self.send_response(200);self.send_header("Content-Type",content);self.end_headers();self.wfile.write(body)
+                def do_POST(self):
+                    self.send_response(303);self.send_header("Location",f"/commerce/proposals/{ready['job_id']}/review");self.end_headers()
+                def log_message(self,*args):pass
+            server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
+            try:rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=2500","--dump-dom",f"http://127.0.0.1:{server.server_port}/commerce/jobs/{ready['job_id']}/loading"],check=True,capture_output=True,text=True).stdout
+            finally:server.shutdown();server.server_close()
+            self.assertIn("Product review",rendered);self.assertIn("UNPUBLISHED",rendered);self.assertIn("NO ORDER CREATED",rendered);self.assertEqual(orchestrator.resume_calls,1)
     def test_generated_ten_tags_are_completed_from_bound_profile_before_provider(self):
         with tempfile.TemporaryDirectory() as temporary:
             orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)
