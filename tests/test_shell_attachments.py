@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from unittest.mock import Mock
 
 from fastapi.testclient import TestClient
 
@@ -83,6 +84,18 @@ class ShellAttachmentTests(unittest.TestCase):
         response=self.client.request("DELETE",f"/app/attachments/{item['attachment_id']}",json={"csrf_token":api._COMMERCE_CREATE_CSRF,"conversation_id":CONVERSATION},headers=ORIGIN)
         self.assertEqual(response.status_code,200);self.assertEqual(response.json(),{"removed":True});self.assertFalse((self.root/CONVERSATION/item["attachment_id"]).exists())
         self.assertEqual(self.client.request("DELETE",f"/app/attachments/{item['attachment_id']}",json={"csrf_token":api._COMMERCE_CREATE_CSRF,"conversation_id":"different-conversation-1234567890"},headers=ORIGIN).status_code,422)
+
+    def test_text_attachment_end_to_end_processing_receipt_and_model_context(self):
+        token="JAMESOS-FILE-CHECK-20260718";item=self.upload("check.txt",token.encode(),"text/plain").json();prompts=[]
+        def model(prompt,**kwargs):prompts.append(prompt);return json.dumps({"message":token,"commands":[],"suggestions":[],"warnings":[]})
+        profile={"profile_id":"x","display_name":"X","configuration":{"printify_shop_id":1,"printify_shop_title":"X","etsy_shop_slug":"x"}}
+        values={"csrf_token":api._COMMERCE_CREATE_CSRF,"conversation_id":CONVERSATION,"message":"Read the attached token","active_view":"dashboard","active_profile_id":"x","selected_job_id":"","form":{},"attachments":[item]}
+        conversation_root=Path(self.temporary.name)/"conversations";provider=Mock(side_effect=AssertionError("attachments cannot contact providers"))
+        with patch.object(api,"list_commerce_profiles",return_value=[profile]),patch("jamesos.services.application_shell.ask_ollama",side_effect=model),patch("jamesos.services.application_shell.ROOT",conversation_root):
+            response=self.client.post("/app/chat",json=values,headers=ORIGIN)
+        self.assertEqual(response.status_code,200,response.text);body=response.json();self.assertEqual(body["message"],token);self.assertEqual(body["commands"],[]);self.assertEqual(len(body["attachment_receipts"]),1)
+        receipt=body["attachment_receipts"][0];self.assertEqual(receipt["filename"],"check.txt");self.assertEqual(receipt["content_type"],"text/plain");self.assertEqual(receipt["byte_count"],len(token));self.assertEqual(receipt["ingestion_state"],"processed");self.assertEqual(receipt["processing_method"],"utf8_text_extraction");self.assertEqual(receipt["extracted_character_count"],len(token))
+        self.assertIn(token,prompts[0]);self.assertNotIn(str(self.root),response.text);self.assertTrue((self.root/CONVERSATION/item["attachment_id"]).is_file());provider.assert_not_called()
 
 
 if __name__=="__main__":unittest.main()

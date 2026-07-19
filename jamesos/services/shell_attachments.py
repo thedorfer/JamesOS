@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from io import BytesIO
 import os
 from pathlib import Path
 import re
@@ -16,6 +17,8 @@ from jamesos.services.product_orchestrator import _atomic_json
 ROOT = JAMESOS_DATA / "JamesOS" / "ApplicationShell" / "attachments"
 MAX_BYTES = int(os.environ.get("JAMESOS_SHELL_UPLOAD_MAX_BYTES", 10 * 1024 * 1024))
 ORPHAN_TTL_SECONDS = int(os.environ.get("JAMESOS_SHELL_UPLOAD_ORPHAN_TTL_SECONDS", 24 * 60 * 60))
+MAX_EXTRACT_CHARS = int(os.environ.get("JAMESOS_SHELL_ATTACHMENT_EXTRACT_CHARS", 20_000))
+MAX_TOTAL_CONTEXT_CHARS = int(os.environ.get("JAMESOS_SHELL_ATTACHMENT_CONTEXT_CHARS", 40_000))
 REFERENCE_ROOTS = (JAMESOS_DATA / "JamesOS" / "ApplicationShell" / "conversations", JAMESOS_DATA / "JamesOS" / "Jobs")
 ALLOWED = {
     "text/plain": {".txt"}, "text/markdown": {".md", ".markdown"},
@@ -78,6 +81,34 @@ def verify_attachments(conversation_id: str, values: Any) -> list[dict[str, Any]
             if key in value and value[key] != meta.get(key): raise ValueError("Attachment metadata does not match the stored upload.")
         verified.append({key: meta[key] for key in ("attachment_id", "filename", "content_type", "size")})
     return verified
+
+
+def process_chat_attachments(conversation_id: str, values: list[dict[str, Any]]) -> tuple[list[dict[str, Any]],list[dict[str,str]]]:
+    receipts=[];contexts=[];remaining=MAX_TOTAL_CONTEXT_CHARS
+    for meta in values:
+        attachment_id=meta["attachment_id"];data=(ROOT/conversation_id/attachment_id).read_bytes();content_type=meta["content_type"]
+        receipt={"attachment_id":attachment_id,"filename":meta["filename"],"content_type":content_type,"byte_count":len(data),"ingestion_state":"processed","processing_method":"validated_binary","extracted_character_count":0}
+        extracted=""
+        if content_type in {"text/plain","text/markdown","application/json","text/csv"}:
+            extracted=data.decode("utf-8")[:MAX_EXTRACT_CHARS];receipt["processing_method"]="utf8_text_extraction";receipt["extracted_character_count"]=len(extracted)
+        elif content_type=="application/pdf":
+            try:
+                from pypdf import PdfReader
+                reader=PdfReader(BytesIO(data));receipt["page_count"]=len(reader.pages);parts=[]
+                for page in reader.pages:
+                    if sum(map(len,parts))>=MAX_EXTRACT_CHARS:break
+                    parts.append(page.extract_text() or "")
+                extracted="\n".join(parts)[:MAX_EXTRACT_CHARS];receipt["processing_method"]="pdf_text_extraction";receipt["extracted_character_count"]=len(extracted)
+            except Exception:receipt["processing_method"]="pdf_validation_no_text"
+        else:
+            from PIL import Image
+            with Image.open(BytesIO(data)) as image:
+                image.load();receipt["dimensions"]={"width":int(image.width),"height":int(image.height)}
+            receipt["processing_method"]="image_decode";receipt["image_pipeline_available"]=True;receipt["visual_understanding_performed"]=False
+        if extracted and remaining>0:
+            bounded=extracted[:remaining];contexts.append({"attachment_id":attachment_id,"filename":meta["filename"],"untrusted_text":bounded});remaining-=len(bounded)
+        receipts.append(receipt)
+    return receipts,contexts
 
 
 def _is_referenced(attachment_id: str, roots: tuple[Path, ...] = REFERENCE_ROOTS) -> bool:
