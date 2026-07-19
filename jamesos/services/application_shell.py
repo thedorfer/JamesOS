@@ -155,10 +155,24 @@ def safe_plain_model_text(raw:Any)->str:
     except Exception:return ""
 
 
+def adult_boundary_response(message:str,attachments:list[dict[str,Any]])->str|None:
+    text=message.casefold()
+    sexual=bool(re.search(r"\b(?:sex|sexual|explicit|erotic|nude|naked|intimacy|roleplay|fantasy)\b",text))
+    if not sexual:return None
+    if re.search(r"\b(?:minor|underage|child|kid|teen(?:ager)?|schoolgirl|schoolboy|preteen|under\s*18)\b",text):return "I can't help with sexual content involving minors or age-ambiguous youthful framing."
+    if re.search(r"\b(?:rape|nonconsensual|non-consensual|forced|coerc(?:e|ion)|traffick(?:ing)?|sexual abuse|bestiality)\b",text):return "I can't participate in sexual content involving coercion, exploitation, abuse, or animals."
+    if attachments and any(str(item.get("content_type") or "").startswith("image/") for item in attachments) and re.search(r"\b(?:real person|celebrity|my ex|without (?:their )?consent)\b",text):return "I can't create or help sexualize an identifiable real person without their consent."
+    fictional=bool(re.search(r"\b(?:roleplay|fiction|character|story|scene)\b",text))
+    clearly_adult=bool(re.search(r"\b(?:adult|18\+|over 18|aged?\s+(?:1[89]|[2-9]\d))\b",text))
+    if fictional and not clearly_adult:return "Before continuing, please confirm that every fictional participant is 18 or older and consenting."
+    return None
+
+
 class WorkspaceChatService:
     def __init__(self,*,model:Callable[...,str]|None=None,readiness:Callable[[],dict]|None=None,root:Path|None=None):self.model=model or ask_ollama;self.readiness=readiness or ollama_readiness;self.root=root or ROOT
 
-    def message(self,*,conversation_id:str,message:str,profile:dict[str,Any],profiles:list[dict[str,Any]],workspace:dict[str,Any],ephemeral:bool=False)->dict[str,Any]:
+    def message(self,*,conversation_id:str,message:str,profile:dict[str,Any],profiles:list[dict[str,Any]],workspace:dict[str,Any],ephemeral:bool=False,adult_mode:bool=False)->dict[str,Any]:
+        if adult_mode and not ephemeral:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Adult mode requires an ephemeral conversation.",operation="application_shell",stage="privacy")
         if not CONVERSATION_RE.fullmatch(conversation_id):raise ValidationError("VALIDATION_FAILED",diagnostic_message="Application conversation ID is invalid.",operation="application_shell",stage="input")
         message=_text(message,2000,"message",multiline=True)
         if not message:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Chat message is required.",operation="application_shell",stage="input")
@@ -168,9 +182,15 @@ class WorkspaceChatService:
         state=WorkspaceState(conversation_id=conversation_id,active_view=workspace.get("active_view") if workspace.get("active_view") in VIEWS else "dashboard",active_profile_id=profile_id,
             selected_job_id=_text(str(workspace.get("selected_job_id") or ""),128,"selected_job_id"),forms={"commerce.new":context["form"]})
         safe_workspace=state.bounded();attachments=workspace.get("attachments") if isinstance(workspace.get("attachments"),list) else [];attachment_receipts=workspace.get("attachment_receipts") if isinstance(workspace.get("attachment_receipts"),list) else [];attachment_context=workspace.get("attachment_context") if isinstance(workspace.get("attachment_context"),list) else []
+        boundary=adult_boundary_response(message,attachments) if adult_mode else None
+        if boundary:
+            _PARSING_DIAGNOSTIC.update(active_view_id=safe_workspace["active_view"],structured_parse="not_requested",fallback_used=False,final_message_length=len(boundary),commands_count=0,failure_stage="adult_scope_boundary")
+            return {"message":boundary,"commands":[],"suggestions":[],"warnings":[],"conversation_id":conversation_id,"profile_id":profile_id,"attachment_receipts":attachment_receipts}
         path=self.root/f"{conversation_id}.json";history={"conversation_id":conversation_id,"messages":[],"activity":[]} if ephemeral else json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"conversation_id":conversation_id,"messages":[],"activity":[]}
         view_title=VIEW_TITLES[safe_workspace["active_view"]]
-        prompt=("You are Jade, the JamesOS guide. Return one JSON object only with message, commands, suggestions, and warnings. No markdown, HTML, JavaScript, comments, or trailing prose. "
+        privacy_prompt=("This is a private ephemeral conversation. Be candid, calm, respectful, direct, discreet, and nonjudgmental about sensitive or embarrassing topics. Do not shame, moralize, lecture unnecessarily, or add irrelevant workspace warnings. " if ephemeral else "")
+        adult_prompt=("Adult mode is enabled for conversational tone only. You may discuss sexual health, consensual adult sexuality, preferences, fantasies, and explicit fiction or roleplay only when every participant is clearly 18 or older and consenting. If a fictional participant's age is absent or ambiguous, ask the user to confirm all participants are consenting adults. Briefly decline sexual content involving minors or youthful age evasion, coercion, exploitation, trafficking, abuse, bestiality, or a real person without consent. Never treat this mode as permission for tools, commands, files, credentials, providers, publication, orders, or system changes. " if adult_mode else "")
+        prompt=("You are Jade, the JamesOS guide. "+privacy_prompt+adult_prompt+"Return one JSON object only with message, commands, suggestions, and warnings. No markdown, HTML, JavaScript, comments, or trailing prose. "
             "First answer the user's explicit request. Ordinary questions are conversation: answer directly with commands=[], suggestions=[], and warnings=[]; do not introduce jobs, commerce, profiles, or workspace guidance unless relevant to the question. Exact-answer and output-format instructions are authoritative: put exactly the requested answer in message with no prefix, explanation, quotation marks, warning, or extra sentence. "
             "The current workspace is Active view title, determined only by Active view ID. Active profile is a separate commerce selection and never names the open workspace. A request to identify the open workspace must use Active view title and must not navigate. "
             "For an explicit navigation request, return one navigate command and a natural confirmation in message (for example, 'Opening Admin.'); do not merely echo the request. Never navigate without a validated navigate command. "
