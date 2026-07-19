@@ -52,6 +52,25 @@ class CommerceCreateTests(unittest.TestCase):
                 state["evidence"]["selection"]["selected"].pop("png_path");self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,404)
             service.review_snapshot.assert_called();self.assertEqual(foreign.exists(),True)
 
+    def test_saved_mockup_route_is_job_owned_same_origin_and_read_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            jobs=Path(temporary)/"jobs";root=jobs/"preview-job";root.mkdir(parents=True);mockup=root/"front-black.jpg";Image.new("RGB",(8,6),(22,24,28)).save(mockup);before=mockup.read_bytes();digest=product_orchestrator._file_sha(mockup);asset_id=f"mockup-{digest[:20]}"
+            state={"evidence":{"mockups":[{"asset_id":asset_id,"local_path":str(mockup),"sha256":digest}]}}
+            orchestrator=Mock();orchestrator._path.side_effect=lambda job_id:jobs/job_id/"orchestrator-state.json";orchestrator.load.return_value=state
+            service=Mock(orchestrator=orchestrator);service.review_snapshot.return_value={"mockups":[{"asset_id":asset_id}]};client=TestClient(api.app,base_url="http://127.0.0.1:8787")
+            with patch.object(api,"CommerceCreationService",return_value=service):
+                response=client.get(f"/commerce/jobs/preview-job/mockups/{asset_id}",headers={"Referer":"http://127.0.0.1:8787/app?view=commerce.review"})
+                self.assertEqual(client.get(f"/commerce/jobs/preview-job/mockups/{asset_id}",headers={"Origin":"https://evil.example"}).status_code,403)
+                service.review_snapshot.return_value={"mockups":[]};self.assertEqual(client.get(f"/commerce/jobs/other-job/mockups/{asset_id}").status_code,404)
+            self.assertEqual(response.status_code,200);self.assertEqual(response.content,before);self.assertEqual(response.headers["content-type"],"image/jpeg");self.assertEqual(response.headers["cache-control"],"private, no-store");self.assertEqual(response.headers["x-content-type-options"],"nosniff");self.assertNotIn(str(Path(temporary)),str(response.headers));self.assertEqual(mockup.read_bytes(),before)
+
+    def test_review_regeneration_versions_local_candidates_without_touching_draft(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            provider=Mock(side_effect=AssertionError("provider must not be constructed"));orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=provider));service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:profile(pid,1,"Shop"));job_id="review-regeneration";root=orch._path(job_id).parent;root.mkdir(parents=True);current=root/"current.png";Image.new("RGBA",(4500,5400),(0,0,0,0)).save(current);digest=product_orchestrator._file_sha(current)
+            state={"job_id":job_id,"original_prompt":"Exact phrase:\nUNREALIZED LOSSES\nBUILD CHARACTER","brief":{"exact_text":"UNREALIZED LOSSES\nBUILD CHARACTER","requested_motifs":[],"negative_visual_constraints":[],"preferred_layout":"integrated_shadow","artwork_palette":"profile_guided","artwork_palette_names":["warm cream","muted market red","muted market green"],"artwork_palette_rgba":[[244,231,199,255],[174,75,72,255],[83,125,91,255]]},"stage":"awaiting_human_approval","publish_status":"not_published","order_status":"not_created","evidence":{"selection":{"selected":{"candidate_id":"current","png_path":str(current),"png_sha256":digest}},"draft":{"printify_product_id":"existing-draft","publish_status":"not_published","order_status":"not_created"}},"transitions":[]}
+            product_orchestrator._atomic_json(orch._path(job_id),state);before=orch._path(job_id).read_bytes();current_before=current.read_bytes();result=service.regenerate_review_artwork(job_id);after=orch.load(job_id)
+            self.assertEqual(result["candidate_count"],3);self.assertFalse(result["provider_contacted"]);self.assertEqual(after["evidence"]["draft"]["printify_product_id"],"existing-draft");self.assertEqual(after["evidence"]["selection"]["selected"]["png_sha256"],digest);self.assertEqual(current.read_bytes(),current_before);self.assertEqual(len(after["evidence"]["local_artwork_revisions"][0]["candidates"]),3);provider.assert_not_called();self.assertNotEqual(before,orch._path(job_id).read_bytes())
+
     def test_profile_listing_and_safe_id_loading(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/"bagholder-supply.json").write_text(json.dumps(profile("bagholder-supply",28275232,"BagholdersSupplyCo")))

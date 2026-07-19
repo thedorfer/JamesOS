@@ -1174,5 +1174,24 @@ class ProductOrchestratorTests(unittest.TestCase):
             blockers=raised.exception.context["blockers"];self.assertEqual(blockers[0]["field"],"remote.published");self.assertIs(blockers[0]["value"],True)
             client.update_product.assert_not_called()
 
+    def test_market_typography_candidates_are_large_palette_bound_and_guide_free(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);phrase="UNREALIZED LOSSES\nBUILD CHARACTER";brief={"exact_text":phrase,"requested_motifs":[],"negative_visual_constraints":[],"preferred_layout":"integrated_shadow","artwork_palette":"profile_guided","artwork_palette_names":["warm cream","muted market red","muted market green"],"artwork_palette_rgba":[[244,231,199,255],[174,75,72,255],[83,125,91,255]]}
+            evidence=product_orchestrator._independent_evidence({"job_id":"quality","original_prompt":phrase},root,brief);candidates=product_orchestrator._independent_candidates(evidence,root/"candidates",brief)
+            self.assertEqual(len(candidates),3);self.assertEqual(len({item["png_sha256"] for item in candidates}),3)
+            for item in candidates:
+                self.assertEqual(item["rendered_text_lines"],["UNREALIZED LOSSES","BUILD CHARACTER"]);self.assertTrue(item["quality_checks"]["hard_no_debug_overlays"]);self.assertEqual(item["production_artifact_check"]["guide_rectangles"],0);self.assertGreaterEqual(item["minimum_effective_text_size"],600)
+                left,top,right,bottom=item["visible_alpha_bounds"];self.assertGreater(right-left,2500);self.assertGreater(bottom-top,900)
+                with Image.open(item["png_path"]) as image:
+                    self.assertEqual(image.size,(4500,5400));self.assertEqual(image.mode,"RGBA");self.assertAlmostEqual(image.info["dpi"][0],300,delta=1)
+                    pixels=image.get_flattened_data() if hasattr(image,"get_flattened_data") else image.getdata();colors={pixel[:3] for pixel in pixels if pixel[3]>250};self.assertEqual(item["palette_summary"],[[244,231,199],[174,75,72],[83,125,91]]);self.assertNotIn((232,68,74),colors);self.assertNotIn((55,126,195),colors)
+
+    def test_market_listing_is_specific_complete_and_etsy_ready(self):
+        brief={"exact_text":"UNREALIZED LOSSES\nBUILD CHARACTER","visual_style":"bold graphic","blank":"Unisex shirt","price_cents":2499,"currency":"USD","garment_colors":["Black","Navy","Dark Grey Heather"],"sizes":["S","M"],"print_provider":"Fixture","requested_motifs":[]}
+        listing=product_orchestrator.generate_listing(brief,{"png_sha256":"a"*64})
+        self.assertEqual(listing["title"],"Unrealized Losses Build Character Stock Market Humor Unisex T-Shirt");self.assertEqual(listing["printify_description"],listing["description"]);self.assertEqual(listing["etsy_description"],listing["description"]);self.assertIn("investors",listing["description"]);self.assertIn("UNREALIZED LOSSES\nBUILD CHARACTER",listing["description"])
+        self.assertEqual(len(listing["tags"]),13);self.assertEqual(len({tag.casefold() for tag in listing["tags"]}),13);self.assertIn("stock market humor",listing["tags"])
+        for filler in ("meaningful apparel","positive message","unique design","perfect for everyone"):self.assertNotIn(filler,listing["description"].casefold()+" "+" ".join(listing["tags"]).casefold())
+
 
 if __name__ == "__main__":unittest.main()
