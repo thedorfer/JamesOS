@@ -119,7 +119,7 @@ class ApplicationShellTests(unittest.TestCase):
         provider=Mock(side_effect=AssertionError("fallback cannot call providers"))
         with tempfile.TemporaryDirectory() as temporary:
             result=WorkspaceChatService(model=model,readiness=lambda:{"ready":True},root=Path(temporary)).message(conversation_id="conversation-12345678901234567890",message="ordinary question",profile=rows[0],profiles=rows,workspace={"active_view":"dashboard","form":{"exact_phrase":"UNCHANGED"}})
-        self.assertEqual(result["message"],'A safe plain response, with no commands.');self.assertEqual(result["commands"],[]);self.assertEqual(result["warnings"],["No workspace changes were applied."]);self.assertEqual(result["profile_id"],"bagholder-supply");provider.assert_not_called()
+        self.assertEqual(result["message"],'A safe plain response, with no commands.');self.assertEqual(result["commands"],[]);self.assertEqual(result["warnings"],[]);self.assertEqual(result["profile_id"],"bagholder-supply");provider.assert_not_called()
 
     def test_realistic_ollama_prose_before_malformed_structure_is_preserved_without_repair(self):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo")]

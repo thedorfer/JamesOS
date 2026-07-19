@@ -6,7 +6,8 @@ from jamesos.config.loader import get_config
 
 FAST_MODEL = "qwen2.5:3b"
 DEFAULT_MODEL = "llama3.1:8b"
-_LAST_DIAGNOSTIC={"reachable":None,"model":"","endpoint_mode":"generate","http_status":None,"shape":"not_requested","text_length":0,"failure_stage":"none","updated_at":None}
+_READINESS={"reachable":None,"model_installed":None,"model":"","timestamp":None}
+_LAST_GENERATION={"endpoint_mode":"generate","http_status":None,"schema_supplied":False,"top_level_keys":[],"shape":"not_requested","text_length":0,"exception_type":None,"failure_stage":"none","timestamp":None}
 
 
 def _extract_text(data: object) -> tuple[str,str]:
@@ -19,7 +20,8 @@ def _extract_text(data: object) -> tuple[str,str]:
 
 
 def chat_diagnostics() -> dict:
-    return dict(_LAST_DIAGNOSTIC)
+    generation=dict(_LAST_GENERATION);readiness=dict(_READINESS)
+    return {"readiness":readiness,"generation":generation,"reachable":readiness["reachable"],"model":readiness["model"],**generation}
 
 
 def ollama_enabled() -> bool:
@@ -55,15 +57,19 @@ def ask_ollama(prompt: str, model: str | None = None, *, format_schema: dict | s
         headers={"Content-Type": "application/json"},
     )
 
-    _LAST_DIAGNOSTIC.update(reachable=False,model=selected_model,endpoint_mode=endpoint_mode,http_status=None,shape="unrecognized",text_length=0,failure_stage="connectivity",updated_at=datetime.now().astimezone().isoformat())
+    _LAST_GENERATION.update(endpoint_mode=endpoint_mode,http_status=None,schema_supplied=format_schema is not None,top_level_keys=[],shape="unrecognized",text_length=0,exception_type=None,failure_stage="connectivity",timestamp=datetime.now().astimezone().isoformat())
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             status=getattr(resp,"status",200);data=json.loads(resp.read().decode("utf-8"))
-        text,shape=_extract_text(data);_LAST_DIAGNOSTIC.update(reachable=True,http_status=status,shape=shape,text_length=len(text),failure_stage="none" if text else "response_shape")
+        keys=sorted(str(key)[:80] for key in data) if isinstance(data,dict) else [];_LAST_GENERATION.update(http_status=status,top_level_keys=keys,failure_stage="none")
+        if isinstance(data,dict) and data.get("error"):raise RuntimeError("Ollama returned an error envelope.")
+        text,shape=_extract_text(data);_LAST_GENERATION.update(http_status=status,top_level_keys=keys,shape=shape,text_length=len(text),failure_stage="none" if text else "response_shape")
         if not text:raise RuntimeError("Ollama returned no supported assistant text field.")
         return text
     except Exception as exc:
-        if _LAST_DIAGNOSTIC["failure_stage"]=="connectivity":_LAST_DIAGNOSTIC["failure_stage"]="connectivity_or_model"
+        _LAST_GENERATION["exception_type"]=type(exc).__name__
+        if _LAST_GENERATION["failure_stage"]=="connectivity":_LAST_GENERATION["failure_stage"]="connectivity_or_model"
+        elif _LAST_GENERATION["failure_stage"]=="none":_LAST_GENERATION["failure_stage"]="response_error"
         raise
 
 
@@ -74,12 +80,12 @@ def ollama_readiness() -> dict:
         with urllib.request.urlopen(f"{host}/api/tags",timeout=min(5,int(cfg.get("timeout_seconds",60)))) as resp:
             status=getattr(resp,"status",200);data=json.loads(resp.read().decode("utf-8"))
     except Exception:
-        _LAST_DIAGNOSTIC.update(reachable=False,model=model,http_status=None,failure_stage="connectivity_or_model",updated_at=datetime.now().astimezone().isoformat())
+        _READINESS.update(reachable=False,model_installed=None,model=model,timestamp=datetime.now().astimezone().isoformat())
         raise
     models={str(item.get("name") or "") for item in data.get("models") or []}
     if model not in models:
-        _LAST_DIAGNOSTIC.update(reachable=True,model=model,http_status=status,failure_stage="model_availability",updated_at=datetime.now().astimezone().isoformat());raise RuntimeError(f"Configured Ollama model is unavailable: {model}")
-    _LAST_DIAGNOSTIC.update(reachable=True,model=model,http_status=status,failure_stage="none",updated_at=datetime.now().astimezone().isoformat())
+        _READINESS.update(reachable=True,model_installed=False,model=model,timestamp=datetime.now().astimezone().isoformat());raise RuntimeError(f"Configured Ollama model is unavailable: {model}")
+    _READINESS.update(reachable=True,model_installed=True,model=model,timestamp=datetime.now().astimezone().isoformat())
     return {"ready":True,"model":model,"endpoint":host}
 
 

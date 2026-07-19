@@ -37,6 +37,13 @@ COMMAND_SCHEMAS=MappingProxyType({
 SCHEMA={"type":"object","additionalProperties":False,"required":["message","commands","suggestions","warnings"],"properties":{
     "message":{"type":"string"},"commands":{"type":"array","maxItems":12,"items":{"oneOf":list(COMMAND_SCHEMAS.values())}},
     "suggestions":{"type":"array","maxItems":20,"items":{"type":"string"}},"warnings":{"type":"array","maxItems":20,"items":{"type":"string"}}}}
+OLLAMA_RESPONSE_SCHEMA={"type":"object","additionalProperties":False,"required":["message","commands","suggestions","warnings"],"properties":{
+    "message":{"type":"string"},"commands":{"type":"array","items":{"type":"object"}},
+    "suggestions":{"type":"array","items":{"type":"string"}},"warnings":{"type":"array","items":{"type":"string"}}}}
+_PARSING_DIAGNOSTIC={"structured_parse":"not_run","fallback_used":False,"final_message_length":0,"commands_count":0,"failure_stage":"none"}
+
+
+def application_shell_diagnostics()->dict[str,Any]:return dict(_PARSING_DIAGNOSTIC)
 
 
 @dataclass
@@ -156,14 +163,17 @@ class WorkspaceChatService:
         except Exception:pass
         raw=""
         try:
-            raw=self.model(prompt,format_schema=SCHEMA)
+            raw=self.model(prompt,format_schema=OLLAMA_RESPONSE_SCHEMA)
             original_raw=raw
             result=validate_chat_response(parse_json_object(original_raw),profile_ids)
+            _PARSING_DIAGNOSTIC.update(structured_parse="success",fallback_used=False,final_message_length=len(result["message"]),commands_count=len(result["commands"]),failure_stage="none")
         except Exception as first:
             plain=safe_plain_model_text(original_raw if "original_raw" in locals() else raw)
             diagnostic=ValidationError("VALIDATION_FAILED",diagnostic_message=f"JamesOS chat structured response was unusable: {type(first).__name__}: {first}",user_message="JamesOS could not safely interpret the local model response. Try again.",operation="application_shell",stage="structured_response",cause=first)
             if not plain:handle_error(diagnostic,operation="application_shell",context={"private_mode":ephemeral,"profile_id":profile_id})
-            result={"message":plain or diagnostic.user_message,"commands":[],"suggestions":[],"warnings":["No workspace changes were applied."]}
+            structured_hint=bool(re.search(r"```|[{}\[]",str(original_raw if "original_raw" in locals() else raw)))
+            result={"message":plain or diagnostic.user_message,"commands":[],"suggestions":[],"warnings":["No workspace changes were applied."] if structured_hint or not plain else []}
+            _PARSING_DIAGNOSTIC.update(structured_parse="failure",fallback_used=bool(plain),final_message_length=len(result["message"]),commands_count=0,failure_stage="structured_response" if not plain else "safe_plain_fallback")
         destination=context.get("destination") or {};printify=f"{destination.get('printify_shop_title') or 'Printify shop'} — {destination.get('printify_shop_id')}";etsy=str(destination.get("etsy_shop_slug") or "configured Etsy destination")
         for command in result["commands"]:
             if command.get("type")=="show_confirmation" and command.get("action")=="start_generation":command["message"]=f"Confirm {printify} and Etsy {etsy} before creating an unpublished draft."
