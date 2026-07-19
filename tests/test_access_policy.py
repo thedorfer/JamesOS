@@ -85,5 +85,17 @@ class AccessPolicyTests(unittest.TestCase):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787",client=("127.0.0.1",1234)).post("/app/chat",json={"csrf_token":"wrong"},headers={"Origin":"http://127.0.0.1:8787"})
         self.assertEqual(response.status_code,403);provider.assert_not_called();service.message.assert_not_called()
 
+    def test_read_only_assets_allow_browser_gets_but_reject_cross_site_headers(self):
+        policy=AccessPolicy()
+        policy.authorize_read_only_asset(request("127.0.0.1","127.0.0.1:8787"))
+        policy.authorize_read_only_asset(request("127.0.0.1","127.0.0.1:8787",origin="http://127.0.0.1:8787"))
+        policy.authorize_read_only_asset(request("127.0.0.1","127.0.0.1:8787",extra=[(b"referer",b"http://127.0.0.1:8787/app?view=commerce.review")]))
+        for candidate in (
+            request("127.0.0.1","127.0.0.1:8787",origin="https://evil.example"),
+            request("127.0.0.1","127.0.0.1:8787",extra=[(b"referer",b"https://evil.example/review")]),
+            request("127.0.0.1","evil.example"),
+        ):
+            with self.assertRaises(HTTPException):policy.authorize_read_only_asset(candidate)
+
 
 if __name__ == "__main__": unittest.main()

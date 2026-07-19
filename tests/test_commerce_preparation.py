@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import Mock,patch
 
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from jamesos.core import api
 from jamesos.services.commerce_preparation import UnifiedCommercePreparation
@@ -65,20 +66,26 @@ class UnifiedCommercePreparationTests(unittest.TestCase):
             shell_profile={"profile_id":"private-profile","profile_type":"commerce_shop","enabled":True,"display_name":"Fixture","configuration":{"printify_shop_id":123,"printify_shop_title":"Fixture","etsy_shop_slug":"Fixture"}}
             with patch.object(api,"CommerceCreationService",return_value=mocked),patch.object(api,"list_commerce_profiles",return_value=[shell_profile]),patch.object(api,"selected_profile_id",return_value="private-profile"),patch.object(api,"_require_local"):
                 loading=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/commerce/jobs/{ready['job_id']}/loading").text
-                review_document=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/app?view=commerce.review&job_id={ready['job_id']}").text.replace("</body>","<p id='review-location'></p><script>document.getElementById('review-location').textContent=location.pathname+location.search</script></body>")
+                review_response=TestClient(api.app,base_url="http://127.0.0.1:8787").get(f"/app?view=commerce.review&job_id={ready['job_id']}")
+                review_csp=review_response.headers["content-security-policy"]
+                review_document=review_response.text.replace("</body>","<p id='review-location'></p><p id='preview-result'>waiting</p><script>document.getElementById('review-location').textContent=location.pathname+location.search;const preview=document.getElementById('review-artwork-preview');preview.addEventListener('load',()=>document.getElementById('preview-result').textContent=preview.naturalWidth+'x'+preview.naturalHeight+' '+preview.src)</script></body>")
+            preview_path=orchestrator.root/ready["job_id"]/"preview.png";Image.new("RGB",(7,5),(120,30,20)).save(preview_path);preview_bytes=preview_path.read_bytes()
             class Handler(BaseHTTPRequestHandler):
                 def do_GET(self):
                     if self.path.endswith("/status.json"):body=json.dumps(status).encode();content="application/json"
+                    elif self.path.endswith("/artwork-preview"):body=preview_bytes;content="image/png"
                     elif self.path.startswith("/app?view=commerce.review"):body=review_document.encode();content="text/html"
                     else:body=loading.encode();content="text/html"
-                    self.send_response(200);self.send_header("Content-Type",content);self.end_headers();self.wfile.write(body)
+                    self.send_response(200);self.send_header("Content-Type",content)
+                    if content=="text/html":self.send_header("Content-Security-Policy",review_csp)
+                    self.end_headers();self.wfile.write(body)
                 def do_POST(self):
                     self.send_response(303);self.send_header("Location",f"/app?view=commerce.review&job_id={ready['job_id']}");self.end_headers()
                 def log_message(self,*args):pass
             server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
             try:rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=2500","--dump-dom",f"http://127.0.0.1:{server.server_port}/commerce/jobs/{ready['job_id']}/loading"],check=True,capture_output=True,text=True).stdout
             finally:server.shutdown();server.server_close()
-            self.assertIn(f"view=commerce.review&amp;job_id={ready['job_id']}",rendered);self.assertIn("review-artwork-preview",rendered);self.assertIn("private-product",rendered);self.assertIn("Etsy tags (13)",rendered);self.assertIn("Publication:</strong> no",rendered);self.assertIn("Order:</strong> no",rendered);self.assertEqual(orchestrator.resume_calls,1);self.assertEqual(orchestrator.review_calls,0)
+            self.assertIn(f"view=commerce.review&amp;job_id={ready['job_id']}",rendered);self.assertIn("7x5 http://127.0.0.1:",rendered);self.assertIn(f"/{ready['job_id']}/artwork-preview",rendered);self.assertIn("private-product",rendered);self.assertIn("Etsy tags (13)",rendered);self.assertIn("Publication:</strong> no",rendered);self.assertIn("Order:</strong> no",rendered);self.assertEqual(orchestrator.resume_calls,1);self.assertEqual(orchestrator.review_calls,0)
     def test_generated_ten_tags_are_completed_from_bound_profile_before_provider(self):
         with tempfile.TemporaryDirectory() as temporary:
             orchestrator=FakeOrchestrator(Path(temporary));workflow=FakeWorkflow(orchestrator)

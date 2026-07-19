@@ -22,6 +22,36 @@ def profile(profile_id,shop_id,slug,*,enabled=True,profile_type="commerce_shop")
 
 
 class CommerceCreateTests(unittest.TestCase):
+    def test_artwork_preview_is_owned_read_only_png_with_safe_headers(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)/"jobs"/"preview-job";root.mkdir(parents=True);artwork=root/"selected.png"
+            image=Image.new("RGBA",(3,2),(12,34,56,255));image.save(artwork);image.close();before=artwork.read_bytes()
+            state={"evidence":{"selection":{"selected":{"candidate_id":"selected","png_path":str(artwork)}}}}
+            orchestrator=Mock();orchestrator._path.side_effect=lambda job_id:Path(temporary)/"jobs"/job_id/"orchestrator-state.json";orchestrator.load.return_value=state
+            service=Mock(orchestrator=orchestrator);service.review_snapshot.return_value={"selected_candidate_id":"selected"}
+            client=TestClient(api.app,base_url="http://127.0.0.1:8787",client=("127.0.0.1",1234))
+            with patch.object(api,"CommerceCreationService",return_value=service):
+                responses=[client.get("/commerce/jobs/preview-job/artwork-preview"),client.get("/commerce/jobs/preview-job/artwork-preview",headers={"Referer":"http://127.0.0.1:8787/app?view=commerce.review"}),client.get("/commerce/jobs/preview-job/artwork-preview",headers={"Origin":"http://127.0.0.1:8787"})]
+                self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview",headers={"Origin":"https://evil.example"}).status_code,403)
+                self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview",headers={"Referer":"https://evil.example/review"}).status_code,403)
+            for response in responses:
+                self.assertEqual(response.status_code,200);self.assertEqual(response.content,before);self.assertEqual(response.headers["content-type"],"image/png");self.assertEqual(int(response.headers["content-length"]),len(before));self.assertEqual(response.headers["x-content-type-options"],"nosniff");self.assertEqual(response.headers["cache-control"],"private, no-store");self.assertNotIn(str(Path(temporary)),str(response.headers)+response.text)
+            self.assertEqual(artwork.read_bytes(),before);self.assertEqual(service.review_snapshot.call_count,3)
+
+    def test_artwork_preview_rejects_cross_job_escape_missing_and_invalid_png(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            jobs=Path(temporary)/"jobs";foreign=jobs/"other-job"/"foreign.png";foreign.parent.mkdir(parents=True);Image.new("RGB",(1,1)).save(foreign)
+            own=jobs/"preview-job";own.mkdir();state={"evidence":{"selection":{"selected":{"candidate_id":"selected","png_path":str(foreign)}}}}
+            orchestrator=Mock();orchestrator._path.side_effect=lambda job_id:jobs/job_id/"orchestrator-state.json";orchestrator.load.return_value=state
+            service=Mock(orchestrator=orchestrator);service.review_snapshot.return_value={"selected_candidate_id":"selected"};client=TestClient(api.app,base_url="http://127.0.0.1:8787")
+            with patch.object(api,"CommerceCreationService",return_value=service):
+                self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,403)
+                link=own/"escaped.png";link.symlink_to(foreign);state["evidence"]["selection"]["selected"]["png_path"]=str(link);self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,403)
+                state["evidence"]["selection"]["selected"]["png_path"]=str(own/"missing.png");self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,404)
+                invalid=own/"invalid.png";invalid.write_bytes(b"not executable and not a png");state["evidence"]["selection"]["selected"]["png_path"]=str(invalid);self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,404)
+                state["evidence"]["selection"]["selected"].pop("png_path");self.assertEqual(client.get("/commerce/jobs/preview-job/artwork-preview").status_code,404)
+            service.review_snapshot.assert_called();self.assertEqual(foreign.exists(),True)
+
     def test_profile_listing_and_safe_id_loading(self):
         with tempfile.TemporaryDirectory() as temporary:
             root=Path(temporary);(root/"bagholder-supply.json").write_text(json.dumps(profile("bagholder-supply",28275232,"BagholdersSupplyCo")))

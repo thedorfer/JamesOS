@@ -8,6 +8,7 @@ from urllib.parse import parse_qs
 from fastapi import FastAPI, Header, HTTPException, Request, UploadFile, File,BackgroundTasks
 from fastapi.responses import FileResponse,HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
+from PIL import Image
 
 from jamesos.config import VAULT
 from jamesos.core.errors import JamesOSError, StateConflictError
@@ -414,6 +415,10 @@ def _require_local(request: Request) -> None:
     AccessPolicy.from_runtime_env().authorize(request)
 
 
+def _require_read_only_asset(request:Request)->None:
+    AccessPolicy.from_runtime_env().authorize_read_only_asset(request)
+
+
 def _browser_authenticate(workflow: CommerceWorkflow,job_id: str,cookie: str) -> None:
     try:workflow.authenticate_browser_session(job_id,cookie)
     except JamesOSError as exc:raise HTTPException(status_code=401,detail="Invalid or expired browser review session") from exc
@@ -509,7 +514,7 @@ def _review_response(page: str,status_code: int=200) -> HTMLResponse:
 
 def _commerce_ui_response(page:str,status_code:int=200)->HTMLResponse:
     return HTMLResponse(page,status_code=status_code,headers={"Cache-Control":"no-store","Referrer-Policy":"origin",
-        "Content-Security-Policy":"default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"})
+        "Content-Security-Policy":"default-src 'none'; img-src 'self'; script-src 'unsafe-inline'; connect-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"})
 
 
 @app.get("/app/health")
@@ -731,7 +736,7 @@ def application_shell_route(request:Request):
     if active=="commerce.review" and requested_job:
         try:
             review=CommerceCreationService().review_snapshot(requested_job);tags="".join(f"<li>{html_escape(tag)}</li>" for tag in review["tags"]);timeline=" → ".join(html_escape(str(item)) for item in review["workflow_timeline"]);dimensions=" × ".join(str(item) for item in review["dimensions"] if item is not None)
-            preview=f"<img id='review-artwork-preview' src='{html_escape(str(review['artwork_url']),quote=True)}' alt='Selected artwork preview' style='max-width:320px;max-height:380px'>" if review.get("artwork_url") else "<p>Artwork preview unavailable.</p>"
+            preview=f"<img id='review-artwork-preview' src='{html_escape(str(review['artwork_url']),quote=True)}' alt='Selected artwork preview' referrerpolicy='same-origin' style='max-width:320px;max-height:380px'><p id='review-artwork-fallback' hidden>Artwork preview unavailable. The unpublished draft remains unchanged.</p>" if review.get("artwork_url") else "<p>Artwork preview unavailable. The unpublished draft remains unchanged.</p>"
             review_html=(f"<section id='commerce-review'><h3>Product review</h3><p class='safeguard'><strong>Ready for review</strong><br>UNPUBLISHED DRAFT · NO ORDER CREATED</p>{preview}"
                 f"<p><strong>Selected candidate:</strong> {html_escape(str(review.get('selected_candidate_id') or ''))}<br><strong>Generation method:</strong> {html_escape(str(review.get('generation_method') or ''))}<br><strong>Dimensions:</strong> {dimensions}</p>"
                 f"<p><strong>Destination:</strong> {html_escape(str(review.get('brand_display_name') or ''))}<br><strong>Printify shop:</strong> {html_escape(str(review.get('printify_shop_title') or ''))}<br><strong>Printify draft ID:</strong> <code id='review-draft-id'>{html_escape(str(review.get('printify_product_id') or ''))}</code></p>"
@@ -772,7 +777,7 @@ def application_shell_route(request:Request):
     agency_js=f"""let agencyRevision={int(agency_snapshot['revision'])};function openAgencySection(name){{document.querySelectorAll('[data-agency-section]').forEach(node=>node.hidden=node.dataset.agencySection!==name);q('agency-agent-detail').hidden=true}}document.querySelectorAll('[data-agency-tab]').forEach(button=>button.onclick=()=>openAgencySection(button.dataset.agencyTab));document.querySelectorAll('[data-agent-detail]').forEach(button=>button.onclick=async()=>{{const response=await fetch('/app/agency/agents/'+encodeURIComponent(button.dataset.agentDetail),{{cache:'no-store'}});if(!response.ok)return;const value=await response.json(),content=q('agency-agent-detail-content');content.replaceChildren(...[['Name',value.name],['Role',value.role],['State',value.installation_state+' · '+value.enabled_state+' · '+value.runtime_state],['Version',value.installed_version],['Capabilities',(value.capabilities||[]).join(', ')],['Permissions',(value.permissions||[]).join(', ')],['Workspace',value.workspace],['Recent runs',(value.recent_runs||[]).length],['Pending approvals',(value.pending_approvals||[]).length]].map(([label,text])=>{{const p=document.createElement('p');p.textContent=label+': '+text;return p}}));document.querySelectorAll('[data-agency-section]').forEach(node=>node.hidden=true);q('agency-agent-detail').hidden=false;history.replaceState(null,'','/app?view=agency.agent&agent='+encodeURIComponent(value.agent_id))}});document.querySelectorAll('[data-agent-action]').forEach(button=>button.onclick=async()=>{{const path='/app/agency/agents/'+encodeURIComponent(button.dataset.agentId)+'/'+button.dataset.agentAction,preview=await fetch(path,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{csrf_token:csrf,revision:agencyRevision,confirmed:false}})}}),value=await preview.json();if(!preview.ok)return;const message=button.dataset.agentAction==='remove'?'Remove this agent registration? Retained: '+(value.retained||[]).join(', '):'Disable this optional agent? Shared jobs and data are retained.';if(!window.confirm(message))return;const response=await fetch(path,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{csrf_token:csrf,revision:agencyRevision,confirmed:true}})}}),result=await response.json();if(response.ok){{agencyRevision=result.revision;if(button.dataset.agentAction==='remove')button.closest('[data-agent-card]').remove();else{{const strong=button.closest('[data-agent-card]').querySelector('strong');strong.textContent=strong.textContent.replace('Enabled','Disabled')}}}}}});if(activeView==='agency.home')openAgencySection('my-agents');"""
     extra=agency_js+extra
     policy_js="""const adultPolicy=q('adult-policy'),adultPolicyInput=adultPolicy.elements.adult_mode_available,adultPolicyBefore=adultPolicyInput.checked;bind('edit-adult-policy','click',()=>{adultPolicy.dataset.editing='true';adultPolicyInput.disabled=false;q('edit-adult-policy').hidden=true;q('save-adult-policy').hidden=false;q('cancel-adult-policy').hidden=false});bind('cancel-adult-policy','click',()=>{adultPolicyInput.checked=adultPolicyBefore;adultPolicyInput.disabled=true;adultPolicy.dataset.editing='false';q('edit-adult-policy').hidden=false;q('save-adult-policy').hidden=true;q('cancel-adult-policy').hidden=true});bind('adult-policy','submit',async event=>{event.preventDefault();if(adultPolicy.dataset.editing!=='true')return;const response=await fetch('/app/admin/private-chat-policy',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({csrf_token:csrf,revision:adultPolicy.dataset.revision,adult_mode_available:adultPolicyInput.checked})}),value=await response.json();if(response.ok){adultPolicy.dataset.revision=value.revision;adultPolicyInput.disabled=true;adultPolicy.dataset.editing='false';q('adult-policy-state').textContent=value.adult_mode_available?'Enabled':'Disabled';q('edit-adult-policy').hidden=false;q('save-adult-policy').hidden=true;q('cancel-adult-policy').hidden=true}});"""
-    extra=policy_js+extra
+    extra="""const reviewArtwork=q('review-artwork-preview'),reviewFallback=q('review-artwork-fallback');if(reviewArtwork&&reviewFallback)reviewArtwork.addEventListener('error',()=>{reviewArtwork.hidden=true;reviewFallback.hidden=false});"""+policy_js+extra
     extra=extra.replace("q('dashboard-work').textContent=", "q('dashboard-attention').textContent='Failed commerce jobs: '+v.work.failed.length+' · Pending confirmations: '+v.work.pending_confirmations+' · Degraded services: '+v.systems.filter(x=>x.status!=='healthy').length;q('dashboard-work').textContent=")
     page=page.replace("loadAccessStatus();document.documentElement.dataset.jamesosReady='true';", "loadAccessStatus();"+extra+"document.documentElement.dataset.jamesosReady='true';")
     page=page.replace("href='/commerce/new'","href='/app?view=commerce.new'")
@@ -1019,11 +1024,21 @@ def commerce_loading_status_route(job_id:str,request:Request):
 
 @app.get("/commerce/jobs/{job_id}/artwork-preview")
 def commerce_artwork_preview_route(job_id:str,request:Request):
-    _require_local(request);service=CommerceCreationService();snapshot=service.review_snapshot(job_id);state=service.orchestrator.load(job_id);selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected") or {});path=Path(str(selected.get("png_path") or ""));root=service.orchestrator._path(job_id).parent.resolve()
+    _require_read_only_asset(request);service=CommerceCreationService()
+    try:snapshot=service.review_snapshot(job_id);state=service.orchestrator.load(job_id)
+    except (FileNotFoundError,KeyError,ValueError):raise HTTPException(status_code=404,detail="Artwork preview unavailable")
+    selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected") or {});stored_path=selected.get("png_path")
+    if not isinstance(stored_path,str) or not stored_path:raise HTTPException(status_code=404,detail="Artwork preview unavailable")
+    path=Path(stored_path);root=service.orchestrator._path(job_id).parent.resolve()
     try:resolved=path.resolve(strict=True)
     except OSError:raise HTTPException(status_code=404,detail="Artwork preview unavailable")
-    if root not in resolved.parents or not resolved.is_file() or snapshot.get("selected_candidate_id")!=selected.get("candidate_id"):raise HTTPException(status_code=404,detail="Artwork preview unavailable")
-    return FileResponse(resolved,media_type="image/png",headers={"Cache-Control":"no-store","Content-Disposition":"inline"})
+    if root not in resolved.parents or not resolved.is_file():raise HTTPException(status_code=403,detail="Artwork preview forbidden")
+    if snapshot.get("selected_candidate_id")!=selected.get("candidate_id") or resolved.suffix.casefold()!=".png":raise HTTPException(status_code=404,detail="Artwork preview unavailable")
+    try:
+        with Image.open(resolved) as image:image.verify();valid=image.format=="PNG"
+    except (OSError,ValueError):valid=False
+    if not valid:raise HTTPException(status_code=404,detail="Artwork preview unavailable")
+    return FileResponse(resolved,media_type="image/png",headers={"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff","Content-Disposition":"inline"})
 
 
 @app.post("/commerce/jobs/{job_id}/retry-local-artwork")

@@ -4,6 +4,8 @@ JamesOS is a local-first, web-first personal operating environment. The Linux de
 
 The primary interface is `/app`, a persistent Jade chat pane beside contextual workspaces for Home, The Agency, Admin, Product Studio, commerce diagnostics, and review. Legacy commerce URLs redirect to `/app?view=commerce.new`.
 
+Product Studio destinations use enabled `commerce_shop` profiles rather than hard-coded shops.
+
 > Read [Current status](docs/CURRENT_STATUS.md) before relying on a feature. It distinguishes implementation and automated tests from manual acceptance and real-provider validation.
 
 ## Runtime architecture

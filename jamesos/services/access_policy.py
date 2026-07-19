@@ -162,6 +162,21 @@ class AccessPolicy:
         elif normalized_origin not in self.trusted_origins or origin_host != normalized_host:
             raise HTTPException(status_code=403, detail="Invalid origin")
 
+    def authorize_read_only_asset(self,request:Request)->None:
+        """Authorize a safe GET; Origin is optional and Referer is checked when present."""
+        self.authorize(request,require_origin=False)
+        referer=self._single_header(request,"referer",required=False)
+        if referer is None:return
+        parsed=urlsplit(referer)
+        if parsed.scheme not in {"http","https"} or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            raise HTTPException(status_code=403,detail="Invalid referer")
+        authority=f"[{parsed.hostname.casefold()}]" if ":" in parsed.hostname else parsed.hostname.casefold()
+        if parsed.port is not None:authority+=f":{parsed.port}"
+        normalized=f"{parsed.scheme}://{authority}";host=_host(self._single_header(request,"host") or "")
+        if self.mode=="loopback":
+            if parsed.scheme!="http" or parsed.hostname.casefold() not in {"localhost","127.0.0.1","::1"} or authority!=host:raise HTTPException(status_code=403,detail="Invalid referer")
+        elif normalized not in self.trusted_origins or authority!=host:raise HTTPException(status_code=403,detail="Invalid referer")
+
     def status(self, request: Request) -> dict[str, Any]:
         client = self._client(request)
         host = request.headers.get("host", "unknown").split(",", 1)[0]
