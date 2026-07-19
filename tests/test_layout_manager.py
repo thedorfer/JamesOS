@@ -17,6 +17,12 @@ def profile(profile_id="bagholder-supply",shop_id=28275232,slug="BagholdersSuppl
 
 
 class LayoutManagerTests(unittest.TestCase):
+    def test_old_dashboard_and_admin_layouts_migrate_to_complete_nonoverlapping_registry(self):
+        from jamesos.services.layout_manager import WORKSPACE_PANELS, migrate_layout, SCHEMA_VERSION
+        old={"schema_version":1,"view_id":"dashboard","theme_id":"jamesos-dark","shell":{"chat_width":420,"chat_collapsed":False},"panels":[{"panel_id":"recent_results","component":"card","title":"Recent results","column":1,"row":1,"width":2,"height":1,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""},{"panel_id":"obsolete","component":"card","title":"Old","column":1,"row":1,"width":12,"height":4,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""}]}
+        migrated=migrate_layout(old,"dashboard");self.assertEqual(migrated["schema_version"],SCHEMA_VERSION)
+        self.assertEqual({x["panel_id"] for x in migrated["panels"]},{x[0] for x in WORKSPACE_PANELS["dashboard"]});self.assertTrue(all(x["width"]>=4 and x["height"]>=2 and not x["hidden"] for x in migrated["panels"]));self.assertNotIn("obsolete",str(migrated))
+        admin=migrate_layout({**old,"view_id":"admin.home"},"admin.home");self.assertEqual({x["panel_id"] for x in admin["panels"]},{x[0] for x in WORKSPACE_PANELS["admin.home"]});self.assertTrue(all(not x["hidden"] for x in admin["panels"]))
     def test_default_layout_uses_grid_theme_and_required_system_locks(self):
         value=default_layout("commerce.new");self.assertEqual(value["shell"]["chat_width"],420);self.assertEqual(value["theme_id"],"jamesos-dark")
         panels={item["panel_id"]:item for item in value["panels"]}

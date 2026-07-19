@@ -2,13 +2,14 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 
 from jamesos.core import api
 from jamesos.services.shell_dashboard import ShellDashboardService
 from jamesos.services.shell_secrets import ShellSecretStore
+from jamesos.services.shell_profile_settings import ShellProfileSettings
 
 
 def profile():
@@ -16,6 +17,13 @@ def profile():
 
 
 class DashboardAdminTests(unittest.TestCase):
+    def test_profile_settings_are_allowlisted_private_and_do_not_touch_jobs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path=Path(temporary)/"profiles.json";service=ShellProfileSettings(path);job=Mock(side_effect=AssertionError("job mutated"))
+            saved=service.save("bagholder-supply",{"display_name":"Bagholder Supply Co.","printify_shop_id":"123","listing_guidance":"bagholder-supply-listing-v1"})
+            self.assertEqual(saved["configuration"]["printify_shop_id"],123);self.assertTrue(path.is_file());job.assert_not_called()
+            with self.assertRaises(ValueError):service.save("unknown",{"display_name":"X"})
+            with self.assertRaises(ValueError):service.save("bagholder-supply",{"environment":"SECRET"})
     def test_dashboard_is_sanitized_and_read_only(self):
         provider = unittest.mock.Mock(side_effect=AssertionError("provider call"))
         health = lambda profiles: {"state":"yellow","label":"Usable","systems":[{"id":"ollama","label":"Ollama","status":"unavailable","message":"Optional"}]}
@@ -39,7 +47,7 @@ class DashboardAdminTests(unittest.TestCase):
     def test_shell_contains_dashboard_admin_and_no_activity_or_second_draft_confirmation(self):
         with patch.object(api,"list_commerce_profiles",return_value=[profile()]),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             text=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app").text
-        for value in ("System overview","Work in progress","Recent workspaces","Quick actions","Recent results","Provider credentials","Private-network access","Commerce profiles","Layouts and appearance","Diagnostics"):
+        for value in ("System status","Needs attention","Work in progress","Recent workspaces","Quick actions","Recent results","Provider credentials","Private-network access","Commerce profiles","Layouts and appearance","Diagnostics"):
             self.assertIn(value,text)
         self.assertNotIn("<strong>Activity</strong>",text);self.assertNotIn("id='activity'",text)
         self.assertIn("sessionStorage.setItem('jamesos-commerce-form'",text)

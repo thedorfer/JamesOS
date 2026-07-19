@@ -63,7 +63,8 @@ class ApplicationShellTests(unittest.TestCase):
         rows=[profile("bagholder-supply",28275232,"BagholdersSupplyCo"),profile("unitystitches",9437076,"UnityStitches")]
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app?view=commerce.new")
-        self.assertEqual(response.status_code,200);self.assertIn("class='shell'",response.text);self.assertIn("Your local workspace assistant",response.text);self.assertIn(">JamesOS<",response.text)
+        self.assertEqual(response.status_code,200);self.assertIn("class='shell'",response.text);self.assertIn("Chat with Jade",response.text);self.assertIn(">JamesOS<",response.text)
+        self.assertIn(">Clear</button>",response.text);self.assertNotIn("Reset conversation",response.text);self.assertIn("Private chat",response.text)
         self.assertIn("bagholder-supply",response.text);self.assertIn("unitystitches",response.text);self.assertIn("Product Studio",response.text)
         self.assertIn("function navigate(view)",response.text);self.assertIn("textContent",response.text)
         self.assertIn("id='health-dot'",response.text);self.assertIn("System health",response.text);self.assertIn("UNPUBLISHED DRAFT ONLY",response.text);self.assertIn("commerce.diagnostics",response.text)

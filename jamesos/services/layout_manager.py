@@ -13,7 +13,7 @@ from jamesos.services.product_orchestrator import _atomic_json
 
 
 ROOT=VAULT/"JamesOS"/"Layouts"
-SCHEMA_VERSION=1
+SCHEMA_VERSION=2
 VIEW_RE=re.compile(r"^[a-z][a-z0-9_.-]{0,63}$")
 THEMES=MappingProxyType({"jamesos-dark":MappingProxyType({
     "color_bg":"#0b0d13","color_panel":"#11131b","color_surface":"#191c28","color_text":"#f1f3ff","color_muted":"#a6adc8",
@@ -24,17 +24,55 @@ LOCKED_DEFAULTS=MappingProxyType({
     "destination":{"panel_id":"destination","component":"card","title":"Destination","column":9,"row":1,"width":4,"height":2,"collapsed":False,"hidden":False,"layout_locked":True,"value_locked":True,"action_locks":["hide","move","resize","reorder"],"lock_reason":"Job destination is immutable and must remain visible."},
     "publication_status":{"panel_id":"publication_status","component":"status_banner","title":"Publication safeguards","column":9,"row":3,"width":4,"height":2,"collapsed":False,"hidden":False,"layout_locked":True,"value_locked":True,"action_locks":["hide","move","resize","reorder"],"lock_reason":"Publication and order status must remain visible."},
 })
+WORKSPACE_PANELS={
+    "dashboard":[("system_overview","System status"),("needs_attention","Needs attention"),("work_in_progress","Work in progress"),("quick_actions","Quick actions"),("recent_results","Recent results")],
+    "admin.home":[("admin_services","Services"),("chat_diagnostics","Chat diagnostics"),("errors_diagnostics","Errors & Diagnostics"),("provider_credentials","Provider credentials"),("commerce_profiles","Commerce profiles"),("network_access","Network access"),("layouts_appearance","Layouts and appearance"),("admin_diagnostics","Diagnostics")],
+}
+
+
+def _workspace_defaults(view_id:str)->list[dict[str,Any]]:
+    rows=[]
+    for index,(panel_id,title) in enumerate(WORKSPACE_PANELS.get(view_id,[])):
+        locked=panel_id in {"errors_diagnostics","provider_credentials","network_access"}
+        rows.append({"panel_id":panel_id,"component":"diagnostic" if panel_id in {"errors_diagnostics","admin_diagnostics"} else "card","title":title,"column":1,"row":index*3+1,"width":12,"height":3,"collapsed":False,"hidden":False,"layout_locked":locked,"value_locked":locked,"action_locks":["hide"] if locked else [],"lock_reason":"Required Admin security controls remain visible." if locked else ""})
+    return rows
 
 
 def default_layout(view_id:str)->dict[str,Any]:
     _view(view_id);panels=[]
-    if view_id=="commerce.new":panels=[{"panel_id":"commerce_form","component":"form","title":"Commerce Creator","column":1,"row":1,"width":8,"height":7,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""},*map(dict,LOCKED_DEFAULTS.values())]
+    if view_id in WORKSPACE_PANELS:panels=_workspace_defaults(view_id)
+    elif view_id=="commerce.new":panels=[{"panel_id":"commerce_form","component":"form","title":"Commerce Creator","column":1,"row":1,"width":8,"height":7,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""},*map(dict,LOCKED_DEFAULTS.values())]
     elif view_id=="commerce.loading":panels=[{"panel_id":"generation_progress","component":"progress_steps","title":"Generation progress","column":1,"row":1,"width":8,"height":5,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":True,"action_locks":[],"lock_reason":"Progress values are system-owned."},*map(dict,LOCKED_DEFAULTS.values())]
     elif view_id=="commerce.review":panels=[{"panel_id":"review_gallery","component":"image_gallery","title":"Product review","column":1,"row":1,"width":8,"height":7,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":True,"action_locks":[],"lock_reason":"Review evidence is system-owned."},*map(dict,LOCKED_DEFAULTS.values())]
     else:
         primary={"panel_id":"primary","component":"card","title":view_id.replace("."," ").title(),"column":1,"row":1,"width":8 if view_id.startswith("commerce.") else 12,"height":4,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""}
         panels=[primary,*map(dict,LOCKED_DEFAULTS.values())] if view_id.startswith("commerce.") else [primary]
     return {"schema_version":SCHEMA_VERSION,"view_id":view_id,"theme_id":"jamesos-dark","shell":{"chat_width":420,"chat_collapsed":False},"panels":panels}
+
+
+def migrate_layout(value:Any,view_id:str)->dict[str,Any]:
+    """Merge safe saved preferences into the complete current panel registry."""
+    defaults=default_layout(view_id);registry={p["panel_id"]:p for p in defaults["panels"]}
+    if not isinstance(value,dict) or value.get("view_id")!=view_id:return defaults
+    saved=value.get("panels") if isinstance(value.get("panels"),list) else []
+    result=[];occupied=[]
+    for default in defaults["panels"]:
+        candidate=next((p for p in saved if isinstance(p,dict) and p.get("panel_id")==default["panel_id"]),None)
+        panel=dict(default)
+        if candidate and not default["layout_locked"]:
+            for key in ("column","row","width","height","collapsed","hidden"):
+                if key in candidate:panel[key]=candidate[key]
+            panel["width"]=max(4,int(panel.get("width",default["width"])));panel["height"]=max(2,int(panel.get("height",default["height"])))
+            panel["column"]=max(1,min(12-panel["width"]+1,int(panel.get("column",1))));panel["row"]=max(1,min(100,int(panel.get("row",1))))
+        box=(panel["column"],panel["row"],panel["column"]+panel["width"]-1,panel["row"]+panel["height"]-1)
+        if any(not(box[2]<x[0] or box[0]>x[2] or box[3]<x[1] or box[1]>x[3]) for x in occupied):
+            panel["column"]=1;panel["row"]=max((x[3] for x in occupied),default=0)+1;panel["width"]=12;box=(1,panel["row"],12,panel["row"]+panel["height"]-1)
+        panel["hidden"]=False if view_id in WORKSPACE_PANELS or default["layout_locked"] else bool(panel["hidden"])
+        occupied.append(box);result.append(panel)
+    migrated={**defaults,"theme_id":value.get("theme_id") if value.get("theme_id") in THEMES else defaults["theme_id"],"panels":result}
+    shell=value.get("shell") if isinstance(value.get("shell"),dict) else {}
+    migrated["shell"]={"chat_width":max(300,min(2000,int(shell.get("chat_width",420)))),"chat_collapsed":bool(shell.get("chat_collapsed",False))}
+    return validate_layout(migrated,view_id,user_write=False)
 
 
 def _view(value:Any)->str:
@@ -113,7 +151,7 @@ class LayoutManager:
     def get(self,view_id:str)->dict[str,Any]:
         path=self.path(view_id)
         if not path.is_file():return default_layout(view_id)
-        try:value=json.loads(path.read_text(encoding="utf-8"));return validate_layout(value,view_id,user_write=False)
+        try:value=json.loads(path.read_text(encoding="utf-8"));return migrate_layout(value,view_id)
         except (OSError,ValueError,ValidationError):return default_layout(view_id)
     def save(self,view_id:str,value:Any)->dict[str,Any]:
         clean=validate_layout(value,view_id,user_write=True);_atomic_json(self.path(view_id),clean);return clean
