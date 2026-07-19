@@ -43,7 +43,7 @@ class ContextDockTests(unittest.TestCase):
         rows=[profile(),profile("unitystitches",9437076,"UnityStitches")];provider=Mock(side_effect=AssertionError("navigation cannot call providers"))
         with patch.object(api,"list_commerce_profiles",return_value=rows),patch.object(api,"selected_profile_id",return_value="bagholder-supply"),patch.object(api,"_require_local"):
             text=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app?view=commerce.new").text
-        for required in ("id='context-dock'","data-nav-id='home'","data-nav-id='agency'","data-nav-id='admin'",">Home<",">The Agency<",">Admin<","agency-registry","The Merchant","Open Product Studio","Active agents","Current runs","Pending approvals","Recent results","Profiles · Service status · Themes · Layouts · Permissions · Diagnostics","dockInteracting","lastDockKey","pointerdown","pendingDockState","pending_approval"):
+        for required in ("id='context-dock'","data-nav-id='home'","data-nav-id='agency'","data-nav-id='admin'",">Home<",">The Agency<",">Admin<","agency-registry","The Merchant","Open Product Studio","My Agents","Running now","Approvals","Updates","Profiles · Service status · Themes · Layouts · Permissions · Diagnostics","dockInteracting","lastDockKey","pointerdown","pendingDockState","pending_approval"):
             with self.subTest(required=required):self.assertIn(required,text)
         provider.assert_not_called();self.assertLess(text.index("data-nav-id='home'"),text.index("data-nav-id='agency'"));self.assertLess(text.index("data-nav-id='agency'"),text.index("data-nav-id='admin'"))
 
