@@ -53,10 +53,12 @@ def _artwork_diagnostics(state:dict[str,Any])->dict[str,Any]:
         unique=[]
         for item in rejections:
             if item not in unique:unique.append(item)
-        rows.append({"candidate_id":str(candidate.get("candidate_id") or f"candidate-{index+1}"),"detected_format":detected_format,"dimensions":dimensions,"byte_size":byte_size,"alpha_transparency":alpha,"eligible":not unique,"rejections":unique})
+        rows.append({"candidate_id":str(candidate.get("candidate_id") or f"candidate-{index+1}"),"generation_method":candidate.get("generation_method") or "local_renderer","detected_format":detected_format,"dimensions":dimensions,"byte_size":byte_size,"alpha_transparency":alpha,"occupied_bounding_box":candidate.get("visible_alpha_bounds"),"safe_margin_passed":candidate.get("safe_margin_passed",(candidate.get("quality_checks") or {}).get("hard_safe_bounds")),"clipped":candidate.get("clipped"),"minimum_effective_text_size":candidate.get("minimum_effective_text_size"),"palette_summary":candidate.get("palette_summary") or [],"eligible":not unique,"rejections":unique})
     selected=(((evidence.get("selection") or {}).get("selected") or {}).get("candidate_id"));accepted=sum(item["eligible"] for item in rows)
     if not rows and (state.get("stage")=="generation_failed" or (state.get("generation_failure") or {}).get("terminal_local_failure")):rows=[]
-    return {"image_generation_readiness":"ready" if rows or selected else "unavailable_or_no_output" if state.get("stage")=="generation_failed" else "not_tested","request_started":state.get("stage") not in {"generation_queued","prompt_received"},"request_completed":bool(rows or state.get("stage")=="generation_failed"),"candidate_count":len(rows),"accepted_candidate_count":accepted,"rejected_candidate_count":len(rows)-accepted,"selected_candidate_id":selected,"candidates":rows,"zero_candidate_rejection":{"code":"no_candidates","explanation":"The local image-generation stage returned no candidates."} if not rows and state.get("stage")=="generation_failed" else None}
+    upstream=(state.get("generation_failure") or {}).get("upstream_reason_code")
+    explanation={"garment_color_resolution":"Artwork was not started because configured garment colors could not be resolved.","local_font_unavailable":"Artwork was not started because no allowlisted local font was available.","listing_metadata":"Artwork succeeded; listing metadata did not pass local validation."}.get(upstream,"The local artwork stage returned no eligible output.")
+    return {"image_generation_readiness":"ready" if rows or selected else "blocked_before_generation" if upstream else "unavailable_or_no_output" if state.get("stage")=="generation_failed" else "not_tested","upstream_reason_code":upstream,"request_started":bool(rows) or _last_completed_stage(state) not in (None,"prompt_received","brief_ready"),"request_completed":bool(rows or state.get("stage")=="generation_failed"),"candidate_count":len(rows),"accepted_candidate_count":accepted,"rejected_candidate_count":len(rows)-accepted,"selected_candidate_id":selected,"candidates":rows,"zero_candidate_rejection":{"code":upstream or "no_output","explanation":explanation} if not rows and state.get("stage")=="generation_failed" else None}
 
 
 _PLACEHOLDER_PHRASES={"test","testing","asdf","qwerty","lorem ipsum","placeholder","sample text","foo","bar"}
@@ -137,6 +139,7 @@ class CommerceCreationService:
         state={"job_id":job_id,"mode":product_orchestrator.MODE,"policy":product_orchestrator.POLICY,"shop_id":destination["printify_shop_id"],"source_job_id":None,
             "original_prompt":prompt,"brief":None,"stage":"generation_queued","stage_output":{},"transitions":[{"timestamp":now,"input_sha":product_orchestrator._json_sha({}),"output_sha":product_orchestrator._json_sha({"prompt_sha256":sha256(prompt.encode()).hexdigest()}),"operation":"queue_commerce_generation","stage":"prompt_received","result":"completed","error_id":None}],"evidence":{},
             "commerce_profile_id":commerce_profile_id,"profile_id":commerce_profile_id,"selected_profile_id":commerce_profile_id,"brand_display_name":str(profile.get("display_name") or config.get("brand_name") or commerce_profile_id),
+            "requested_garment_colors":list(config.get("default_garment_colors") or config.get("garment_colors") or product_orchestrator.DEFAULT_COLORS),"blueprint_id":int(config.get("printify_blueprint_id") or config.get("blueprint_id") or product_orchestrator.DEFAULT_BLUEPRINT_ID),"print_provider_id":int(config.get("print_provider_id") or product_orchestrator.DEFAULT_PRINT_PROVIDER_ID),
             "destination":destination,"product_brief":{"exact_phrase":phrase,"brief":brief,"requested_listing_title":title,"special_instructions":instructions},"revision_number":0,
             "provider_write_status":"not_started","publish_status":"not_published","order_status":"not_created","destination_confirmed":True,"destination_confirmed_at":now,
             "creation_request_sha256":fingerprint,"product_input_preflight":preflight,"created_at":now,"updated_at":now}
@@ -153,14 +156,15 @@ class CommerceCreationService:
         if state.get("stage")=="generation_failed" and (state.get("generation_failure") or {}).get("external_result_uncertain"):
             raise StateConflictError("STATE_CONFLICT",diagnostic_message="Generation provider result is uncertain; automatic retry is disabled.",operation="commerce_creation",stage="provider_recovery")
         if state.get("stage")=="manual_verification_required":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Manual verification is required; automatic generation retry is disabled.",operation="commerce_creation",stage="provider_recovery")
-        state["stage"]="generating_artwork";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        state["stage"]="artwork_rendering";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         try:local=self.orchestrator.resume(job_id,confirm_printify_draft=False)
         except Exception as exc:
             state=self.orchestrator.load(job_id);diversity=dict(getattr(exc,"context",{}).get("candidate_diversity") or {})
             if diversity:state.setdefault("evidence",{})["candidate_diversity"]=diversity
             last_completed=_last_completed_stage(state)
             safe_message=str(getattr(exc,"user_message","") or "Product generation did not complete.")
-            state["stage"]="generation_failed";state["generation_failure"]={"safe_message":str(getattr(exc,"user_message","") or "Product generation did not complete."),
+            detail=str(getattr(exc,"diagnostic_message","") or exc);upstream="garment_color_resolution" if "garment colors" in detail else "local_font_unavailable" if "font" in detail else "listing_metadata" if "tag" in detail or "listing" in detail else "local_artwork_failure"
+            state["stage"]="generation_failed";state["generation_failure"]={"safe_message":str(getattr(exc,"user_message","") or "Product generation did not complete."),"upstream_reason_code":upstream,
                 "candidate_rejection_summary":safe_message if diversity else None,"manual_verification_required":False,"external_result_uncertain":False,"terminal_local_failure":True,"last_completed_stage":last_completed};product_orchestrator._atomic_json(self.orchestrator._path(job_id),state);raise
         state=self.orchestrator.load(job_id)
         if not ((state.get("evidence") or {}).get("selection") or {}).get("selected"):
@@ -170,7 +174,7 @@ class CommerceCreationService:
             product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
             return {"result":"generation_failed","job_id":job_id,"safe_message":summary,"last_completed_stage":last_completed,
                 "provider_write_status":state.get("provider_write_status","not_started"),"publication_status":state.get("publish_status","not_published"),"order_status":state.get("order_status","not_created")}
-        state["stage"]="preparing_listing";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        state["stage"]="provider_preflight";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         loader=lambda required=True:profile
         requested_title=str((state.get("product_brief") or {}).get("requested_listing_title") or "")
         def listing_generator(brief,selected):
@@ -205,7 +209,7 @@ class CommerceCreationService:
         state=self.orchestrator.load(job_id);draft=((state.get("evidence") or {}).get("draft") or {});selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected"))
         if selected:return {"result":"artwork_already_eligible","job_id":job_id,"selected_candidate_id":selected.get("candidate_id"),"provider_write_status":state.get("provider_write_status","not_started")}
         if state.get("stage")!="generation_failed" or draft.get("printify_product_id") or state.get("publish_status")!="not_published" or state.get("order_status")!="not_created":raise StateConflictError("STATE_CONFLICT",diagnostic_message="Only a failed local artwork stage without a provider draft can be retried.",operation="commerce_creation.retry_local_artwork",stage="state")
-        state["stage"]="generating_artwork";state["generation_failure"]=None;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        state["stage"]="artwork_rendering";state["generation_failure"]=None;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
         self.orchestrator.resume(job_id,confirm_printify_draft=False);state=self.orchestrator.load(job_id);selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected"))
         if not selected:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Local artwork retry produced no eligible candidate.",user_message="Local artwork retry produced no eligible candidate.",operation="commerce_creation.retry_local_artwork",stage="design_selected")
         state["stage"]="artwork_ready";product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
@@ -230,6 +234,9 @@ class CommerceCreationService:
         last_completed=(state.get("generation_failure") or {}).get("last_completed_stage") or (completed[-1] if completed else None);review_alias=stage in {"awaiting_human_approval","awaiting_final_approval"} or last_completed in {"awaiting_human_approval","awaiting_final_approval"}
         review_ready=review_alias and bool(draft.get("printify_product_id")) and state.get("publish_status")=="not_published" and state.get("order_status")=="not_created" and not uncertain and not manual_state
         terminal_outcome="uncertain" if uncertain or manual_state else "review_ready" if review_ready else "recoverable" if stage.endswith("_failed") and draft.get("printify_product_id") else "failure"
+        selected=(((state.get("evidence") or {}).get("selection") or {}).get("selected") or {});upload=(state.get("evidence") or {}).get("upload") or {};error_id=((state.get("last_error") or {}).get("error_id"));provider_contacted=bool(upload or draft)
+        stage_alias={"brief_ready":"brief_ready","artwork_ready":"artwork_ready","design_selected":"artwork_selected","listing_ready":"listing_metadata_ready","printify_image_uploaded":"printify_image_upload","printify_draft_created":"printify_draft_ready","awaiting_human_approval":"ready_for_review"}
+        timeline=[stage_alias.get(str(item.get("stage")),str(item.get("stage"))) for item in state.get("transitions") or [] if item.get("result")=="completed"]
         return {"job_id":job_id,"stage":stage,"progress_label":labels.get(stage,stage.replace("_"," ").title()),"revision_number":state.get("revision_number",0),
             "brand_display_name":state.get("brand_display_name"),"printify_shop_title":destination.get("printify_shop_title"),"printify_shop_id":destination.get("printify_shop_id"),"etsy_shop_slug":destination.get("etsy_shop_slug"),
             "ready_for_review":review_ready,"failed":stage.endswith("_failed") or manual_state,"failure_message_safe":failure_message,"review_url":review_url,
@@ -237,7 +244,7 @@ class CommerceCreationService:
             "last_completed_stage":last_completed,"provider_write_status":state.get("provider_write_status","not_started"),"candidate_rejection_summary":rejection_summary,"manual_verification_required":uncertain or manual_state,"terminal_outcome":terminal_outcome,
             "open_product_review_allowed":review_ready,"retry_allowed":stage=="generation_failed" and not uncertain and not draft.get("printify_product_id"),
             "resume_existing_draft_allowed":stage.endswith("_failed") and not uncertain and bool(draft.get("printify_product_id")) and not review_ready,
-            "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"return_to_form_url":"/app?view=commerce.new","artwork_diagnostics":_artwork_diagnostics(state)}
+            "publication_status":state.get("publish_status"),"order_status":state.get("order_status"),"return_to_form_url":"/app?view=commerce.new","artwork_diagnostics":_artwork_diagnostics(state),"error_id":error_id,"provider_contacted":provider_contacted,"selected_candidate_status":"eligible" if selected else "none","printify_image_state":"uploaded" if upload.get("printify_image_id") else "not_uploaded","printify_draft_state":"unpublished" if draft.get("printify_product_id") else "not_created","retry_action":"retry_local_artwork" if stage=="generation_failed" and not provider_contacted else "resume_existing_draft" if draft and not uncertain else "none","workflow_timeline":timeline}
 
     def open_product_review(self,job_id:str)->dict[str,Any]:
         state=self.orchestrator.load(job_id)

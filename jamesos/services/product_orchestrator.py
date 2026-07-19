@@ -40,6 +40,8 @@ STAGES = ("prompt_received", "brief_ready", "artwork_ready", "production_artifac
           "awaiting_human_approval", "awaiting_printify_human_review", "awaiting_etsy_human_review", "awaiting_etsy_visibility_confirmation", "failed")
 DEFAULT_COLORS = ["Black", "Dark Grey Heather", "White"]
 DEFAULT_SIZES = ["S", "M", "L", "XL", "2XL", "3XL"]
+DEFAULT_BLUEPRINT_ID = 12
+DEFAULT_PRINT_PROVIDER_ID = 29
 COLOR_EXACT = {"black":"Black", "dark grey heather":"Dark Grey Heather", "white":"White"}
 COLOR_ALIASES = {"dark heather":"Dark Grey Heather", "dark gray heather":"Dark Grey Heather"}
 COLOR_WORDS = re.compile(r"\b(?:black|white|grey|gray|heather|charcoal|navy|red|blue|green|yellow|purple|pink|orange)\b", re.I)
@@ -612,7 +614,10 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
     if not phrase:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Independent design requires an exact phrase.",operation="product_orchestrator",stage="design_candidates_ready")
     intentional_lines=phrase.split("\n");words=phrase.split();lines=intentional_lines if len(intentional_lines)>1 else ([" ".join(words[:2])," ".join(words[2:-2])," ".join(words[-2:])] if len(words)>=5 else [" ".join(part) for part in (words[:max(1,len(words)//3)],words[max(1,len(words)//3):max(2,2*len(words)//3)],words[max(2,2*len(words)//3):]) if part])
     if phrase=="YOU ARE SAFE WITH ME":lines=["YOU ARE","SAFE","WITH ME"]
-    font_path="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";palette=((91,206,250,255),(245,169,184,255),(255,255,255,255),(245,169,184,255),(91,206,250,255)) if brief.get("artwork_palette")=="trans_pride" else ((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
+    font_candidates=(Path("/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf"),Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"),Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"))
+    font_path=next((path for path in font_candidates if path.is_file()),None)
+    if font_path is None:raise ValidationError("VALIDATION_FAILED",diagnostic_message="No allowlisted local typography font is installed.",operation="product_orchestrator",stage="design_candidates_ready")
+    palette=((91,206,250,255),(245,169,184,255),(255,255,255,255),(245,169,184,255),(91,206,250,255)) if brief.get("artwork_palette")=="trans_pride" else ((232,68,74,255),(244,139,62,255),(246,203,69,255),(65,174,105,255),(55,126,195,255),(132,82,179,255));safe=(360,432,4140,4968)
     def rainbow_heart(canvas,bounds):
         x1,y1,x2,y2=bounds;w=x2-x1;h=y2-y1;mask=Image.new("L",(w,h),0);md=ImageDraw.Draw(mask);md.ellipse((0,0,w*.58,h*.58),fill=255);md.ellipse((w*.42,0,w,h*.58),fill=255);md.polygon(((0,h*.32),(w,h*.32),(w*.5,h)),fill=255)
         stripes=Image.new("RGBA",(w,h),(0,0,0,0));sd=ImageDraw.Draw(stripes);stripe=max(1,h//len(palette))
@@ -621,7 +626,7 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
     def draw_lines(canvas,rendered,box,fill=(255,255,255,255),stroke=(30,30,38,255)):
         x1,y1,x2,y2=box;available=x2-x1;size=720
         while size>180:
-            font=ImageFont.truetype(font_path,size);widths=[ImageDraw.Draw(canvas).textbbox((0,0),line,font=font,stroke_width=18)[2] for line in rendered]
+            font=ImageFont.truetype(str(font_path),size);widths=[ImageDraw.Draw(canvas).textbbox((0,0),line,font=font,stroke_width=18)[2] for line in rendered]
             if max(widths,default=0)<=available:break
             size-=20
         gap=65;heights=[];draw=ImageDraw.Draw(canvas)
@@ -630,28 +635,29 @@ def _independent_candidates(evidence: dict[str, Any], root: Path, brief: dict[st
         total=sum(heights)+gap*(len(rendered)-1);y=y1+(y2-y1-total)//2
         for line,height in zip(rendered,heights):
             bounds=draw.textbbox((0,0),line,font=font,stroke_width=18);width=bounds[2]-bounds[0];draw.text((x1+(available-width)//2,y),line,font=font,fill=fill,stroke_width=18,stroke_fill=stroke);y+=height+gap
+        return size
     result=[];motifs=set(brief.get("requested_motifs") or []);negatives=set(brief.get("negative_visual_constraints") or [])
     families=(("prompt_centered","stacked_left"),("prompt_balanced","diagonal_ribbon"),("prompt_compact","split_columns"))
     for name,family in families:
         canvas=Image.new("RGBA",(4500,5400),(0,0,0,0));draw=ImageDraw.Draw(canvas)
         if family=="stacked_left":
             for index,color in enumerate(palette[:len(lines)]):draw.rectangle((480,850+index*1180,700,1750+index*1180),fill=color)
-            draw_lines(canvas,lines,(800,620,4050,4700))
+            font_size=draw_lines(canvas,lines,(800,620,4050,4700))
         elif family=="diagonal_ribbon":
-            draw.polygon(((420,1150),(3780,550),(4070,1300),(710,1900)),fill=(65,174,105,255));draw.polygon(((420,3650),(3780,3050),(4070,3800),(710,4400)),fill=(132,82,179,255));draw_lines(canvas,lines,(650,900,3850,4450),stroke=(15,20,30,255))
+            draw.polygon(((420,1150),(3780,550),(4070,1300),(710,1900)),fill=(65,174,105,255));draw.polygon(((420,3650),(3780,3050),(4070,3800),(710,4400)),fill=(132,82,179,255));font_size=draw_lines(canvas,lines,(650,900,3850,4450),stroke=(15,20,30,255))
         else:
-            draw.rectangle((430,650,2050,4650),outline=(232,68,74,255),width=70);draw.rectangle((2450,650,4070,4650),outline=(55,126,195,255),width=70);draw_lines(canvas,lines,(650,850,3850,4500),fill=(255,255,255,255))
+            draw.rectangle((430,650,2050,4650),outline=(232,68,74,255),width=70);draw.rectangle((2450,650,4070,4650),outline=(55,126,195,255),width=70);font_size=draw_lines(canvas,lines,(650,850,3850,4500),fill=(255,255,255,255))
         has_heart=bool({"heart","rainbow_heart"}&motifs)
         if has_heart and "heart" not in negatives:rainbow_heart(canvas,(1500,500,3000,1750))
-        path=root/f"{name}.png";canvas.save(path);bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);adherence=phrase_adherence_evidence(phrase,"\n".join(lines),lines);phrase_ok=adherence["phrase_adherence_passed"]
+        path=root/f"{name}.png";canvas.save(path,dpi=(300,300));bounds=canvas.getchannel("A").getbbox();canvas.close();digest=_file_sha(path);safe_ok=bool(bounds and bounds[0]>=safe[0] and bounds[1]>=safe[1] and bounds[2]<=safe[2] and bounds[3]<=safe[3]);adherence=phrase_adherence_evidence(phrase,"\n".join(lines),lines);phrase_ok=adherence["phrase_adherence_passed"]
         features={"heart":has_heart,"badge":False,"rounded_rectangle":False,"dark_background_panel":False,"gradient":False}
         violations=[constraint for constraint in negatives if features.get(constraint) is True]
         checks={"hard_phrase_correct":phrase_ok,"hard_no_duplicate_or_missing_text":phrase_ok,"hard_safe_bounds":safe_ok,"hard_artwork_integrity":True,"hard_dimensions":True,
             "hard_valid_transparency":True,"hard_no_unexpected_opaque_canvas":True,"hard_print_resolution":True,"hard_candidate_unique":True}
         checks["hard_negative_constraints"]=not violations
         result.append({"candidate_id":name,"direction":name,"png_path":str(path),"png_sha256":digest,"svg_path":None,"svg_sha256":None,"source_artwork_sha256":evidence["candidate_sha"],
-            "font_sha256":_file_sha(Path(font_path)),"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","generation_prompt":f"Render the complete exact phrase:\n{phrase}","rendered_text_lines":lines,"rendered_phrase":" ".join(lines),
-            "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","typography"),"features":features},
+            "font_sha256":_file_sha(font_path),"font_family":font_path.stem,"layout_id":name,"composition_family":family,"treatment_id":f"deterministic_{family}_v1","generation_method":"deterministic_local_typography","detected_format":"PNG","dimensions":[4500,5400],"byte_size":path.stat().st_size,"minimum_effective_text_size":font_size,"palette_summary":[list(color[:3]) for color in palette],"generation_prompt":f"Render the complete exact phrase:\n{phrase}","rendered_text_lines":lines,"rendered_phrase":"\n".join(lines),
+            "visible_alpha_bounds":list(bounds) if bounds else None,"safe_bounds":list(safe),"transparency_present":True,"clipped":False,"safe_margin_passed":safe_ok,"motif_evidence":{"motif":evidence.get("generation_inputs",{}).get("motif","typography"),"features":features},
             **adherence,"prompt_validation":{"negative_constraint_violations":violations,"compliant":not violations and phrase_ok,**adherence},"prompt_adherence_score":40 if not violations and phrase_ok else 0,"novelty_score":20,
             "quality_checks":checks,"thumbnail_path":str(path),"thumbnail_readability_score":10,"garment_contrast_score":9,"balanced_bounds_score":9,
             "warnings":["Automated technical checks do not prove artistic quality; human artistic review is required."]})
@@ -1577,7 +1583,10 @@ class ProductOrchestrator:
             return state
         try:
             if "brief_ready" not in completed:
-                state["brief"] = normalize_prompt(state["original_prompt"], price=price, garment_colors=garment_colors, sizes=sizes)
+                configured_colors=garment_colors if garment_colors is not None else state.get("requested_garment_colors")
+                state["brief"] = normalize_prompt(state["original_prompt"], price=price, garment_colors=configured_colors, sizes=sizes)
+                explicit_phrase=str((state.get("product_brief") or {}).get("exact_phrase") or "")
+                if explicit_phrase:state["brief"]["exact_text"]=normalize_exact_phrase(explicit_phrase).upper()
                 self._transition(state, "brief_ready", "normalize_prompt", state["brief"])
             unresolved = (state["brief"].get("color_resolution") or {}).get("unresolved_colors") or []
             if unresolved:
@@ -1627,10 +1636,11 @@ class ProductOrchestrator:
             if not tags:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Printify payload field tags must contain a nonblank string.",operation="product_orchestrator",stage="printify_payload_validation")
             client = self.adapters.client_factory();variant_evidence=None;payload=None;marker=None
             if "printify_draft_created" not in completed:
-                catalog=client.get_variants(12,29);variant_evidence=select_printify_variants(catalog,colors=state["brief"]["garment_colors"],sizes=state["brief"]["sizes"])
+                blueprint_id=int(state.get("blueprint_id") or DEFAULT_BLUEPRINT_ID);provider_id=int(state.get("print_provider_id") or DEFAULT_PRINT_PROVIDER_ID)
+                catalog=client.get_variants(blueprint_id,provider_id);variant_evidence=select_printify_variants(catalog,colors=state["brief"]["garment_colors"],sizes=state["brief"]["sizes"])
                 chosen=variant_evidence["selected_variant_ids"];marker=state["evidence"].get("draft_marker") or _draft_marker(state)
                 provisional_image=(state["evidence"].get("upload") or {}).get("printify_image_id") or "pending-validated-upload"
-                payload={"title":listing["title"],"description":listing["description"],"tags":[*tags,marker],"blueprint_id":12,"print_provider_id":29,
+                payload={"title":listing["title"],"description":listing["description"],"tags":[*tags,marker],"blueprint_id":blueprint_id,"print_provider_id":provider_id,
                     "variants":create_variant_payload(catalog,chosen,listing["price_cents"]),"print_areas":[{"variant_ids":chosen,"placeholders":[{"position":"front","images":[{"id":provisional_image,"x":.5,"y":.46,"scale":.85,"angle":0}]}]}]}
                 validate_create_payload(payload,chosen)
             if "printify_image_uploaded" not in completed:

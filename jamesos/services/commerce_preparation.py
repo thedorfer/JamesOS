@@ -11,6 +11,10 @@ from jamesos.core.profiles.selection import load_commerce_profile
 from jamesos.services import product_orchestrator
 from jamesos.services.commerce_workflow import CommerceWorkflow, _atomic_json
 from jamesos.services.product_orchestrator import ProductOrchestrator, finalize_listing_tags, validate_listing_metadata
+from jamesos.services.commerce_artwork import provider_free_preflight
+from jamesos.services.shell_secrets import ShellSecretStore
+from jamesos.integrations.printify_client import PrintifyClient,token_status
+import os
 
 
 def _now() -> str:return datetime.now().astimezone().isoformat()
@@ -69,6 +73,9 @@ class UnifiedCommercePreparation:
             "marketplace":config.get("marketplace_type") or config.get("expected_marketplace"),"shop_id":shop_id,
             "etsy_shop_id":config.get("etsy_shop_id"),"destination":config.get("expected_marketplace"),"expected_final_state":config.get("expected_final_state")}
         evidence["destination"]={"marketplace":config.get("expected_marketplace"),"expected_final_state":config.get("expected_final_state")}
+        adapters=getattr(self.orchestrator,"adapters",None);credential_configured=token_status()["status"]=="configured" or bool(os.environ.get("PRINTIFY_API_KEY")) or any(item["provider"]=="printify" and item["configured"] for item in ShellSecretStore().status()) or adapters is None or adapters.client_factory is not PrintifyClient
+        preflight=provider_free_preflight(state,profile,credential_configured=credential_configured);state["evidence"]["provider_preflight"]=preflight;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
+        if authorize_draft_work and not preflight["passed"]:raise ValidationError("VALIDATION_FAILED",diagnostic_message="Provider-free preflight failed: "+", ".join(preflight["failure_codes"])+".",user_message="Product Studio preflight found configuration that must be corrected before provider contact.",operation="commerce_preparation",stage="provider_preflight",context={"failure_codes":preflight["failure_codes"],"provider_contacted":False})
         if not authorize_draft_work:
             state["stage"]="draft_authorization_required";state["last_error"]=None;product_orchestrator._atomic_json(self.orchestrator._path(job_id),state)
             _atomic_json(journal_path,journal)

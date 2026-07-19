@@ -226,7 +226,7 @@ class CommerceCreateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             orch=product_orchestrator.ProductOrchestrator(Path(temporary)/"jobs",product_orchestrator.Adapters(client_factory=Mock(side_effect=AssertionError("no provider"))));p=profile("bagholder-supply",28275232,"BagholdersSupplyCo");service=CommerceCreationService(CommerceWorkflow(orch),profile_loader=lambda pid,required=True:p)
             queued=service.create_job(commerce_profile_id="bagholder-supply",product_brief="Bold centered typography artwork palette for market traders",destination_confirmed=True);state=orch.load(queued["job_id"]);state.update(stage="generation_failed",generation_failure={"safe_message":"No eligible artwork.","last_completed_stage":"brief_ready","terminal_local_failure":True});product_orchestrator._atomic_json(orch._path(queued["job_id"]),state)
-            diagnostic=service.safe_status(queued["job_id"])["artwork_diagnostics"];self.assertEqual((diagnostic["candidate_count"],diagnostic["accepted_candidate_count"],diagnostic["rejected_candidate_count"]),(0,0,0));self.assertEqual(diagnostic["zero_candidate_rejection"]["code"],"no_candidates");self.assertNotIn(str(Path(temporary)),json.dumps(diagnostic))
+            diagnostic=service.safe_status(queued["job_id"])["artwork_diagnostics"];self.assertEqual((diagnostic["candidate_count"],diagnostic["accepted_candidate_count"],diagnostic["rejected_candidate_count"]),(0,0,0));self.assertEqual(diagnostic["zero_candidate_rejection"]["code"],"no_output");self.assertNotIn(str(Path(temporary)),json.dumps(diagnostic))
 
     def test_no_eligible_selection_is_persisted_without_reraising(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -207,6 +207,7 @@ class WorkspaceChatService:
             original_raw=raw
             result=validate_chat_response(parse_json_object(original_raw),profile_ids)
             if safe_workspace["active_view"]=="commerce.new":
+                result["warnings"]=[]
                 try:
                     for command in result["commands"]:
                         if command.get("type")=="form_patch":command["fields"]=validate_product_studio_patch(command["fields"],context["form"],message)
