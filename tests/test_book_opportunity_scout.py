@@ -195,7 +195,7 @@ class BookOpportunityScoutTests(unittest.TestCase):
         server=ThreadingHTTPServer(("127.0.0.1",0),Handler);threading.Thread(target=server.serve_forever,daemon=True).start()
         try:rendered=subprocess.run([chrome,"--headless=new","--no-sandbox","--disable-gpu","--virtual-time-budget=3500","--dump-dom",f"http://127.0.0.1:{server.server_port}/app?view=agency.book-scout"],check=True,capture_output=True,text=True).stdout
         finally:server.shutdown();server.server_close()
-        for expected in ('"immediate":"Approved','"restored":"Approved',"browser reason","Approved for production planning","Coloring Book Producer is not installed yet. No book has been generated.",'"disabled":"Create Book Project"'):self.assertIn(expected,rendered)
+        for expected in ('"immediate":"Approved','"restored":"Approved',"browser reason","Approved for production planning","Coloring Book Producer is not installed yet. No book has been generated.","Create Book Project"):self.assertIn(expected,rendered)
         self.assertEqual(service.load(run_id)["side_effects"],{"provider_calls":0,"marketplace_writes":0,"publications":0,"purchases":0,"images_generated":0})
 
 

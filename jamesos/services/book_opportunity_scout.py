@@ -5,15 +5,14 @@ from datetime import datetime
 from hashlib import sha256
 from html import escape
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 from typing import Any, Protocol
 from uuid import uuid4
 
 from jamesos.config import VAULT
 from jamesos.core.agents.ledger import RunLedger
+from jamesos.core.artifacts import AtomicDocumentStore
 from jamesos.services.book_research_adapters import LiveResearchAdapters,PublicObservation,default_live_adapters
 
 
@@ -28,17 +27,11 @@ DEFAULT_WEIGHTS = {"demand_signal":25,"competition_opportunity":20,"customer_pur
 def _now() -> str:return datetime.now().astimezone().isoformat()
 
 
-def _atomic(path:Path,value:Any)->None:
-    path.parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.NamedTemporaryFile("w",encoding="utf-8",dir=path.parent,prefix=f".{path.name}.",suffix=".tmp",delete=False) as handle:
-        json.dump(value,handle,indent=2,sort_keys=True,default=str);handle.write("\n");handle.flush();os.fsync(handle.fileno());temporary=Path(handle.name)
-    temporary.replace(path)
+_DOCUMENTS=AtomicDocumentStore()
+def _atomic(path:Path,value:Any)->None:_DOCUMENTS.write_json(path,value)
 
 
-def _atomic_text(path:Path,value:str)->None:
-    path.parent.mkdir(parents=True,exist_ok=True)
-    with tempfile.NamedTemporaryFile("w",encoding="utf-8",dir=path.parent,prefix=f".{path.name}.",suffix=".tmp",delete=False) as handle:handle.write(value);handle.flush();os.fsync(handle.fileno());temporary=Path(handle.name)
-    temporary.replace(path)
+def _atomic_text(path:Path,value:str)->None:_DOCUMENTS.write_text(path,value)
 
 
 @dataclass(frozen=True)

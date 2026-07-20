@@ -27,6 +27,7 @@ LOCKED_DEFAULTS=MappingProxyType({
 WORKSPACE_PANELS={
     "dashboard":[("system_overview","System status"),("needs_attention","Needs attention"),("work_in_progress","Work in progress"),("quick_actions","Quick actions"),("recent_results","Recent results")],
     "agency.book-scout":[("book_scout_workspace","Book Opportunity Scout")],
+    "agency.coloring-book-producer":[("coloring_book_projects","Projects"),("coloring_book_project","Project workspace")],
     "admin.home":[("admin_services","Services"),("chat_diagnostics","Chat diagnostics"),("errors_diagnostics","Errors & Diagnostics"),("provider_credentials","Provider credentials"),("commerce_profiles","Commerce profiles"),("network_access","Network access"),("layouts_appearance","Layouts and appearance"),("admin_diagnostics","Diagnostics")],
 }
 
