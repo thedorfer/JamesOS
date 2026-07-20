@@ -1,11 +1,11 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from importlib import metadata
-from jamesos.agents import CareerAgent,CommerceAgent,EtsyAgent,PrintifyAgent
+from jamesos.agents import BookOpportunityScoutAgent,CareerAgent,CommerceAgent,EtsyAgent,PrintifyAgent
 @dataclass(frozen=True)
 class DiscoveredAgent:
     agent_id:str;source:str;entry_point:str;package_name:str;package_version:str;agent:object|None=None
-def discover_builtin():return [DiscoveredAgent(a.manifest.agent_id,"builtin",f"{a.__class__.__module__}:{a.__class__.__name__}","jamesos","0.1.0",a) for a in (CommerceAgent(),PrintifyAgent(),EtsyAgent(),CareerAgent())]
+def discover_builtin():return [DiscoveredAgent(a.manifest.agent_id,"builtin",f"{a.__class__.__module__}:{a.__class__.__name__}","jamesos","0.1.0",a) for a in (CommerceAgent(),PrintifyAgent(),EtsyAgent(),CareerAgent(),BookOpportunityScoutAgent())]
 def discover_entry_points(entry_points=None):
     points=entry_points if entry_points is not None else metadata.entry_points()
     selected=points.select(group="jamesos.agents") if hasattr(points,"select") else points.get("jamesos.agents",())

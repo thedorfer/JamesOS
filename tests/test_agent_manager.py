@@ -31,7 +31,7 @@ class FakeEntryPoints:
 
 class AgentManagerTests(unittest.TestCase):
     def test_builtin_and_mock_entry_point_discovery_without_loading_code(self):
-        self.assertEqual({item.agent_id for item in discover_builtin()},{"career","commerce","etsy","printify"})
+        self.assertEqual({item.agent_id for item in discover_builtin()},{"career","commerce","etsy","printify","jamesos.book-opportunity-scout"})
         found=discover_entry_points(FakeEntryPoints());self.assertEqual(found[0].entry_point,"third_party.agent:ThirdPartyAgent");self.assertIsNone(found[0].agent)
     def test_manifest_schema_semver_compatibility_and_validation(self):
         self.assertEqual(compatibility(manifest()),"compatible")

@@ -5,9 +5,10 @@ import re
 from typing import Any
 
 from jamesos.core.errors import ValidationError
+from jamesos.services.application_shell import VIEWS
 
 
-REGISTERED_VIEWS={"dashboard","agency.home","commerce.new","commerce.loading","commerce.review","commerce.diagnostics","jobs.list","jobs.detail","diagnostics","admin.home","profiles","settings"}
+REGISTERED_VIEWS=VIEWS
 BADGES={None,"progress","ready","warning","pending_approval"}
 LOCKED_ANCHORS=(
     {"item_id":"home","label":"Home","view_id":"dashboard","locked":True,"source":"system","badge":None},

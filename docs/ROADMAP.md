@@ -10,6 +10,7 @@ Status is evidence-based. Implemented and test-covered does not imply manual or 
 4. **Home cleanup** — remove healthy service bullets from Recent workspaces; retain only navigation and recent job/review links.
 5. **Private-network verification** — verify desktop Tailscale installation and reviewed Tailscale Serve deployment; keep Funnel/public access disabled.
 6. **Agency maturity** — retain the implemented registry while adding mature run history, package provenance, safe updates, and rollback distribution.
+7. **Book research sources** — harden the implemented cached public read-only adapters against reviewed source changes and consider additional legally accessible free signals; keep deterministic scoring and prohibit marketplace writes.
 7. **Synthetic lifestyle mockups** — optionally place authoritative approved artwork onto garment masks/templates and synthetic adult models. Never redraw the print text, use unconsented real-person likenesses, replace source artwork, or publish automatically.
 8. **Terminal and privilege broker** — design a user-level restricted PTY and exact-operation privilege broker. No general root shell or stored sudo password.
 9. **The Marine** — implement the planned no-network, no-provider, no-terminal sandboxed game workspace using open/user assets.

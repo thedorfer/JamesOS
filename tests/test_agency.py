@@ -44,7 +44,7 @@ class AgencyTests(unittest.TestCase):
 
     def test_manifest_validation_and_catalog(self):
         catalog = self.service.catalog_items()
-        self.assertEqual(2, len(catalog))
+        self.assertEqual(3, len(catalog))
         self.assertTrue(all(not item["installed"] for item in catalog))
         value = json.loads((self.catalog_path / "example-agent.json").read_text())
         value["configuration"][0]["type"] = "plaintext-secret"
@@ -133,7 +133,7 @@ class AgencyTests(unittest.TestCase):
     def test_api_vertical_slice_and_confirmation_defaults(self):
         catalog = self.client.get("/agency/catalog")
         self.assertEqual(200, catalog.status_code)
-        self.assertEqual(2, len(catalog.json()))
+        self.assertEqual(3, len(catalog.json()))
         preview = self.client.post("/agency/agents/jamesos.example/hire", json={})
         self.assertTrue(preview.json()["confirmation_required"])
         hired = self.client.post("/agency/agents/jamesos.example/hire", json={"confirmed": True})

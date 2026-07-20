@@ -26,6 +26,7 @@ Last reviewed: 2026-07-19
 ## The Agency
 
 - [The Agency](THE_AGENCY.md)
+- [Book Opportunity Scout](BOOK_OPPORTUNITY_SCOUT.md)
 - [The Marine](THE_MARINE.md)
 
 ## Agents

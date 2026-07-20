@@ -9,6 +9,8 @@ from unittest.mock import Mock,patch
 from fastapi.testclient import TestClient
 
 from jamesos.core import api
+from jamesos.services.application_shell import VIEWS
+from jamesos.services.context_dock import REGISTERED_VIEWS,validate_navigation_context
 from jamesos.services.layout_manager import LayoutManager,THEMES,default_layout,validate_layout,validate_theme_tokens
 
 
@@ -17,6 +19,10 @@ def profile(profile_id="bagholder-supply",shop_id=28275232,slug="BagholdersSuppl
 
 
 class LayoutManagerTests(unittest.TestCase):
+    def test_book_scout_uses_canonical_workspace_registry_and_customizable_default(self):
+        self.assertIn("agency.book-scout",VIEWS);self.assertIs(REGISTERED_VIEWS,VIEWS);self.assertEqual(validate_navigation_context({"active_view":"agency.book-scout"}).active_view,"agency.book-scout")
+        layout=default_layout("agency.book-scout");self.assertEqual(layout["view_id"],"agency.book-scout");self.assertEqual([item["panel_id"] for item in layout["panels"]],["book_scout_workspace"]);self.assertFalse(layout["panels"][0]["layout_locked"])
+
     def test_old_dashboard_and_admin_layouts_migrate_to_complete_nonoverlapping_registry(self):
         from jamesos.services.layout_manager import WORKSPACE_PANELS, migrate_layout, SCHEMA_VERSION
         old={"schema_version":1,"view_id":"dashboard","theme_id":"jamesos-dark","shell":{"chat_width":420,"chat_collapsed":False},"panels":[{"panel_id":"recent_results","component":"card","title":"Recent results","column":1,"row":1,"width":2,"height":1,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""},{"panel_id":"obsolete","component":"card","title":"Old","column":1,"row":1,"width":12,"height":4,"collapsed":False,"hidden":False,"layout_locked":False,"value_locked":False,"action_locks":[],"lock_reason":""}]}
@@ -67,6 +73,11 @@ class LayoutManagerTests(unittest.TestCase):
             saved=client.put("/app/layouts/commerce.new",json={**value,"csrf_token":api._COMMERCE_CREATE_CSRF},headers=headers);loaded=client.get("/app/layouts/commerce.new")
             reset=client.request("DELETE","/app/layouts/commerce.new",json={"csrf_token":api._COMMERCE_CREATE_CSRF},headers=headers)
         self.assertEqual(saved.status_code,200);self.assertEqual(loaded.json()["shell"]["chat_width"],500);self.assertEqual(reset.json()["shell"]["chat_width"],420);provider.assert_not_called()
+
+    def test_book_scout_layout_route_returns_registered_default(self):
+        with tempfile.TemporaryDirectory() as temporary,patch.object(api,"LayoutManager",side_effect=lambda:LayoutManager(Path(temporary))),patch.object(api,"_require_local"):
+            response=TestClient(api.app,base_url="http://127.0.0.1:8787").get("/app/layouts/agency.book-scout")
+        self.assertEqual(response.status_code,200);self.assertEqual(response.json()["view_id"],"agency.book-scout");self.assertEqual(response.json()["panels"][0]["panel_id"],"book_scout_workspace")
 
     def test_shell_contains_safe_resizer_customize_mode_and_attached_headers(self):
         rows=[profile(),profile("unitystitches",9437076,"UnityStitches")]

@@ -70,6 +70,8 @@ Manual status: blocked. Adult mode can remain unavailable in the browser after A
 
 The Agency registry is implemented and test-covered with My Agents, Marketplace, Runs, Approvals, Updates, permission review, private mutable registry state, and sanitized auditing.
 
+Book Opportunity Scout `0.1.0` is implemented as a built-in Agent OS and Agency catalog agent. It supports labeled DEMO, MANUAL, and public read-only LIVE research modes with cached/throttled Amazon visibility, public web, trend, and public review adapters. It produces evidence-backed ranked concepts, persists reproducible local reports, and supports confirmed local candidate decisions. Book generation, marketplace access, and publication remain out of scope.
+
 Installed does not mean running. Runtime states distinguish installed, enabled, idle, running, waiting for approval, degraded, blocked, and update available.
 
 - **Jade:** core, enabled, normally idle, protected from removal

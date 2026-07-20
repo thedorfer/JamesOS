@@ -1,0 +1,16 @@
+{
+  "agent": {
+    "schema_version": "1", "protocol_version": "1.0.0", "agent_id": "jamesos.book-opportunity-scout", "name": "Book Opportunity Scout", "version": "0.1.0", "publisher": "JamesOS", "owner": "JamesOS", "description": "Researches possible coloring-book concepts and ranks evidence-backed opportunities locally.",
+    "capabilities": ["books.opportunity.research", "books.opportunity.decide"], "accepted_task_types": ["book_opportunity_research_request"], "emitted_result_types": ["book_opportunity_research_result"],
+    "required_tool_permissions": [], "required_secret_handles": [], "supported_side_effects": ["local_research_artifacts", "local_candidate_decision"], "protected_resources": [], "maximum_automatic_attempts": 1,
+    "minimum_jamesos_version": "0.1.0", "package_name": "jamesos", "entry_point": "jamesos.agents.book_opportunity_scout:BookOpportunityScoutAgent"
+  },
+  "category": "Publishing", "tags": ["books", "research", "coloring-books", "local-first"],
+  "permissions": {"required": {"side_effects": ["local_research_artifacts", "local_candidate_decision"]}, "optional": {}},
+  "configuration": [
+    {"name": "model", "label": "Local Ollama model", "type": "string", "required": true, "default": "qwen3:14b"},
+    {"name": "source_mode", "label": "Research mode", "type": "enum", "required": true, "choices": ["demo", "manual", "live"], "default": "demo"}
+  ],
+  "secrets": [], "platforms": [{"os": "linux", "architectures": ["x86_64", "aarch64"]}],
+  "install": {"provider": "builtin", "apt_package": null}, "media": {"icon": null, "screenshots": []}
+}
