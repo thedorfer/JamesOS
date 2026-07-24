@@ -109,7 +109,8 @@ class ColoringBookProducerTests(unittest.TestCase):
         self.assertTrue(all(not x["image_generated"] and x["status"]=="draft" for x in loaded["page_prompts"]["prompts"]))
         again=self.service.generate_page_plan(pid,confirmed=True);self.assertTrue(again["idempotent"]);self.assertEqual(plan["page_plan_sha256"],again["page_plan_sha256"])
         approval_preview=self.service.approve_page_plan(pid);self.assertEqual(40,approval_preview["page_count"]);self.assertEqual(0,approval_preview["external_actions"])
-        approved=self.service.approve_page_plan(pid,confirmed=True);self.assertIn("No external provider",approved["message"]);self.assertEqual("page_plan_approved",self.service.load(pid)["project"]["status"])
+        approved=self.service.approve_page_plan(pid,confirmed=True);self.assertIn("No images or external actions",approved["message"]);self.assertEqual("page_plan_approved",self.service.load(pid)["project"]["status"])
+        repeated_preview=self.service.approve_page_plan(pid);self.assertTrue(repeated_preview["already_approved"]);repeated=self.service.approve_page_plan(pid,confirmed=True);self.assertTrue(repeated["idempotent"]);self.assertEqual(approved["timestamp"],repeated["timestamp"])
 
     def test_page_plan_edit_order_and_brief_change_staleness(self):
         created=self.service.create("run-1","concept-011",confirmed=True);pid=created["project_id"];self.service.approve_brief(pid,confirmed=True);self.service.generate_page_plan(pid,confirmed=True);self.service.approve_page_plan(pid,confirmed=True)

@@ -28,6 +28,7 @@ class LocalAssetResult:
 class LocalCreativeStudioProvider(Protocol):
     provider_id:str
     capabilities:frozenset[str]
+    def readiness(self)->dict[str,Any]:...
     def execute(self,request:LocalAssetRequest)->LocalAssetResult:...
 
 

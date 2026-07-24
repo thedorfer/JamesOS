@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -37,7 +38,7 @@ class CommerceArtworkTests(unittest.TestCase):
             failed=provider_free_preflight({**state,**change},PROFILE,credential_configured=True);self.assertFalse(failed["passed"]);self.assertIn(code,failed["failure_codes"]);self.assertFalse(failed["provider_contacted"])
 
     def test_no_font_binary_is_committed(self):
-        extensions={".ttf",".otf",".woff",".woff2"};self.assertFalse([path for path in Path(".").rglob("*") if path.is_file() and path.suffix.casefold() in extensions and ".git" not in path.parts])
+        extensions={".ttf",".otf",".woff",".woff2"};tracked=subprocess.run(["git","ls-files","-z"],capture_output=True,check=True).stdout.split(b"\0");self.assertFalse([Path(value.decode()) for value in tracked if value and Path(value.decode()).suffix.casefold() in extensions])
 
 
 if __name__=="__main__":unittest.main()

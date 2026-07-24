@@ -39,8 +39,10 @@ class PrivateAdultChatTests(unittest.TestCase):
             policy.return_value.status.return_value = {"adult_mode_available": True, "revision": "r"}
             text = self.client.get("/app", headers=ORIGIN).text
         self.assertLess(text.index("id='private-chat'"), text.index("id='adult-mode'"))
-        for expected in ("This conversation is not saved or added to memory.", "Adult mode is for adults 18 and older.", "I am 18 or older — Enable", "adultConsentSession=''", "localStorage.removeItem('jamesos-conversation-id')"):
+        for expected in ("id='private-chat'", "id='adult-mode'", "Adult mode is for adults 18 and older.", "I am 18 or older — Enable", "adultConsentSession=''", "localStorage.removeItem('jamesos-conversation-id')"):
             self.assertIn(expected, text)
+        self.assertNotIn("This conversation is not saved or added to memory.", text)
+        self.assertNotIn("Allows consensual adult conversation and fictional roleplay.", text)
         self.assertNotIn("localStorage.setItem('adult", text)
 
     def test_server_rejects_forged_nonprivate_missing_and_expired_consent(self):

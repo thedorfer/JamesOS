@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime,timezone
+from hashlib import sha256
+from pathlib import Path
+import subprocess
 import time
 from typing import Any
 from urllib.parse import urlencode, urlparse
@@ -75,6 +79,26 @@ def is_running(api_url: str = DEFAULT_API_URL, timeout: float = 1.0) -> bool:
     return system_stats(api_url, timeout=timeout).get("status") == "ok"
 
 
+def object_info(api_url: str = DEFAULT_API_URL, timeout: float = 3.0) -> dict[str, Any]:
+    """Return ComfyUI's public node/model inventory without queueing work."""
+    try:
+        with urlopen(f"{_safe_url(api_url)}/object_info", timeout=timeout) as response:
+            value = json.loads(_decode_body(response.read()) or "{}")
+        return value if isinstance(value, dict) else {}
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def list_embeddings(api_url: str = DEFAULT_API_URL, timeout: float = 3.0) -> list[str]:
+    """Return embedding names ComfyUI has loaded without queueing work."""
+    try:
+        with urlopen(f"{_safe_url(api_url)}/embeddings", timeout=timeout) as response:
+            value=json.loads(_decode_body(response.read()) or "[]")
+        return [str(item) for item in value] if isinstance(value,list) else []
+    except (OSError,URLError,TimeoutError,json.JSONDecodeError,ValueError):
+        return []
+
+
 def detect_install_path() -> dict[str, Any]:
     from pathlib import Path
 
@@ -103,12 +127,51 @@ def health(api_url: str = DEFAULT_API_URL, timeout: float = 1.0) -> dict[str, An
     }
 
 
+def instance_identity(api_url: str = DEFAULT_API_URL, timeout: float = 1.0) -> dict[str, Any]:
+    """Identify the local ComfyUI process without mutating it."""
+    stats = system_stats(api_url, timeout=timeout)
+    boot_id = ""
+    try:
+        boot_id = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    service = {}
+    try:
+        output = subprocess.run(
+            ["systemctl", "--user", "show", "comfyui.service", "--property=InvocationID,MainPID,ExecMainStartTimestamp", "--no-pager"],
+            check=False, capture_output=True, text=True, timeout=2,
+        ).stdout
+        service = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    value = {
+        "api_url": _safe_url(api_url),
+        "boot_id": boot_id or None,
+        "service_invocation_id": service.get("InvocationID") or None,
+        "main_pid": int(service["MainPID"]) if str(service.get("MainPID") or "").isdigit() else None,
+        "process_started_at": service.get("ExecMainStartTimestamp") or None,
+        "comfyui_version": ((stats.get("system_stats") or {}).get("system") or {}).get("comfyui_version"),
+    }
+    value["instance_id"] = sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+    return value
+
+
+def queue_snapshot(api_url: str = DEFAULT_API_URL, timeout: float = 3.0) -> dict[str, Any]:
+    try:
+        with urlopen(f"{_safe_url(api_url)}/queue", timeout=timeout) as response:
+            data = json.loads(_decode_body(response.read()) or "{}")
+        return data if isinstance(data, dict) else {}
+    except (OSError, URLError, TimeoutError, json.JSONDecodeError, ValueError):
+        return {}
+
+
 def queue_prompt(workflow_json: dict[str, Any], api_url: str = DEFAULT_API_URL, timeout: float = 10.0) -> dict[str, Any]:
     url = f"{_safe_url(api_url)}/prompt"
     body = json.dumps({"prompt": workflow_json}).encode("utf-8")
     request = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urlopen(request, timeout=timeout) as response:
+            http_status = int(response.status)
             raw = response.read()
             data = json.loads(_decode_body(raw) or "{}")
     except HTTPError as exc:
@@ -116,6 +179,9 @@ def queue_prompt(workflow_json: dict[str, Any], api_url: str = DEFAULT_API_URL, 
     return {
         "status": "queued",
         "prompt_id": data.get("prompt_id"),
+        "http_status": http_status,
+        "submission_timestamp": datetime.now(timezone.utc).astimezone().isoformat(),
+        "instance_identity": instance_identity(api_url),
         "response": data,
         "execution_enabled": True,
         "api_url": _safe_url(api_url),
